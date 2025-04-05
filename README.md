@@ -50,3 +50,14 @@ Documentation: [Polygon.io](https://polygon.io/docs/stocks/getting-started)
 Description: Known for offering historical financial and economic data, but also includes stock market data.
 Features: Although it focuses on historical data, you can use it for long-term market analysis.
 Documentation: [Quandl](https://www.quandl.com/tools/api)
+
+### Exploration of existing implementation
+1. **[when2buy/stock-prediction](https://github.com/when2buy/stock-prediction)**: This project uses Python and PyTorch to predict stock prices. It includes features for visualizing stock data with Matplotlib, is easy to deploy, and offers customizable and efficient solutions[1].
+
+2. **[fahomid/Stock-Price-Prediction-Using-AI-and-Machine-Learning](https://github.com/fahomid/Stock-Price-Prediction-Using-AI-and-Machine-Learning)**: This repository employs Long Short-Term Memory (LSTM) neural networks for stock price prediction. It includes sections for model training, prediction, visualization, and handling missing data using TensorFlow Keras[2].
+
+3. **[jingedawang/StockPredictor](https://github.com/jingedawang/StockPredictor)**: A project initiated during a Microsoft Hackathon that uses AI models for stock price prediction. It focuses on advanced AI techniques for forecasting[6].
+
+4. **[crypto-code/Stock-Market](https://github.com/crypto-code/Stock-Market)**: This repository combines stock market prediction with an AI-powered trading bot, offering tools for both forecasting and automated trading[7].
+
+5. **[Vatshayan/Final-Year-Machine-Learning-Stock-Price-Prediction-Project](https://github.com/Vatshayan/Final-Year-Machine-Learning-Stock-Price-Prediction-Project)**: A machine learning-based project designed to predict Google stock prices, emphasizing simplicity and ease of implementation[8].
