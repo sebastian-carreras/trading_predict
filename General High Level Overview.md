@@ -61,3 +61,4 @@ Documentation: [Quandl](https://www.quandl.com/tools/api)
 4. **[crypto-code/Stock-Market](https://github.com/crypto-code/Stock-Market)**: This repository combines stock market prediction with an AI-powered trading bot, offering tools for both forecasting and automated trading[7].
 
 5. **[Vatshayan/Final-Year-Machine-Learning-Stock-Price-Prediction-Project](https://github.com/Vatshayan/Final-Year-Machine-Learning-Stock-Price-Prediction-Project)**: A machine learning-based project designed to predict Google stock prices, emphasizing simplicity and ease of implementation[8].
+

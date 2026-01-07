@@ -1,5 +1,7 @@
 x-airflow-common: &airflow-common
-  build: './dockerfiles/airflow'
+  build:
+    context: .
+    dockerfile: ./dockerfiles/airflow/Dockerfile
   image: ${AIRFLOW_IMAGE_NAME:-extending_airflow:latest}
   profiles:
     - airflow
@@ -20,12 +22,17 @@ x-airflow-common: &airflow-common
     AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_ACCESS_KEY:-minio123}
     AWS_ENDPOINT_URL_S3: http://s3:9000
     MLFLOW_S3_ENDPOINT_URL: http://s3:9000
+    MLFLOW_TRACKING_URI: http://mlflow:5000
   volumes:
-    - ${AIRFLOW_PROJ_DIR:-./airflow}/dags:/opt/airflow/dags
-    - ${AIRFLOW_PROJ_DIR:-./airflow}/logs:/opt/airflow/logs
-    - ${AIRFLOW_PROJ_DIR:-./airflow}/config:/opt/airflow/config
-    - ${AIRFLOW_PROJ_DIR:-./airflow}/plugins:/opt/airflow/plugins
-    - ${AIRFLOW_PROJ_DIR:-./airflow}/secrets:/opt/secrets
+    - ${AIRFLOW_PROJ_DIR:-./dockerfiles/airflow}/dags:/opt/airflow/dags
+    - ${AIRFLOW_PROJ_DIR:-./dockerfiles/airflow}/logs:/opt/airflow/logs
+    - ${AIRFLOW_PROJ_DIR:-./dockerfiles/airflow}/config:/opt/airflow/config
+    - ${AIRFLOW_PROJ_DIR:-./dockerfiles/airflow}/plugins:/opt/airflow/plugins
+    - ${AIRFLOW_PROJ_DIR:-./dockerfiles/airflow}/secrets:/opt/secrets
+    - ./src:/opt/airflow/src
+    - ./data:/opt/airflow/data
+    - ./runs:/opt/airflow/runs
+    - ./src/config:/opt/airflow/config_project
   networks:
     - frontend
     - backend
@@ -141,7 +148,9 @@ services:
 
   fastapi:
     restart: always
-    build: "./dockerfiles/fastapi"
+    build:
+      context: .
+      dockerfile: ./dockerfiles/fastapi/Dockerfile
     image: backend_fastapi
     container_name: fastapi
     profiles:
@@ -161,6 +170,12 @@ services:
       - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-minio123}
       - MLFLOW_S3_ENDPOINT_URL=http://s3:9000
       - AWS_ENDPOINT_URL_S3=http://s3:9000
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    volumes:
+      - ./src:/app/src
+      - ./data:/app/data
+      - ./runs:/app/runs
+      - ./src/config:/app/config_project
     command: >
       uvicorn app:app 
       --host 0.0.0.0

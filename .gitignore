@@ -135,6 +135,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.env.example
 
 # Spyder project settings
 .spyderproject
@@ -173,3 +174,16 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 .history
+../.history
+../../.history
+# Ignore .DS_Store in any subdirectory
+.DS_Store
+
+# MLflow artifacts (local storage)
+runs/mlflow_artifacts/
+runs/mlflow_local/
+data/
+runs/
+mlruns/
+reports/
+dockerfiles/airflow/logs/
