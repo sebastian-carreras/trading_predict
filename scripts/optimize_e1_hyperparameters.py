@@ -69,6 +69,8 @@ class E1HyperparameterOptimizer:
         tickers: Optional[List[str]] = None,
         mlflow_tracking_uri: str = "local",
         optuna_db_path: str = "sqlite:///optuna_studies.db",
+        search_space_overrides: Optional[Dict[str, Dict[str, float]]] = None,
+        batch_size_choices: Optional[List[int]] = None,
     ):
         """
         Args:
@@ -76,6 +78,8 @@ class E1HyperparameterOptimizer:
             tickers: Lista de tickers a usar (None = usar todos de E1)
             mlflow_tracking_uri: URI de MLflow tracking server (use 'local' para almacenamiento local)
             optuna_db_path: Path a base de datos de Optuna
+            search_space_overrides: Overrides opcionales para rangos de búsqueda
+            batch_size_choices: Opciones de batch size a evaluar (default: [32, 64, 128])
         """
         self.config = load_yaml(config_path)
         self.root = project_root()
@@ -121,6 +125,57 @@ class E1HyperparameterOptimizer:
         
         # Optuna
         self.optuna_db_path = optuna_db_path
+
+        # Search space defaults (se pueden overridear vía CLI / DAG)
+        self.tau_buy_bounds = {"min": 0.02, "max": 0.10, "step": 0.01}
+        self.tau_sell_bounds = {"min": -0.02, "max": 0.02, "step": 0.01}
+        self.gru_units_1_bounds = {"min": 32, "max": 128, "step": 16}
+        self.gru_units_2_bounds = {"min": 16, "max": 64, "step": 16}
+        self.dropout_bounds = {"min": 0.2, "max": 0.5, "step": 0.05}
+        self.learning_rate_bounds = {"min": 1e-4, "max": 1e-2, "log": True}
+
+        # Opciones de batch size
+        default_batch_sizes = batch_size_choices or [32, 64, 128]
+        cleaned_batch_sizes = sorted({int(b) for b in default_batch_sizes if int(b) > 0})
+        if not cleaned_batch_sizes:
+            raise ValueError("Se requiere al menos un batch_size válido para la optimización")
+        self.batch_size_choices = cleaned_batch_sizes
+
+        # Aplicar overrides si se proporcionaron
+        overrides = search_space_overrides or {}
+
+        def update_bounds(bounds: Dict[str, float], key: str) -> None:
+            override = overrides.get(key)
+            if not override:
+                return
+            if "min" in override and override["min"] is not None:
+                bounds["min"] = float(override["min"])
+            if "max" in override and override["max"] is not None:
+                bounds["max"] = float(override["max"])
+            if "step" in override and override["step"] is not None and "step" in bounds:
+                bounds["step"] = float(override["step"])
+
+        update_bounds(self.tau_buy_bounds, "tau_buy")
+        update_bounds(self.tau_sell_bounds, "tau_sell")
+        update_bounds(self.gru_units_1_bounds, "gru_units_1")
+        update_bounds(self.gru_units_2_bounds, "gru_units_2")
+        update_bounds(self.dropout_bounds, "dropout")
+        update_bounds(self.learning_rate_bounds, "learning_rate")
+
+        def validate_bounds(bounds: Dict[str, float], name: str) -> None:
+            if bounds["min"] >= bounds["max"]:
+                raise ValueError(
+                    f"Rango inválido para {name}: min ({bounds['min']}) debe ser < max ({bounds['max']})"
+                )
+            if "step" in bounds and bounds.get("step", 0) <= 0:
+                raise ValueError(f"El step debe ser > 0 para {name}")
+
+        validate_bounds(self.tau_buy_bounds, "tau_buy")
+        validate_bounds(self.tau_sell_bounds, "tau_sell")
+        validate_bounds(self.gru_units_1_bounds, "gru_units_1")
+        validate_bounds(self.gru_units_2_bounds, "gru_units_2")
+        validate_bounds(self.dropout_bounds, "dropout")
+        validate_bounds(self.learning_rate_bounds, "learning_rate")
         
         # Benchmark
         benchmark = self.config.get("universe", {}).get("benchmark", "SPY")
@@ -133,6 +188,34 @@ class E1HyperparameterOptimizer:
         print(f"  MLflow: {mlflow_tracking_uri}")
         print(f"  Optuna DB: {optuna_db_path}")
     
+    @staticmethod
+    def _suggest_float(trial: optuna.Trial, name: str, bounds: Dict[str, float]) -> float:
+        low = float(bounds["min"])
+        high = float(bounds["max"])
+        step = bounds.get("step")
+        log_flag = bool(bounds.get("log"))
+
+        if log_flag:
+            if step:
+                raise ValueError(f"No se puede usar step con distribución log para {name}")
+            return trial.suggest_float(name, low, high, log=True)
+
+        if step:
+            return trial.suggest_float(name, low, high, step=float(step))
+
+        return trial.suggest_float(name, low, high)
+
+    @staticmethod
+    def _suggest_int(trial: optuna.Trial, name: str, bounds: Dict[str, float]) -> int:
+        low = int(bounds["min"])
+        high = int(bounds["max"])
+        step = bounds.get("step")
+
+        if step:
+            return trial.suggest_int(name, low, high, step=int(step))
+
+        return trial.suggest_int(name, low, high)
+
     def objective(self, trial: optuna.Trial) -> float:
         """
         Función objetivo para Optuna.
@@ -152,19 +235,19 @@ class E1HyperparameterOptimizer:
             # 1. SUGERIR HIPERPARÁMETROS
             
             # Trading thresholds (críticos para backtesting)
-            tau_buy = trial.suggest_float("tau_buy", 0.02, 0.10, step=0.01)
-            tau_sell = trial.suggest_float("tau_sell", -0.02, 0.02, step=0.01)
+            tau_buy = self._suggest_float(trial, "tau_buy", self.tau_buy_bounds)
+            tau_sell = self._suggest_float(trial, "tau_sell", self.tau_sell_bounds)
             
             # Arquitectura GRU
-            gru_units_1 = trial.suggest_int("gru_units_1", 32, 128, step=16)
-            gru_units_2 = trial.suggest_int("gru_units_2", 16, 64, step=16)
+            gru_units_1 = self._suggest_int(trial, "gru_units_1", self.gru_units_1_bounds)
+            gru_units_2 = self._suggest_int(trial, "gru_units_2", self.gru_units_2_bounds)
             
             # Regularización
-            dropout = trial.suggest_float("dropout", 0.2, 0.5, step=0.05)
+            dropout = self._suggest_float(trial, "dropout", self.dropout_bounds)
             
             # Entrenamiento
-            learning_rate = trial.suggest_float("learning_rate", 1e-4, 1e-2, log=True)
-            batch_size = trial.suggest_categorical("batch_size", [32, 64, 128])
+            learning_rate = self._suggest_float(trial, "learning_rate", self.learning_rate_bounds)
+            batch_size = trial.suggest_categorical("batch_size", self.batch_size_choices)
             
             # Early stopping (fijar patience para consistencia)
             early_stopping_patience = 10
@@ -493,6 +576,12 @@ def main():
         help="Optimizar solo para un ticker (más rápido para pruebas)",
     )
     parser.add_argument(
+        "--tickers",
+        type=str,
+        default=None,
+        help="Lista de tickers separados por coma (overridea universo E1)",
+    )
+    parser.add_argument(
         "--quick",
         action="store_true",
         help="Modo rápido: usar solo 3 tickers aleatorios",
@@ -515,6 +604,84 @@ def main():
         default="reports/hyperparameter_optimization",
         help="Directorio de salida para resultados",
     )
+    parser.add_argument(
+        "--tau_buy_min",
+        type=float,
+        default=None,
+        help="Mínimo para tau_buy (default: 0.02)",
+    )
+    parser.add_argument(
+        "--tau_buy_max",
+        type=float,
+        default=None,
+        help="Máximo para tau_buy (default: 0.10)",
+    )
+    parser.add_argument(
+        "--tau_sell_min",
+        type=float,
+        default=None,
+        help="Mínimo para tau_sell (default: -0.02)",
+    )
+    parser.add_argument(
+        "--tau_sell_max",
+        type=float,
+        default=None,
+        help="Máximo para tau_sell (default: 0.02)",
+    )
+    parser.add_argument(
+        "--dropout_min",
+        type=float,
+        default=None,
+        help="Mínimo para dropout (default: 0.2)",
+    )
+    parser.add_argument(
+        "--dropout_max",
+        type=float,
+        default=None,
+        help="Máximo para dropout (default: 0.5)",
+    )
+    parser.add_argument(
+        "--learning_rate_min",
+        type=float,
+        default=None,
+        help="Mínimo para learning_rate (default: 1e-4)",
+    )
+    parser.add_argument(
+        "--learning_rate_max",
+        type=float,
+        default=None,
+        help="Máximo para learning_rate (default: 1e-2)",
+    )
+    parser.add_argument(
+        "--gru_units_1_min",
+        type=int,
+        default=None,
+        help="Mínimo para la primera capa GRU (default: 32)",
+    )
+    parser.add_argument(
+        "--gru_units_1_max",
+        type=int,
+        default=None,
+        help="Máximo para la primera capa GRU (default: 128)",
+    )
+    parser.add_argument(
+        "--gru_units_2_min",
+        type=int,
+        default=None,
+        help="Mínimo para la segunda capa GRU (default: 16)",
+    )
+    parser.add_argument(
+        "--gru_units_2_max",
+        type=int,
+        default=None,
+        help="Máximo para la segunda capa GRU (default: 64)",
+    )
+    parser.add_argument(
+        "--batch_sizes",
+        type=str,
+        default=None,
+        help="Lista de batch sizes separados por coma (default: 32,64,128)",
+    )
     
     args = parser.parse_args()
     
@@ -523,7 +690,16 @@ def main():
     
     # Tickers
     tickers = None
-    if args.ticker:
+    if args.tickers:
+        tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
+        tickers = list(dict.fromkeys(tickers))
+        if not tickers:
+            tickers = None
+        else:
+            print(f"✓ Override manual de tickers: {tickers}")
+        if args.quick:
+            print("⚠️  Ignorando --quick porque --tickers fue proporcionado")
+    elif args.ticker:
         tickers = [args.ticker]
     elif args.quick:
         # Modo rápido: usar solo 3 tickers para prueba
@@ -534,11 +710,46 @@ def main():
         tickers = random.sample(all_tickers, min(3, len(all_tickers)))
         print(f"🚀 Modo rápido: usando {tickers}")
     
+    # Overrides del espacio de búsqueda
+    search_overrides: Dict[str, Dict[str, float]] = {}
+
+    def maybe_add_override(name: str, min_value: Optional[float], max_value: Optional[float]) -> None:
+        if min_value is None and max_value is None:
+            return
+        search_overrides[name] = {}
+        if min_value is not None:
+            search_overrides[name]["min"] = min_value
+        if max_value is not None:
+            search_overrides[name]["max"] = max_value
+
+    maybe_add_override("tau_buy", args.tau_buy_min, args.tau_buy_max)
+    maybe_add_override("tau_sell", args.tau_sell_min, args.tau_sell_max)
+    maybe_add_override("dropout", args.dropout_min, args.dropout_max)
+    maybe_add_override("learning_rate", args.learning_rate_min, args.learning_rate_max)
+    maybe_add_override("gru_units_1", args.gru_units_1_min, args.gru_units_1_max)
+    maybe_add_override("gru_units_2", args.gru_units_2_min, args.gru_units_2_max)
+
+    if search_overrides:
+        print(f"✓ Overrides de espacio de búsqueda: {search_overrides}")
+
+    batch_sizes_list: Optional[List[int]] = None
+    if args.batch_sizes:
+        try:
+            batch_sizes_list = [int(x.strip()) for x in args.batch_sizes.split(",") if x.strip()]
+        except ValueError as exc:
+            raise ValueError("--batch_sizes debe contener enteros separados por coma") from exc
+        if not batch_sizes_list:
+            batch_sizes_list = None
+        else:
+            print(f"✓ Batch sizes personalizados: {batch_sizes_list}")
+    
     # Crear optimizador
     optimizer = E1HyperparameterOptimizer(
         config_path=config_path,
         tickers=tickers,
         mlflow_tracking_uri=args.mlflow_uri,
+        search_space_overrides=search_overrides or None,
+        batch_size_choices=batch_sizes_list,
     )
     
     # Ejecutar optimización

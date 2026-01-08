@@ -274,3 +274,24 @@ Entrenando GRU para AAPL...
 ---
 
 **Implementado según**: `3. Implementación de modelos de machine learning/Informacion basica de la implementacion.md`
+
+### Posibles mejoras futuras:
+#### Fase 1 - Corto Plazo (1-2 semanas) 
+⭐⭐⭐ Hyperparameter tuning con Optuna ✅
+- Optimizar tau_buy, tau_sell, arquitectura 
+- Documentar proceso de búsqueda 
+⭐⭐⭐ Walk-forward validation ✅
+- Demostrar robustez temporal 
+- Gráficos de IC y Sharpe por ventana 
+#### Fase 2 - Mediano Plazo (2-3 semanas) 
+⭐⭐ Feature importance
+- Justificar selección de features
+- Eliminar features ruidosas
+⭐⭐⭐ Portfolio optimization
+- Estrategia multi-ticker
+- Comparar vs equal-weight
+#### Fase 3 - Largo Plazo (si tiempo)
+⭐⭐ Drift detection + retraining
+- Sistema de monitoreo
+⭐⭐ Ensemble de modelos
+Mejorar estabilidad

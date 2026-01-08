@@ -23,12 +23,17 @@ x-airflow-common: &airflow-common
     AWS_ENDPOINT_URL_S3: http://s3:9000
     MLFLOW_S3_ENDPOINT_URL: http://s3:9000
     MLFLOW_TRACKING_URI: http://mlflow:5000
+    TRADING_PREDICT_ROOT: /opt/airflow
+    # Matplotlib cache dir: avoid permission issues writing to /home/airflow/.cache
+    # /tmp is writable in containers and doesn't require creating any host directory.
+    MPLCONFIGDIR: /tmp/matplotlib
   volumes:
     - ${AIRFLOW_PROJ_DIR:-./dockerfiles/airflow}/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-./dockerfiles/airflow}/logs:/opt/airflow/logs
     - ${AIRFLOW_PROJ_DIR:-./dockerfiles/airflow}/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-./dockerfiles/airflow}/plugins:/opt/airflow/plugins
     - ${AIRFLOW_PROJ_DIR:-./dockerfiles/airflow}/secrets:/opt/secrets
+    - ./scripts:/opt/airflow/scripts
     - ./src:/opt/airflow/src
     - ./data:/opt/airflow/data
     - ./runs:/opt/airflow/runs
@@ -311,6 +316,7 @@ services:
       _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
       _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
       _PIP_ADDITIONAL_REQUIREMENTS: ''
+      MPLCONFIGDIR: /tmp/matplotlib
     user: "0:0"
     volumes:
       - ${AIRFLOW_PROJ_DIR:-./airflow}:/sources

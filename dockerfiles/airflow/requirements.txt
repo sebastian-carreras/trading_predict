@@ -1,2 +1,6 @@
 mlflow[extras]~=2.10
 boto3~=1.34
+optuna~=3.5
+optuna-dashboard~=0.15
+kaleido~=0.2
+plotly~=5.18

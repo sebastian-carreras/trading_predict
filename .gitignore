@@ -180,10 +180,10 @@ cython_debug/
 .DS_Store
 
 # MLflow artifacts (local storage)
-runs/mlflow_artifacts/
-runs/mlflow_local/
-data/
-runs/
-mlruns/
-reports/
-dockerfiles/airflow/logs/
+runs/mlflow_artifacts/*
+runs/mlflow_local/*
+data/*
+runs/*
+mlruns/*
+reports/*
+dockerfiles/airflow/logs/*

@@ -37,6 +37,7 @@ conda activate ia_ceia_18co
 
 # Ejecutar pipeline manualmente
 python -m src.train_e1_pipeline --tickers AAPL
+python -m src.train_e2_pipeline --tickers AAPL
 ```
 
 ## 📊 Estrategias Implementadas
@@ -91,9 +92,13 @@ python -m src.train_e1_pipeline --tickers AAPL
 
 **E2 - Moderada (LSTM)**
 ```bash
-# TODO: pendiente implementación
+python -m src.data.download_daily
+python -m src.train_e2_pipeline --tickers AAPL
 ```
 → Ver [README_E2.md](README_E2.md)
+
+La ejecución de E2 guarda artefactos por ticker en `runs/e2_moderate/<timestamp>/<TICKER>/`, incluyendo:
+- `*_predictions.csv`, `*_summary.csv` y el modelo entrenado `*_model.pth`.
 
 **E3 - Intradía (Ensemble)**
 ```bash
@@ -169,16 +174,46 @@ runs/<estrategia>/<YYYYMMDD_HHMMSS>/
 | E1 - Modelo GRU | ✅ | `src/models/e1_gru.py` |
 | E1 - Pipeline | ✅ | `src/train_e1_pipeline.py` |
 | E1 - Backtest | ⏳ | Pendiente `src/backtest/engine.py` |
-| E2 - Implementación | ⏳ | Especificada, no codificada |
+| E2 - Modelo + Pipeline | ✅ | `src/models/e2_lstm.py`, `src/train_e2_pipeline.py` |
 | E3 - Pipeline completo | ✅ | `src/e3_intraday_pipeline.py` |
 | E3 - Backtest | ✅ | Incluido con costos 20 bps |
 | E4 - Implementación | ⏳ | Especificada, no codificada |
 
 ## 📖 Documentación Adicional
 
-- [Especificación completa de modelos](secciones%20del%20plan%20de%20trabajo/3.%20Implementación%20de%20modelos%20de%20machine%20learning/) - Detalles técnicos de arquitecturas, targets, features
+### Guías de Implementación
+- **[README_HYPERPARAMETER_TUNING.md](README_HYPERPARAMETER_TUNING.md)** - Optimización de hiperparámetros con Optuna + MLflow
+- **[README_WALK_FORWARD.md](README_WALK_FORWARD.md)** - Validación walk-forward para robustez temporal
+- **[README_E1.md](README_E1.md)** - Estrategia E1 Conservadora (GRU)
+- **[README_E2.md](README_E2.md)** - Estrategia E2 Moderada (LSTM)
+- **[README_E3.md](README_E3.md)** - Estrategia E3 Intradía (Ensemble)
+- **[README_E4.md](README_E4.md)** - Estrategia E4 Pairs Trading
+- **[README_DOCKER.md](README_DOCKER.md)** - Deployment con Docker + Airflow
+- **[README_BACKTESTING.md](README_BACKTESTING.md)** - Motor de backtesting
+- **[README_DATA_CLEANING.md](README_DATA_CLEANING.md)** - Pipeline de datos
+
+### Referencias Técnicas
 - [Configuración base.yaml](src/config/base.yaml) - Parámetros del sistema
 - [General High Level Overview.md](General%20High%20level%20Overview.md) - Visión arquitectónica
+- [Especificación de modelos](secciones%20del%20plan%20de%20trabajo/3.%20Implementación%20de%20modelos%20de%20machine%20learning/) - Detalles técnicos
+
+### Scripts y Herramientas
+```bash
+# Optimización de hiperparámetros (E1)
+python scripts/optimize_e1_hyperparameters.py --n_trials 50
+
+# Comparación de impacto de normalización
+python scripts/compare_normalization_impact.py
+
+# Verificación de scaling de features
+python scripts/verify_scaling.py
+
+# Limpieza de datos
+python scripts/run_data_cleaning.py
+```
+
+Ver cada README específico para comandos detallados.
+
 
 ## 🎓 Contexto Académico
 
