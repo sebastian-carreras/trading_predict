@@ -1,15 +1,15 @@
 # Backtesting en Trading Predict
 
-## 🎯 ¿Qué es Backtesting?
+## ¿Qué es Backtesting?
 
 El backtesting simula cómo habría funcionado tu estrategia de trading en el pasado usando datos históricos. Es esencial para:
 
-- ✅ Validar que el modelo no solo predice bien, sino que **genera ganancias**
-- ✅ Entender riesgos (drawdowns, volatilidad)
-- ✅ Calcular costos de transacción realistas
-- ✅ Comparar diferentes estrategias objetivamente
+- Validar que el modelo no solo predice bien, sino que **genera ganancias**
+- Entender riesgos (drawdowns, volatilidad)
+- Calcular costos de transacción realistas
+- Comparar diferentes estrategias objetivamente
 
-## 📊 Implementación E1 (Conservative)
+## Implementación E1 (Conservative)
 
 ### Flujo del Backtest
 
@@ -17,13 +17,11 @@ El backtesting simula cómo habría funcionado tu estrategia de trading en el pa
 Predicciones → Señales → Posiciones → PnL → Métricas
 ```
 
-**1. Predicciones del Modelo**
-```python
+**1. Predicciones del Modelo**```python
 y_pred = [0.08, -0.03, 0.05, 0.12, ...]  # Retorno predicho a 90 días
 ```
 
-**2. Generación de Señales**
-```python
+**2. Generación de Señales**```python
 # Umbral de compra: 6% (tau_buy = 0.06)
 if y_pred >= 0.06:
     signal = BUY  # Comprar
@@ -39,8 +37,7 @@ else:
 - **Max Position**: 100% del capital (E1 es single-stock, no portfolio)
 - **Shorts**: NO permitidos (estrategia conservadora)
 
-**4. Cálculo de PnL**
-```python
+**4. Cálculo de PnL**```python
 # Retorno bruto diario
 gross_ret = position * daily_return
 
@@ -51,12 +48,11 @@ costs = position_change * 0.001
 net_ret = gross_ret - costs
 ```
 
-**5. Equity Curve**
-```python
+**5. Equity Curve**```python
 equity = initial_capital * exp(cumsum(net_ret))
 ```
 
-## 📈 Métricas de Backtesting
+## Métricas de Backtesting
 
 ### Retorno
 - **Total Return**: `(equity_final / equity_initial) - 1`
@@ -121,7 +117,7 @@ costs:
   daily_round_trip_bps: 10  # 10 bps = 0.1% (entrada+salida)
 ```
 
-## 📊 Outputs del Backtest
+## Outputs del Backtest
 
 ### `{ticker}_backtest.csv`
 ```csv
@@ -167,15 +163,15 @@ En MLflow UI podrás:
 - MAE = 0.16 (error promedio)
 
 **Métricas Backtesting**:
-- Sharpe = 1.8 ✅ (buen retorno ajustado)
-- CAGR = 15% 📈
-- Max DD = 18% ⚠️ (aceptable pero alto)
-- Win Rate = 56% ✅
-- Profit Factor = 2.1 ✅
+- Sharpe = 1.8  (buen retorno ajustado)
+- CAGR = 15% 
+- Max DD = 18% ⚠ (aceptable pero alto)
+- Win Rate = 56% 
+- Profit Factor = 2.1 
 
 **Conclusión**: Modelo predice decentemente (IC=0.12) y genera retornos sólidos en backtest (Sharpe=1.8). Max DD de 18% requiere gestión de riesgo.
 
-## ⚖️ ML Metrics vs Trading Metrics
+## ⚖ ML Metrics vs Trading Metrics
 
 | Métrica ML | Trading Metric | Relación |
 |------------|----------------|----------|
@@ -198,7 +194,7 @@ En MLflow UI podrás:
 
 **Solución**: Costos conservadores (10 bps) compensan parcialmente.
 
-## 📚 Próximos Pasos
+## Próximos Pasos
 
 1. **Ejecutar E1 con backtest**:
    ```bash

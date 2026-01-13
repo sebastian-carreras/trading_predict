@@ -75,7 +75,7 @@ docker-compose --profile all up -d
   - Usuario: `minio_admin`
   - Password: `minio_secret_key_123`
 
-## 📊 Flujo de Trabajo
+## Flujo de Trabajo
 
 ### Pipeline E1 (Conservadora - GRU)
 
@@ -178,7 +178,7 @@ curl -X POST http://localhost:8800/predict/e1/AAPL \
 curl http://localhost:8800/models/status
 ```
 
-## 🗄️ Base de Datos PostgreSQL
+## 🗄 Base de Datos PostgreSQL
 
 ### Conectar desde terminal
 
@@ -221,7 +221,7 @@ docker-compose --profile all down
 docker-compose --profile all down -v
 ```
 
-## 📊 Monitoreo
+## Monitoreo
 
 ### Ver recursos Docker
 
@@ -245,7 +245,7 @@ docker-compose logs -f mlflow
 4. Restringir acceso a red (firewall)
 5. Usar autenticación en FastAPI (OAuth2, API keys)
 
-## 📚 Estructura de Volúmenes
+## Estructura de Volúmenes
 
 ```
 docker volumes:

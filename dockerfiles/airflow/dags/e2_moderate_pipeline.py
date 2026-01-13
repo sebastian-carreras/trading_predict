@@ -14,6 +14,7 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 import mlflow
 import os
+import json
 
 # Configuración MLflow
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
@@ -38,8 +39,18 @@ dag = DAG(
     tags=['trading', 'e2', 'moderate', 'lstm'],
     params={
         'tickers': 'BBAR.BA, BMA.BA, EDN.BA, TGSUD.BA, LOMA.BA, NVDA, GOOGL, AMZN, META, NFLX',
+        'use_tuned_params': 'False',
+        'tuned_params_path': 'reports/hyperparameter_optimization/e2_tuned_params_by_ticker.yaml',
     },
 )
+
+
+def _as_bool(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"true", "1", "yes", "on"}
 
 
 def download_daily_data(**context):
@@ -121,8 +132,34 @@ def train_e2_with_mlflow(**context):
     from pathlib import Path
     import pandas as pd
     
+    mlflow.set_experiment("E2_Moderate_Strategy")
+    
     root = Path("/opt/airflow")
     config = load_yaml(root / "src/config/base.yaml")
+
+    # Elegir baseline vs tuned params (Optuna) desde la UI del DAG.
+    use_tuned_params = _as_bool(context['params'].get('use_tuned_params'))
+    tuned_params_path = str(context['params'].get('tuned_params_path') or '').strip()
+
+    tuned_map = None
+    if use_tuned_params:
+        if not tuned_params_path:
+            tuned_params_path = 'reports/hyperparameter_optimization/e2_tuned_params_by_ticker.yaml'
+
+        resolved_tuned_path = root / tuned_params_path
+        os.environ['E2_TUNED_PARAMS_PATH'] = str(resolved_tuned_path)
+
+        if resolved_tuned_path.exists():
+            try:
+                tuned_map = load_yaml(resolved_tuned_path)
+            except Exception as e:
+                print(f"⚠️ No se pudo cargar tuned params YAML: {resolved_tuned_path}: {e}")
+                tuned_map = None
+        else:
+            print(f"⚠️ use_tuned_params=True pero no existe: {resolved_tuned_path}")
+    else:
+        os.environ.pop('E2_TUNED_PARAMS_PATH', None)
+        os.environ.pop('TUNED_PARAMS_PATH', None)
     
     # Tickers
     tickers = context['task_instance'].xcom_pull(task_ids='download_daily_data', key='tickers_to_train')
@@ -155,6 +192,15 @@ def train_e2_with_mlflow(**context):
         ticker_out = out_dir / ticker
         
         with mlflow.start_run(run_name=f"E2_{ticker}_{timestamp}"):
+            mlflow.log_param("use_tuned_params", use_tuned_params)
+            mlflow.log_param("tuned_params_path", tuned_params_path if use_tuned_params else "")
+            if use_tuned_params and isinstance(tuned_map, dict):
+                overrides_for_ticker = tuned_map.get(ticker) or {}
+                mlflow.log_param(
+                    "tuned_overrides",
+                    json.dumps(overrides_for_ticker, sort_keys=True, ensure_ascii=False),
+                )
+
             mlflow.log_param("strategy", "e2_moderate")
             mlflow.log_param("ticker", ticker)
             mlflow.log_param("model_type", "LSTM")

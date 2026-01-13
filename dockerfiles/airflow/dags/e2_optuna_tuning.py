@@ -1,8 +1,8 @@
 """
-DAG para ejecutar la optimización de hiperparámetros E1 con Optuna desde la UI de Airflow.
+DAG para ejecutar la optimización de hiperparámetros E2 con Optuna desde la UI de Airflow.
 
 Permite ajustar tickers, número de trials, overrides del espacio de búsqueda y parámetros
-clave de MLflow/Optuna sin modificar código.
+clave de MLflow/Optuna sin modificar código. Específico para estrategia E2 (LSTM).
 """
 
 from __future__ import annotations
@@ -18,11 +18,12 @@ from typing import Dict, List, Optional
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
-DAG_ID = "e1_optuna_hyperparameter_tuning"
-SCRIPT_REL_PATH = Path("scripts/optimize_e1_hyperparameters.py")
+DAG_ID = "e2_optuna_hyperparameter_tuning"
+SCRIPT_REL_PATH = Path("scripts/optimize_e2_hyperparameters.py")
 
 
 def resolve_project_root() -> Path:
+    """Busca la raíz del proyecto donde está el script de optimización."""
     candidates = []
 
     env_root = os.environ.get("TRADING_PREDICT_ROOT")
@@ -57,35 +58,65 @@ def resolve_project_root() -> Path:
         f"No se encontró {SCRIPT_REL_PATH} en ninguno de los candidatos: {searched}. "
         "Configura la variable de entorno TRADING_PREDICT_ROOT o monta el repo en el scheduler."
     )
+
+
 DEFAULT_PARAMS: Dict[str, Optional[str]] = {
+    # Configuración general
     "config_path": "src/config/base.yaml",
     "n_trials": "20",
-    "study_name": "e1_hyperparameter_optimization",
+    "study_name": "e2_hyperparameter_optimization",
     "per_ticker": "False",
-    "tickers": "YPFD.BA, GGAL.BA, PAMP.BA, BYMA.BA, CEPU.BA, AAPL, MSFT, JNJ, PG, V",
+    
+    # Tickers (universo E2 moderado)
+    "tickers": "NVDA, AMD, MSFT, AAPL, TSLA, GOOGL, META, NFLX, AMZN, BABA",
     "single_ticker": "",
     "quick_mode": "False",
+    
+    # Timeouts y outputs
     "timeout_seconds": "",
     "mlflow_uri": "local",
     "output_dir": "reports/hyperparameter_optimization",
-    "tau_buy_min": "0.02",
-    "tau_buy_max": "0.10",
-    "tau_sell_min": "-0.02",
-    "tau_sell_max": "0.02",
-    "dropout_min": "0.2",
-    "dropout_max": "0.5",
-    "learning_rate_min": "1e-4",
-    "learning_rate_max": "1e-2",
-    "gru_units_1_min": "32",
-    "gru_units_1_max": "128",
-    "gru_units_2_min": "16",
-    "gru_units_2_max": "64",
+    
+    # --- Thresholds de Trading ---
+    "tau_buy_min": "0.015",
+    "tau_buy_max": "0.05",
+    "tau_sell_min": "-0.01",
+    "tau_sell_max": "0.01",
+    
+    # --- Arquitectura LSTM ---
+    "lstm_units_1_min": "64",
+    "lstm_units_1_max": "256",
+    "lstm_units_2_min": "32",
+    "lstm_units_2_max": "128",
+    
+    # --- Regularización ---
+    "dropout_min": "0.1",
+    "dropout_max": "0.4",
+    
+    # --- Entrenamiento ---
+    "learning_rate_min": "5e-5",
+    "learning_rate_max": "5e-3",
     "batch_sizes": "32,64,128",
+    
+    # --- Filtros RSI (específico E2) ---
+    "rsi14_min_min": "25",
+    "rsi14_min_max": "40",
+    "rsi14_max_min": "60",
+    "rsi14_max_max": "75",
+    
+    # --- Walk-forward validation ---
+    "n_folds_min": "3",
+    "n_folds_max": "7",
+    "internal_val_fraction_min": "0.10",
+    "internal_val_fraction_max": "0.25",
+    
+    # Argumentos CLI extra
     "extra_cli_args": "",
 }
 
 
 def _as_bool(value: Optional[str]) -> bool:
+    """Convierte string a booleano."""
     if value is None:
         return False
     if isinstance(value, bool):
@@ -94,6 +125,7 @@ def _as_bool(value: Optional[str]) -> bool:
 
 
 def _is_not_blank(value: Optional[str]) -> bool:
+    """Verifica si un valor no está vacío."""
     if value is None:
         return False
     if isinstance(value, (int, float)):
@@ -102,6 +134,11 @@ def _is_not_blank(value: Optional[str]) -> bool:
 
 
 def run_optuna_tuning(**context) -> str:
+    """
+    Ejecuta el script de optimización de hiperparámetros E2.
+    
+    Lee parámetros desde Airflow params y construye el comando CLI.
+    """
     params = context["params"]
     log = context["ti"].log
 
@@ -109,12 +146,14 @@ def run_optuna_tuning(**context) -> str:
     script_path = project_root / SCRIPT_REL_PATH
     if not script_path.exists():
         raise FileNotFoundError(
-            f"No se encontró el script en {script_path}. Ajusta TRADING_PREDICT_ROOT o monta el repo completo."
+            f"No se encontró el script en {script_path}. "
+            "Ajusta TRADING_PREDICT_ROOT o monta el repo completo."
         )
 
     log.info("Usando PROJECT_ROOT=%s", project_root)
-    log.info("Script Optuna=%s", script_path)
+    log.info("Script Optuna E2=%s", script_path)
 
+    # Comando base
     base_cmd: List[str] = [sys.executable, str(script_path)]
     base_cmd.extend(["--config", str(params.get("config_path") or DEFAULT_PARAMS["config_path"])])
     base_cmd.extend(["--n_trials", str(params.get("n_trials") or DEFAULT_PARAMS["n_trials"])])
@@ -122,24 +161,27 @@ def run_optuna_tuning(**context) -> str:
     base_cmd.extend(["--output_dir", str(params.get("output_dir") or DEFAULT_PARAMS["output_dir"])])
     base_cmd.extend(["--mlflow_uri", str(params.get("mlflow_uri") or DEFAULT_PARAMS["mlflow_uri"])])
 
+    # Modo per_ticker
     per_ticker = _as_bool(params.get("per_ticker"))
     if per_ticker:
         base_cmd.append("--per_ticker")
 
+    # Timeout
     timeout_value = params.get("timeout_seconds")
     if _is_not_blank(timeout_value):
         base_cmd.extend(["--timeout", str(timeout_value)])
 
+    # Batch sizes
     batch_sizes = params.get("batch_sizes")
     if _is_not_blank(batch_sizes):
         base_cmd.extend(["--batch_sizes", str(batch_sizes)])
 
+    # Selección de tickers
     tickers_list = str(params.get("tickers") or "").strip()
     single_ticker = str(params.get("single_ticker") or "").strip()
     quick_mode = _as_bool(params.get("quick_mode"))
 
-    # En modo per_ticker, el script espera una lista de tickers; para evitar confusiones
-    # desde la UI, si sólo se setea single_ticker lo tratamos como lista.
+    # En modo per_ticker, el script espera una lista de tickers
     if per_ticker and (not tickers_list) and single_ticker:
         tickers_list = single_ticker
         single_ticker = ""
@@ -149,7 +191,6 @@ def run_optuna_tuning(**context) -> str:
         if quick_mode:
             log.warning("Ignorando quick_mode porque se proporcionaron tickers personalizados")
     elif single_ticker:
-        # En modo per_ticker preferimos siempre pasar lista (aunque sea de 1)
         if per_ticker:
             base_cmd.extend(["--tickers", single_ticker])
         else:
@@ -157,19 +198,34 @@ def run_optuna_tuning(**context) -> str:
     elif quick_mode:
         base_cmd.append("--quick")
 
+    # Overrides del espacio de búsqueda
     override_args = (
+        # Trading thresholds
         "tau_buy_min",
         "tau_buy_max",
         "tau_sell_min",
         "tau_sell_max",
+        # Arquitectura LSTM
+        "lstm_units_1_min",
+        "lstm_units_1_max",
+        "lstm_units_2_min",
+        "lstm_units_2_max",
+        # Regularización
         "dropout_min",
         "dropout_max",
+        # Entrenamiento
         "learning_rate_min",
         "learning_rate_max",
-        "gru_units_1_min",
-        "gru_units_1_max",
-        "gru_units_2_min",
-        "gru_units_2_max",
+        # Filtros RSI
+        "rsi14_min_min",
+        "rsi14_min_max",
+        "rsi14_max_min",
+        "rsi14_max_max",
+        # Walk-forward
+        "n_folds_min",
+        "n_folds_max",
+        "internal_val_fraction_min",
+        "internal_val_fraction_max",
     )
 
     for override in override_args:
@@ -177,18 +233,21 @@ def run_optuna_tuning(**context) -> str:
         if _is_not_blank(value):
             base_cmd.extend([f"--{override}", str(value)])
 
+    # Argumentos CLI extra
     extra_cli = str(params.get("extra_cli_args") or "").strip()
     if extra_cli:
         base_cmd.extend(shlex.split(extra_cli))
 
+    # Configurar entorno
     env = os.environ.copy()
     current_pythonpath = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = (
         f"{project_root}:{current_pythonpath}" if current_pythonpath else str(project_root)
     )
 
-    log.info("Ejecutando comando Optuna: %s", shlex.join(base_cmd))
+    log.info("Ejecutando comando Optuna E2: %s", shlex.join(base_cmd))
     
+    # Ejecutar script
     try:
         result = subprocess.run(
             base_cmd,
@@ -209,21 +268,23 @@ def run_optuna_tuning(**context) -> str:
             log.error("STDERR:\n%s", e.stderr)
         raise
 
+    # Guardar comando ejecutado en XCom
     rendered_command = shlex.join(base_cmd)
     context["ti"].xcom_push(key="cli_command", value=rendered_command)
     return rendered_command
 
 
 def build_dag() -> DAG:
+    """Construye el DAG de Airflow."""
     dag = DAG(
         dag_id=DAG_ID,
-        description="Ejecuta Optuna para E1 con parámetros configurables",
+        description="Ejecuta Optuna para E2 (LSTM) con parámetros configurables",
         default_args={"owner": "ml_team"},
-        schedule_interval=None,
+        schedule_interval=None,  # Manual trigger
         start_date=datetime(2024, 1, 1),
         catchup=False,
         params=DEFAULT_PARAMS,
-        tags=["optuna", "mlflow", "e1"],
+        tags=["optuna", "mlflow", "e2", "lstm", "hyperparameter_tuning"],
     )
 
     PythonOperator(

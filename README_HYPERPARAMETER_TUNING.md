@@ -34,8 +34,8 @@ El script `optimize_e1_hyperparameters.py` implementa **búsqueda bayesiana** de
 | **Early stopping** | No | Sí (pruning) |
 
 **Ejemplo**: Con 5 hiperparámetros y 10 valores cada uno:
-- Grid Search: 10^5 = **100,000 trials** ❌
-- Optuna: ~**50 trials** para encontrar óptimo ✅
+- Grid Search: 10^5 = **100,000 trials** 
+- Optuna: ~**50 trials** para encontrar óptimo 
 
 ---
 
@@ -60,11 +60,11 @@ python scripts/optimize_e1_hyperparameters.py --n_trials 50
 ```
 
 **Características**:
-- ✅ No requiere servicios externos
-- ✅ Tracking en `runs/mlflow_local/mlflow.db` (SQLite)
-- ✅ Artifacts en `runs/mlflow_local/<experiment_id>/`
-- ✅ Sin warnings de deprecación
-- ✅ Más rápido (sin overhead de red)
+- No requiere servicios externos
+- Tracking en `runs/mlflow_local/mlflow.db` (SQLite)
+- Artifacts en `runs/mlflow_local/<experiment_id>/`
+- Sin warnings de deprecación
+- Más rápido (sin overhead de red)
 
 #### 2. Modo Remoto (Servidor MLflow en Docker)
 
@@ -77,9 +77,9 @@ python scripts/optimize_e1_hyperparameters.py \
 
 **Características**:
 - 🔧 Requiere MLflow server corriendo (Docker)
-- 📊 UI más completa en http://localhost:5050
+- UI más completa en http://localhost:5050
 - 🌐 Compartir resultados en equipo
-- ☁️ Backend S3/MinIO para artifacts
+- ☁ Backend S3/MinIO para artifacts
 
 **Iniciar servidor MLflow (si usas modo remoto)**:
 ```bash
@@ -185,7 +185,7 @@ objective = 0.5 * IC_mean + 0.5 * Sharpe_mean + trade_penalty
 |---------|-------------|---------------------|
 | Buena predicción | Buen trading | Balance óptimo |
 | Pero puede no tradear | Pero predicción pobre | Predice bien Y tradea bien |
-| ❌ | ❌ | ✅ |
+|  |  |  |
 
 ---
 
@@ -203,7 +203,8 @@ python scripts/optimize_e1_hyperparameters.py --n_trials 50
 
 **Output**:
 - `reports/hyperparameter_optimization/best_params_e1.yaml`
-- `reports/hyperparameter_optimization/all_trials.csv`
+- `reports/hyperparameter_optimization/e1_all_trials.csv`
+- `reports/hyperparameter_optimization/e1_optimization_summary.txt`
 - `reports/hyperparameter_optimization/figures/*.png`
 - MLflow tracking: `runs/mlflow_local/mlflow.db` (SQLite)
 - Optuna database: `optuna_studies.db`
@@ -348,7 +349,7 @@ best_params:
 
 **Acción**: Actualizar `src/config/base.yaml` con estos parámetros
 
-### 2. CSV `all_trials.csv`
+### 2. CSV `e1_all_trials.csv`
 
 Columnas importantes:
 - `number`: ID del trial
@@ -363,7 +364,7 @@ Columnas importantes:
 ```python
 import pandas as pd
 
-df = pd.read_csv('reports/hyperparameter_optimization/all_trials.csv')
+df = pd.read_csv('reports/hyperparameter_optimization/e1_all_trials.csv')
 
 # Top 10 trials
 print(df.nlargest(10, 'value'))
@@ -504,8 +505,8 @@ El script genera 3 gráficos automáticamente en `reports/hyperparameter_optimiz
 - **Rojo**: Mejor valor acumulado
 
 **Qué buscar**:
-- ✅ Línea roja estabiliza → convergencia
-- ❌ Línea roja sigue subiendo → necesita más trials
+- Línea roja estabiliza → convergencia
+- Línea roja sigue subiendo → necesita más trials
 
 ### 2. `param_importances.png`
 
@@ -536,7 +537,7 @@ curl http://localhost:5050/health
 
 ### Warning: "FutureWarning: filesystem tracking backend"
 
-✅ **Ya resuelto**: El script ahora usa SQLite por defecto (`sqlite:///runs/mlflow_local/mlflow.db`)
+ **Ya resuelto**: El script ahora usa SQLite por defecto (`sqlite:///runs/mlflow_local/mlflow.db`)
 
 Si ves este warning, verifica que estés usando la versión actualizada del script.
 
@@ -653,12 +654,12 @@ Para tu tesis, documenta:
 
 Después de optimización de hiperparámetros, siguiente fase:
 
-1. ✅ **Aplicar parámetros óptimos** → Actualizar `base.yaml`
-2. 📊 **Walk-Forward Validation** → Validar robustez temporal
+1.  **Aplicar parámetros óptimos** → Actualizar `base.yaml`
+2.  **Walk-Forward Validation** → Validar robustez temporal
 3. 🔍 **Feature Importance** → Identificar features más relevantes
 4. 💼 **Portfolio Optimization** → Allocation multi-ticker óptimo
-5. 🎯 **Ensemble Methods** → Combinar múltiples modelos
-6. 📈 **Risk Management** → Optimizar position sizing
+5.  **Ensemble Methods** → Combinar múltiples modelos
+6.  **Risk Management** → Optimizar position sizing
 
 Ver `README_E1.md` para roadmap completo del proyecto.
 # Iniciar dashboard
@@ -668,10 +669,10 @@ optuna-dashboard sqlite:///optuna_studies.db
 ```
 
 **Ventajas del Dashboard**:
-- 📊 Visualizaciones interactivas
+- Visualizaciones interactivas
 - 🔄 Actualización en tiempo real (ver progreso mientras corre)
-- 📈 Múltiples estudios en una vista
-- 🎯 Análisis de convergencia detallado
+- Múltiples estudios en una vista
+- Análisis de convergencia detallado
 - 📋 Comparación entre estudios
 
 ---
@@ -680,7 +681,7 @@ optuna-dashboard sqlite:///optuna_studies.db
 
 ### Para tu Tesis
 
-1. **Documentar búsqueda**: Guardar `all_trials.csv` y gráficos
+1. **Documentar búsqueda**: Guardar `e1_all_trials.csv` y gráficos
 2. **Reportar convergencia**: Mostrar que 50 trials es suficiente
 3. **Analizar importancia**: Justificar qué parámetros tunear manualmente
 4. **Validar robustez**: Top 10% trials tienen parámetros similares
@@ -696,13 +697,13 @@ optuna-dashboard sqlite:///optuna_studies.db
 
 ### Mejores Prácticas
 
-✅ **Hacer**:
+ **Hacer**:
 - Empezar con `--quick` para validar
 - Usar seeds (el script ya usa `seed=42`)
 - Guardar versión del código con git
 - Documentar cambios en parámetros
 
-❌ **Evitar**:
+ **Evitar**:
 - Optimizar con muy pocos datos (<1 año)
 - Usar mismos datos para entrenar y evaluar
 - Cambiar parámetros manualmente sin re-optimizar
@@ -836,7 +837,7 @@ Típicamente:
 
 Después de optimización:
 
-1. ✅ **Aplicar parámetros** en `base.yaml`
-2. 📊 **Validar con Walk-Forward** (implementar siguiente)
+1.  **Aplicar parámetros** en `base.yaml`
+2.  **Validar con Walk-Forward** (implementar siguiente)
 3. 🔍 **Feature Importance** (analizar qué features usar)
 4. 💼 **Portfolio Optimization** (multi-ticker allocation)

@@ -4,7 +4,7 @@ Sistema de limpieza automática de datos OHLCV para detectar y corregir problema
 
 ---
 
-## 🎯 **¿Por qué es necesario?**
+## **¿Por qué es necesario?**
 
 Los datos descargados de yfinance pueden tener:
 - **Valores nulos** (fechas sin datos, APIs fallidas)
@@ -19,41 +19,36 @@ Los datos descargados de yfinance pueden tener:
 
 ---
 
-## 📊 **Sistema de Diagnóstico**
+## **Sistema de Diagnóstico**
 
 Detecta automáticamente:
 
-### **1. Valores Nulos**
-```
+### **1. Valores Nulos**```
 Ticker: AAPL
-  ⚠️  Nulos detectados en: volume, adj_close
+  ⚠  Nulos detectados en: volume, adj_close
      - volume: 12 (0.5%)
      - adj_close: 3 (0.1%)
 ```
 
-### **2. Timestamps Duplicados**
-```
-  ⚠️  5 timestamps duplicados
-```
-
-### **3. Volumen Cero**
-```
-  ⚠️  18 días con volumen=0
+### **2. Timestamps Duplicados**```
+  ⚠  5 timestamps duplicados
 ```
 
-### **4. Gaps Temporales**
+### **3. Volumen Cero**```
+  ⚠  18 días con volumen=0
 ```
-  ⚠️  2 gaps grandes en serie temporal (>4 días)
+
+### **4. Gaps Temporales**```
+  ⚠  2 gaps grandes en serie temporal (>4 días)
      - 2020-03-15: gap de 7 días
      - 2023-11-23: gap de 5 días
 ```
 
 ---
 
-## 🛠️ **Estrategias de Limpieza**
+## 🛠 **Estrategias de Limpieza**
 
-### **1. Forward Fill (Recomendado) - `forward_fill`**
-```python
+### **1. Forward Fill (Recomendado) - `forward_fill`**```python
 strategy="forward_fill"
 ```
 
@@ -67,8 +62,7 @@ strategy="forward_fill"
 - Ideal para precios (close, high, low) → precio se mantiene hasta nuevo tick
 - Volumen → si no hay datos, asume volumen del día anterior
 
-**Ejemplo:**
-```
+**Ejemplo:**```
 close:  [100, 105, NaN, NaN, 110]
         ↓
 clean:  [100, 105, 105, 105, 110]
@@ -76,8 +70,7 @@ clean:  [100, 105, 105, 105, 110]
 
 ---
 
-### **2. Interpolación Lineal - `interpolate`**
-```python
+### **2. Interpolación Lineal - `interpolate`**```python
 strategy="interpolate"
 ```
 
@@ -90,8 +83,7 @@ strategy="interpolate"
 - Features continuas (no precios)
 - **Cuidado**: puede introducir valores irreales (ej. precio interpolado que nunca existió)
 
-**Ejemplo:**
-```
+**Ejemplo:**```
 close:  [100, NaN, NaN, 110]
         ↓
 clean:  [100, 103.3, 106.6, 110]
@@ -99,8 +91,7 @@ clean:  [100, 103.3, 106.6, 110]
 
 ---
 
-### **3. Eliminar Filas - `drop`**
-```python
+### **3. Eliminar Filas - `drop`**```python
 strategy="drop"
 ```
 
@@ -111,8 +102,7 @@ strategy="drop"
 - **NUNCA para series temporales** (pierdes continuidad temporal)
 - Solo si tienes exceso de datos (>10 años) y puedes perder días
 
-**Ejemplo:**
-```
+**Ejemplo:**```
 df:     [100, 105, NaN, 110, 115]
         ↓
 clean:  [100, 105, 110, 115]  # Se pierde el día con NaN
@@ -122,9 +112,7 @@ clean:  [100, 105, 110, 115]  # Se pierde el día con NaN
 
 ## 🚀 **Uso**
 
-### **Opción 1: Ejecutar manualmente (desarrollo)**
-
-```bash
+### **Opción 1: Ejecutar manualmente (desarrollo)**```bash
 # Ver qué problemas hay en los datos
 python scripts/run_data_cleaning.py
 
@@ -135,19 +123,18 @@ python scripts/run_data_cleaning.py --interpolate
 python scripts/run_data_cleaning.py --drop
 ```
 
-**Output:**
-```
+**Output:**```
 ================================================================================
 LIMPIEZA DE DATOS - Estrategia: FORWARD_FILL
 ================================================================================
 
-📊 AAPL
-  ⚠️  Nulos detectados en: volume
+ AAPL
+  ⚠  Nulos detectados en: volume
      - volume: 5 (0.2%)
   🔧 volume: 5 nulos (0.2%) → ✓ Forward fill
   ✓ Guardado: AAPL_daily.csv (2520 días)
 
-📊 MSFT
+ MSFT
   ✓ Sin valores nulos detectados
   ✓ Guardado: MSFT_daily.csv (2520 días)
 
@@ -156,7 +143,7 @@ RESUMEN DE LIMPIEZA
 ================================================================================
 Total tickers procesados: 25
   ✓ Limpiados: 24
-  ❌ Rechazados: 1
+   Rechazados: 1
 
 Tickers con más features problemáticas:
   - CEPU: 3 features con nulos
@@ -189,9 +176,7 @@ download_daily_data → clean_daily_data → train_e1_models → notify_api
 
 ---
 
-## 📁 **Estructura de Archivos**
-
-```
+## 📁 **Estructura de Archivos**```
 data/
 ├── raw/
 │   └── daily/
@@ -256,7 +241,7 @@ El archivo `data/clean/data_quality_report.json` contiene diagnóstico detallado
 
 ---
 
-## ⚙️ **Configuración Avanzada**
+## **Configuración Avanzada**
 
 ### **Cambiar estrategia en el DAG:**
 
@@ -273,15 +258,13 @@ def clean_daily_data(**context):
     )
 ```
 
-### **Ajustar mínimo de días:**
-
-```python
+### **Ajustar mínimo de días:**```python
 min_days=500,  # Requerir 2 años de datos
 ```
 
 ---
 
-## 🎯 **Decisiones sobre Features con Nulos**
+## **Decisiones sobre Features con Nulos**
 
 ### **Si una feature tiene muchos nulos (>10%):**
 
@@ -305,7 +288,7 @@ min_days=500,  # Requerir 2 años de datos
 
 ---
 
-## ✅ **Validación Post-Limpieza**
+## **Validación Post-Limpieza**
 
 El pipeline E1 ahora prioriza datos limpios:
 
@@ -318,12 +301,12 @@ if clean_csv_path.exists():
     print(f"✓ Usando datos limpios")
 else:
     csv_path = raw_dir / f"{ticker}_daily.csv"  # Fallback a raw
-    print(f"⚠️  Usando datos raw (limpieza no ejecutada)")
+    print(f"⚠  Usando datos raw (limpieza no ejecutada)")
 ```
 
 ---
 
-## 📊 **Impacto en IC**
+## **Impacto en IC**
 
 **Antes** (sin limpieza):
 - Nulos propagados a features → NaN en MACD, RSI, etc.
@@ -337,8 +320,7 @@ else:
 
 ## 🔧 **Troubleshooting**
 
-### **"No data found" en Airflow**
-```bash
+### **"No data found" en Airflow**```bash
 # Verificar que los datos fueron descargados
 ls data/raw/daily/
 
@@ -346,9 +328,8 @@ ls data/raw/daily/
 python scripts/run_data_cleaning.py
 ```
 
-### **Ticker rechazado por pocos días**
-```
-❌ TICKER descartado: solo 180 días después de limpieza (< 252 requerido)
+### **Ticker rechazado por pocos días**```
+ TICKER descartado: solo 180 días después de limpieza (< 252 requerido)
 ```
 
 **Solución**: Ticker tiene demasiados nulos. Opciones:
@@ -356,8 +337,7 @@ python scripts/run_data_cleaning.py
 2. Descargar más historia (`period="15y"`)
 3. Reducir `min_days` (no recomendado)
 
-### **Features siguen teniendo NaN después de limpieza**
-```python
+### **Features siguen teniendo NaN después de limpieza**```python
 # Debug en train_e1_pipeline.py
 features = compute_e1_features(ohlcv, benchmark_df)
 print(features.isna().sum())  # Ver cuántos NaN por feature
@@ -368,7 +348,7 @@ print(features.isna().sum())  # Ver cuántos NaN por feature
 
 ---
 
-## 📚 **Referencias**
+## **Referencias**
 
 - **Código fuente**: `src/data/clean_daily.py`
 - **Script manual**: `scripts/run_data_cleaning.py`

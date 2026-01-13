@@ -231,7 +231,7 @@ def process_daily_data_with_cleaning(
 
         # Cargar datos
         df = pd.read_csv(csv_path)
-        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        df["timestamp"] = pd.to_datetime(df["timestamp"], format='ISO8601', utc=True)
 
         # Diagnóstico pre-limpieza
         report = diagnose_data_quality(df, ticker)

@@ -22,7 +22,7 @@ Arbitraje estadístico basado en cointegración y procesos mean-reverting para t
 - Beta del portfolio ~0 (market-neutral)
 - Holding promedio: 5–20 días (según half-life)
 
-## 🏗️ Arquitectura del Modelo
+## Arquitectura del Modelo
 
 ### k-NN + Cointegración + Ornstein-Uhlenbeck
 
@@ -33,7 +33,7 @@ Arbitraje estadístico basado en cointegración y procesos mean-reverting para t
 **1. Selección de pares** (cointegración):
 - Test Engle-Granger y/o Johansen: p-value < 0.05
 - Similitud fundamental: mismo sector, cap comparable
-- Ejemplos: YPF-PBR, GGAL-BMA, KO-PEP, AAPL-MSFT
+- Ejemplos: YPF-VIST, GGAL-BMA, KO-PEP, AAPL-MSFT
 
 **2. Construcción del spread**:
 ```
@@ -61,13 +61,14 @@ dS_t = θ(μ - S_t)dt + σdW_t
 
 | Archivo | Propósito | Estado |
 |---------|-----------|--------|
-| `src/pairs/select_pairs.py` | Test cointegración + filtros | ⏳ TODO |
-| `src/pairs/build_spread.py` | Cálculo β rolling + Z-score + half-life | ⏳ TODO |
-| `src/pairs/knn_confirm.py` | k-NN confirmatorio (opcional) | ⏳ TODO |
-| `src/backtest/rules_e4.py` | Reglas entrada/salida Z-score | ⏳ TODO |
-| `src/models/ou_process.py` | Estimación parámetros OU (θ, μ, σ) | ⏳ TODO |
+| `src/pairs/select_pairs.py` | Test cointegración + filtros | ✅ IMPLEMENTADO |
+| `src/pairs/build_spread.py` | Cálculo β rolling + Z-score + half-life | ✅ IMPLEMENTADO |
+| `src/pairs/knn_confirm.py` | k-NN confirmatorio (opcional) | ✅ IMPLEMENTADO |
+| `src/backtest/rules_e4.py` | Reglas entrada/salida Z-score | ✅ IMPLEMENTADO |
+| `src/models/ou_process.py` | Estimación parámetros OU (θ, μ, σ) | ✅ IMPLEMENTADO |
+| `src/train_e4_pipeline.py` | Pipeline principal E4 | ✅ IMPLEMENTADO |
 
-## 📊 Features y Variables
+## Features y Variables
 
 **Spread y derivados**:
 - **`spread`**: S_t = P_A - β × P_B
@@ -90,7 +91,7 @@ dS_t = θ(μ - S_t)dt + σdW_t
 - **`coint_pvalue`**: p-value test Engle-Granger (actualizado)
 - **`beta_std`**: Estabilidad de β (desviación estándar rolling)
 
-## 🎯 Lógica de Señales de Trading
+## Lógica de Señales de Trading
 
 ### Entrada (long-short, dollar-neutral)
 
@@ -129,7 +130,7 @@ dS_t = θ(μ - S_t)dt + σdW_t
 - Tamaño por par: 15-25% del capital
 - Ajustar por volatilidad del spread
 
-## 📈 Métricas de Evaluación
+## Métricas de Evaluación
 
 **Estadísticas de cointegración**:
 - **Tasa de convergencia**: % de veces que Z vuelve a 0
@@ -166,58 +167,68 @@ runs/e4_pairs/<timestamp>/
 
 ## 🚀 Comandos de Uso
 
-**Una vez implementado**:
+### Ejecución Directa (Python)
 
 ```bash
-# Paso 1: Seleccionar pares cointegrados
-python -m src.pairs.select_pairs --sector energy --min_pvalue 0.05
+# Ejecutar pipeline completo con todos los pares del config
+python -m src.train_e4_pipeline
 
-# Paso 2: Construir spreads y calcular Z-scores
-python -m src.pairs.build_spread --pairs GGAL,BMA YPF,PAMP
+# Ejecutar con pares específicos
+python -m src.train_e4_pipeline --pairs GGAL.BA,BMA.BA YPFD.BA,PAMP.BA
 
-# Paso 3: Entrenar k-NN (opcional)
-python -m src.pairs.knn_confirm --pairs GGAL,BMA --k 10
+# Ejecutar con tag personalizado para output
+python -m src.train_e4_pipeline --output-tag my_test
 
-# Paso 4: Backtest con reglas Z-score
-python -m src.backtest.rules_e4 --pairs GGAL,BMA YPF,PAMP
+# Test rápido con un par
+python scripts/test_e4_simple.py
 ```
 
-## 🔄 Próximos Pasos para Implementación
+### Ejecución con Airflow (Producción)
 
-1. ⏳ **select_pairs.py**:
-   - Generar candidatos por sector/correlación
-   - Test Engle-Granger (statsmodels.tsa.stattools.coint)
-   - Test Johansen (opcional, multivariate)
-   - Filtrar por p-value < 0.05 y half-life < 20 días
+**DAG 1: Pipeline Principal** (Semanal - Lunes 4 AM)
+```bash
+# Trigger manual
+airflow dags trigger e4_pairs_trading_pipeline
 
-2. ⏳ **build_spread.py**:
-   - Estimar β rolling (OLS en ventana móvil 60-252 días)
-   - Calcular spread S_t = P_A - β × P_B
-   - Calcular Z-score normalizado
-   - Estimar parámetros OU (MLE o discrete approximation)
+# Con parámetros custom
+airflow dags trigger e4_pairs_trading_pipeline \
+  --conf '{"use_knn": "True", "entry_z": "2.5", "exit_z": "0.2"}'
+```
 
-3. ⏳ **knn_confirm.py**:
-   - Construir espacio de estados [S_t, ΔS_t, Z_t, ...]
-   - Implementar k-NN con sklearn.neighbors
-   - Predicción: spread futuro o dirección de convergencia
+**DAG 2: Re-calibración Mensual** (Día 15 de cada mes)
+```bash
+airflow dags trigger e4_monthly_recalibration
+```
 
-4. ⏳ **rules_e4.py**:
-   - Lógica entrada: Z > ±2.0 + filtros
-   - Lógica salida: Z cruza 0, stop ±3.0, time-stop 20 días
-   - Dollar-neutral sizing
+**UI de Airflow**: http://localhost:8080 → DAG `e4_pairs_trading_pipeline`
 
-5. ⏳ **ou_process.py**:
-   - Maximum Likelihood Estimation de θ, μ, σ
-   - Cálculo half-life: ln(2) / θ
-   - Validación estacionariedad
+**MLflow**: http://localhost:5000 → Experiment "E4_Pairs_Trading_Strategy"
 
-## 🔧 Configuración
+📖 **Documentación completa de DAGs**: [docs/AIRFLOW_E4_DAGS.md](docs/AIRFLOW_E4_DAGS.md)
+
+
+**Estructura de salida generada**:
+
+```
+runs/e4_pairs/<timestamp>/
+├── config_used.yaml              # Configuración utilizada
+├── summary_all_pairs.csv         # Resumen de todos los pares
+├── GGAL.BA_BMA.BA/
+│   ├── spread_timeseries.csv    # Serie temporal del spread
+│   ├── ou_params.json            # Parámetros OU estimados
+│   ├── trades.csv                # Historial de operaciones
+│   └── backtest_summary.json    # Métricas del par
+└── YPFD.BA_PAMP.BA/
+    └── ...
+```
+
+##  Configuración
 
 Parámetros en [`base.yaml`](src/config/base.yaml) sección `strategies.e4_pairs`:
 
 ```yaml
 e4_pairs:
-  training_window_days: 252      # 1 año para cointegración
+  training_window_days: 252       # 1 año para cointegración
   beta_lookback_days: 120         # Rolling β
   horizon_days: 10                # k-NN confirmación
   
@@ -236,14 +247,22 @@ e4_pairs:
     distance: "euclidean"
   
   pairs:
-    - ["GGAL", "BMA"]
-    - ["YPF", "PAMP"]
-    - ["EDN", "CEPU"]
-    - ["KO", "PEP"]
-    - ["XLE", "XLF"]
+    - ["GGAL.BA", "BMA.BA"] - Bancos Argentina
+    - ["YPFD.BA", "VIST.BA"] - Energía Argentina
+    - ["PAMP.BA", "CEPU.BA"] - Energía Argentina
+    - ["TGSU2.BA", "TGNO4.BA"] - Transporte de Gas Argentina
+    - ["TXAR.BA", "LOMAD.BA"] - Utilities Argentina
+    - ["TECO2.BA", "CVHD.BA"] - Servicios Argentina
+    - ["CVHD.BA","GCLA.BA"] - Medios Argentina
+    - ["KO", "PEP"] - Consumo
+    - ["MSFT", "GOOGL"] - Tech
+    - ["XOM", "CVX"] - Energía
+    - ["JPM", "BAC"] - Bancos/financiero
+    - ["CAT", "DE"] - Industriales
+
 ```
 
-## ⚠️ Consideraciones Importantes
+## ⚠ Consideraciones Importantes
 
 **Riesgos específicos**:
 - **Breakdown de cointegración**: Validar p-value mensualmente
@@ -260,18 +279,55 @@ e4_pairs:
 - Correlación alta es necesaria pero no suficiente
 - Test formal de cointegración es obligatorio
 
-## 📚 Referencias
+## Referencias
 
 - [README general](README.md) - Overview del proyecto
 - [base.yaml](src/config/base.yaml) - Configuración E4
 - Paper: "Universal Cointegration Pairs Trading via Machine Learning" (Nikolaev)
 
-## 🎓 Ejemplos de Pares por Sector
+## Ejemplos de Pares por Sector
 
 **Energía**:
 - YPF - PBR (petróleo Argentina-Brasil)
 - XLE - XLF (ETFs sectores)
+✅ **IMPLEMENTADO** - Listo para ejecutar y evaluar
 
+## 📝 Notas de Implementación
+
+La estrategia E4 ha sido completamente implementada siguiendo las especificaciones de este documento:
+
+**Módulos implementados**:
+1. **`src/pairs/select_pairs.py`**: Selección de pares cointegrados usando tests de Engle-Granger y Johansen
+2. **`src/pairs/build_spread.py`**: Construcción de spreads con hedge ratio rolling y cálculo de z-scores
+3. **`src/pairs/ou_process.py`**: Estimación de parámetros Ornstein-Uhlenbeck (θ, μ, σ) y half-life
+4. **`src/pairs/knn_confirm.py`**: Modelo k-NN para confirmación de señales (opcional)
+5. **`src/backtest/rules_e4.py`**: Reglas de trading basadas en z-score con gestión dollar-neutral
+6. **`src/train_e4_pipeline.py`**: Pipeline completo que integra todos los componentes
+
+**Características implementadas**:
+- ✅ Tests de cointegración (Engle-Granger y Johansen)
+- ✅ Cálculo de spread con hedge ratio rolling (β)
+- ✅ Z-score normalizado para señales de entrada/salida
+- ✅ Estimación de parámetros OU via MLE discreto
+- ✅ Cálculo de half-life y validación de estacionariedad
+- ✅ k-NN confirmatorio con cross-validation
+- ✅ Señales de trading: entrada (|z| ≥ 2.0), salida (|z| ≤ 0.25), stop (|z| ≥ 3.0)
+- ✅ Backtest con gestión dollar-neutral (exposición neta ~0)
+- ✅ Métricas de evaluación: Sharpe, CAGR, drawdown, win rate, etc.
+- ✅ Soporte para todos los pares definidos en `base.yaml`
+
+**Pares configurados en `base.yaml`**:
+- Bancos Argentina: GGAL.BA - BMA.BA
+- Energía Argentina: YPFD.BA - PAMP.BA, EDN.BA - CEPU.BA
+- Consumo USA: KO - PEP
+- Sectores USA: XLE - XLF
+
+**Próximos pasos**:
+1. Ejecutar el pipeline con los pares configurados
+2. Analizar resultados de cointegración y parámetros OU
+3. Evaluar performance del backtest (Sharpe, drawdown, win rate)
+4. Ajustar parámetros si es necesario (entry_z, stop_z, time_stop)
+5. Comparar con estrategias E1 y E2
 **Bancos Argentina**:
 - GGAL - BMA (Galicia - Macro)
 
@@ -286,4 +342,4 @@ e4_pairs:
 
 ---
 
-**Estado**: ⏳ Especificada, pendiente codificación
+**Estado**:  Especificada, pendiente codificación

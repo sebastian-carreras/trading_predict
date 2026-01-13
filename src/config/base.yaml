@@ -35,6 +35,18 @@ universe:
     - "SPY"
     - "QQQ"
     - "AMD"
+    # E4 pairs trading (activos adicionales)
+    - "TGSU2.BA"
+    - "TGNO4.BA"
+    - "YPF"
+    - "KO"
+    - "PEP"
+    - "XOM"
+    - "CVX"
+    - "JPM"
+    - "BAC"
+    - "CAT"
+    - "DE"
 
   # Asignación por estrategia (para entrenar/validar/backtest).
   tickers_by_strategy:
@@ -86,6 +98,67 @@ splits:
     e2: 20
     e4: 0
     e3: 0
+
+  # Decision scoring
+  # Preferred (new): multi-profile configuration. Strategies pick a profile; profiles define targets/weights/threshold.
+  strategy_profile:
+    e1_conservative: conservative
+    e2_moderate: moderate
+    e3_intraday: aggressive
+
+  decision_profiles:
+    conservative:
+      threshold: 0.65
+      target_metrics:
+        sortino_min: 1.0
+        calmar_min: 1.0
+        max_drawdown_max: 0.20
+        directional_accuracy_min: 0.58
+      weights:
+        sortino: 0.35
+        calmar: 0.25
+        max_drawdown: 0.25
+        directional_accuracy: 0.15
+
+    moderate:
+      threshold: 0.60
+      target_metrics:
+        cagr_min: 0.12
+        profit_factor_min: 1.30
+        hit_rate_min: 0.55
+        sharpe_min: 0.80
+      weights:
+        cagr: 0.30
+        profit_factor: 0.30
+        hit_rate: 0.20
+        sharpe: 0.20
+
+    aggressive:
+      threshold: 0.55
+      target_metrics:
+        sharpe_min: 1.00
+        profit_factor_min: 1.40
+        hit_rate_min: 0.52
+        max_drawdown_max: 0.30
+      weights:
+        sharpe: 0.35
+        profit_factor: 0.30
+        hit_rate: 0.20
+        max_drawdown: 0.15
+
+  # Legacy fallback (old): if no profile config exists, these are used.
+  target_metrics:
+    mae_max: 0.03
+    ic_min: 0.05
+    sharpe_min: 1.0
+    directional_accuracy_min: 0.58
+  decision_score:
+    threshold: 0.75
+    weights:
+      mae: 0.35
+      ic: 0.25
+      sharpe: 0.25
+      directional_accuracy: 0.15
 
 features:
   price:
@@ -191,22 +264,116 @@ strategies:
       stop_z: 3.0
       time_stop_days: 20
 
-    filters:
-      cointegration_pvalue_max: 0.05
-      half_life_days_max: 20
+    # Descubrimiento automático de pares cointegrados
+    discovery:
+      enabled: true  # Si True, descubre pares automáticamente; si False, usa 'pairs' fijos
+      pvalue_max: 0.10  # P-value máximo para cointegración (0.10 = 90% confianza)
+      half_life_min: 5.0  # Half-life mínimo en días
+      half_life_max: 500.0  # Half-life máximo en días (relajado para incluir pares de largo plazo)
+      correlation_min: 0.3  # Correlación mínima requerida (relajado)
+      max_pairs: 20  # Máximo número de pares a procesar
+      min_quality_score: 0.3  # Score mínimo de calidad (relajado)
+
+    # Universo de tickers para descubrir pares (se prueban todas las combinaciones)
+    universe:
+      # Argentina - Acciones
+      - "COME.BA"
+      - "BYMA.BA"
+      - "VALO.BA"
+      - "SEMI.BA"
+      - "GGAL.BA"
+      - "MORI.BA"
+      - "AGRO.BA"
+      - "TXAR.BA"
+      - "FERR.BA"
+      - "SUPV.BA"
+      - "PAMP.BA"
+      - "ALUA.BA"
+      - "CEPU.BA"
+      - "BHIP.BA"
+      - "CARC.BA"
+      - "EDN.BA"
+      - "METR.BA"
+      - "BOLT.BA"
+      - "COMED.BA"
+      - "LONG.BA"
+      - "LOMA.BA"
+      - "GCDI.BA"
+      - "TRAN.BA"
+      - "AMZN.BA"
+      - "IBIT.BA"
+      - "CELU.BA"
+      - "YPFD.BA"
+      - "ETHA.BA"
+      - "BMA.BA"
+      - "BBAR.BA"
+      - "TGNO4.BA"
+      - "CRES.BA"
+      - "ECOG.BA"
+      - "TGSU2.BA"
+      - "BYMAD.BA"
+      - "GOOGL.BA"
+      - "IRSA.BA"
+      - "INVJ.BA"
+      - "MELI.BA"
+      - "NVDA.BA"
+      - "SATL.BA"
+      - "SAMI.BA"
+      - "GLOB.BA"
+      - "NFLX.BA"
+      - "GLD.BA"
+      - "TECO2.BA"
+      - "A3.BA"
+      - "ROSE.BA"
+      - "CECO2.BA"
+      - "PAMPD.BA"
+      # Argentina - Bonos Soberanos
+      # Nota: Estos bonos se buscarán primero en Yahoo Finance
+      # Si no se encuentran, el sistema usará IOL como fallback
+      - "AL29"
+      - "AL30"
+      - "AL35"
+      - "AL41"
+      - "AE38"
+      - "GD29"
+      - "GD30"
+      - "GD35"
+      - "GD38"
+      - "GD41"
+      - "GD46"
+      - "AL29D"
+      - "AL30D"
+      - "AL35D"
+      - "AL41D"
+      - "GD29D"
+      # USA - Consumo
+      - "KO"
+      - "PEP"
+      # USA - Tech
+      - "MSFT"
+      - "GOOGL"
+      - "AAPL"
+      - "META"
+      # USA - Energía
+      - "XOM"
+      - "CVX"
+      # USA - Bancos
+      - "JPM"
+      - "BAC"
+      # USA - Industriales
+      - "CAT"
+      - "DE"
 
     knn:
       enabled: true
       k_candidates: [5, 10, 20]
       distance: "euclidean"  # euclidean | mahalanobis
 
-    # Pares objetivo (lista inicial, cerrada para la tesis).
+    # Pares fijos (solo se usan si discovery.enabled = False)
     pairs:
-      - ["GGAL", "BMA"]
-      - ["YPF", "PAMP"]
-      - ["EDN", "CEPU"]
-      - ["KO", "PEP"]
-      - ["XLE", "XLF"]
+      - ["GGAL.BA", "BMA.BA"]
+      - ["PAMP.BA", "CEPU.BA"]
+      - ["TGSU2.BA", "TGNO4.BA"]
 
   e3_intraday:
     enabled: true

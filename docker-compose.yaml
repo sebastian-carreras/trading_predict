@@ -24,6 +24,9 @@ x-airflow-common: &airflow-common
     MLFLOW_S3_ENDPOINT_URL: http://s3:9000
     MLFLOW_TRACKING_URI: http://mlflow:5000
     TRADING_PREDICT_ROOT: /opt/airflow
+    # IOL API credentials for fallback data download
+    IOL_USERNAME: ${IOL_USERNAME:-}
+    IOL_PASSWORD: ${IOL_PASSWORD:-}
     # Matplotlib cache dir: avoid permission issues writing to /home/airflow/.cache
     # /tmp is writable in containers and doesn't require creating any host directory.
     MPLCONFIGDIR: /tmp/matplotlib

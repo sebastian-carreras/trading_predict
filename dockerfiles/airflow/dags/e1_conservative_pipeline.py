@@ -15,6 +15,7 @@ from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
 import mlflow
 import os
+import json
 
 # Configuración MLflow
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
@@ -39,8 +40,18 @@ dag = DAG(
     tags=['trading', 'e1', 'conservative', 'gru'],
     params={
         'tickers': 'YPFD.BA, GGAL.BA, PAMP.BA, BYMA.BA, CEPU.BA, AAPL, MSFT, JNJ, PG, V',  # Comma-separated tickers: "AAPL,MSFT,GOOGL,META,NVDA", vacío = todos del config
+        'use_tuned_params': 'False',  # True = aplicar overrides por ticker desde YAML (Optuna)
+        'tuned_params_path': 'reports/hyperparameter_optimization/e1_tuned_params_by_ticker.yaml',
     },
 )
+
+
+def _as_bool(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"true", "1", "yes", "on"}
 
 
 def download_daily_data(**context):
@@ -128,6 +139,31 @@ def train_e1_with_mlflow(**context):
     
     root = Path("/opt/airflow")
     config = load_yaml(root / "src/config/base.yaml")
+
+    # Elegir baseline vs tuned params (Optuna) desde la UI del DAG.
+    use_tuned_params = _as_bool(context['params'].get('use_tuned_params'))
+    tuned_params_path = str(context['params'].get('tuned_params_path') or '').strip()
+
+    tuned_map = None
+    if use_tuned_params:
+        if not tuned_params_path:
+            tuned_params_path = 'reports/hyperparameter_optimization/e1_tuned_params_by_ticker.yaml'
+
+        resolved_tuned_path = root / tuned_params_path
+        os.environ['E1_TUNED_PARAMS_PATH'] = str(resolved_tuned_path)
+
+        if resolved_tuned_path.exists():
+            try:
+                tuned_map = load_yaml(resolved_tuned_path)
+            except Exception as e:
+                print(f"⚠️ No se pudo cargar tuned params YAML: {resolved_tuned_path}: {e}")
+                tuned_map = None
+        else:
+            print(f"⚠️ use_tuned_params=True pero no existe: {resolved_tuned_path}")
+    else:
+        # Asegurar baseline aunque haya quedado una env var de ejecuciones previas.
+        os.environ.pop('E1_TUNED_PARAMS_PATH', None)
+        os.environ.pop('TUNED_PARAMS_PATH', None)
     
     # Obtener tickers del XCom (pasados desde download_daily_data)
     tickers_from_download = context['task_instance'].xcom_pull(
@@ -172,6 +208,16 @@ def train_e1_with_mlflow(**context):
     results = []
     for ticker in tickers:
         with mlflow.start_run(run_name=f"E1_{ticker}_{timestamp}"):
+            mlflow.log_param("use_tuned_params", use_tuned_params)
+            mlflow.log_param("tuned_params_path", tuned_params_path if use_tuned_params else "")
+            if use_tuned_params and isinstance(tuned_map, dict):
+                overrides_for_ticker = tuned_map.get(ticker) or {}
+                # Guardar un snapshot (string) para reproducibilidad
+                mlflow.log_param(
+                    "tuned_overrides",
+                    json.dumps(overrides_for_ticker, sort_keys=True, ensure_ascii=False),
+                )
+
             # Extraer configuración del modelo
             e1_config = config["strategies"]["e1_conservative"]
             model_config = e1_config.get("model", {})
@@ -219,13 +265,29 @@ def train_e1_with_mlflow(**context):
                 # Log métricas de backtesting a MLflow
                 mlflow.log_metrics({
                     "bt_sharpe": result.get("bt_sharpe", 0),
+                    "bt_sortino": result.get("bt_sortino", 0),
                     "bt_cagr": result.get("bt_cagr", 0),
                     "bt_max_drawdown": result.get("bt_max_drawdown", 0),
                     "bt_calmar": result.get("bt_calmar", 0),
                     "bt_profit_factor": result.get("bt_profit_factor", 0),
                     "bt_win_rate": result.get("bt_win_rate", 0),
+                    "bt_hit_rate": result.get("bt_hit_rate", result.get("bt_win_rate", 0)),
                     "bt_num_trades": result.get("bt_num_trades", 0),
                 })
+
+                if result.get("decision_profile"):
+                    mlflow.log_param("decision_profile", result.get("decision_profile"))
+
+                if result.get("decision_score") is not None:
+                    mlflow.log_metric("decision_score", result.get("decision_score", 0))
+                for k, v in (result or {}).items():
+                    if not isinstance(k, str) or not k.startswith("decision_component_"):
+                        continue
+                    if v is None:
+                        continue
+                    mlflow.log_metric(k, v)
+                if result.get("decision_signal"):
+                    mlflow.log_param("decision_signal", result.get("decision_signal"))
                 
                 # Log modelo GRU como artifact
                 model_path = out_dir / ticker / f"{ticker}_model.pth"
@@ -244,6 +306,12 @@ def train_e1_with_mlflow(**context):
                     "ic": result.get("ml_ic"),
                     "sharpe": result.get("bt_sharpe"),
                     "max_dd": result.get("bt_max_drawdown"),
+                    "decision_score": result.get("decision_score"),
+                    "decision_signal": result.get("decision_signal"),
+                    "decision_profile": result.get("decision_profile"),
+                    "decision_component_directional_accuracy": result.get(
+                        "decision_component_directional_accuracy"
+                    ),
                 })
                 
             except Exception as e:
@@ -262,12 +330,15 @@ def train_e1_with_mlflow(**context):
     # Calcular métricas agregadas de IC
     successful_results = [r for r in results if r["status"] == "success" and r.get("ic") is not None]
     ic_values = [r["ic"] for r in successful_results]
+    decision_scores = [r.get("decision_score") for r in successful_results if isinstance(r.get("decision_score"), (int, float))]
+    buy_signals = sum(1 for r in successful_results if r.get("decision_signal") == "buy")
     
     # Log resumen como artifact en MLflow
     with mlflow.start_run(run_name=f"E1_Summary_{timestamp}"):
         mlflow.log_artifact(str(summary_path))
         mlflow.log_metric("total_tickers", len(tickers))
         mlflow.log_metric("successful_tickers", len(successful_results))
+        mlflow.log_metric("decision_buy_signals", float(buy_signals))
         
         # Métricas agregadas de IC
         if ic_values:
@@ -277,6 +348,10 @@ def train_e1_with_mlflow(**context):
             mlflow.log_metric("ic_max", float(max(ic_values)))
             mlflow.log_metric("ic_positive_count", sum(1 for ic in ic_values if ic > 0))
             mlflow.log_metric("ic_above_threshold", sum(1 for ic in ic_values if ic > 0.05))  # IC > 5%
+        if decision_scores:
+            mlflow.log_metric("decision_score_mean", float(sum(decision_scores) / len(decision_scores)))
+            mlflow.log_metric("decision_score_min", float(min(decision_scores)))
+            mlflow.log_metric("decision_score_max", float(max(decision_scores)))
     
     context['task_instance'].xcom_push(key='run_dir', value=str(out_dir))
     return f"Entrenados {len(results)} modelos"

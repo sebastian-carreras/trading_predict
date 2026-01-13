@@ -14,14 +14,27 @@ Predicción de retornos acumulados a 90 días usando arquitectura GRU para inver
 - **Rebalanceo**: Mensual o trimestral
 - **Umbrales**: τ_buy = 0.06 (6%), τ_sell = 0.00
 - **Filtros**: RSI < 60, Close > SMA(200), Bollinger %B < 0.9
+- **Perfil de scoring**: `conservative` (configurable por estrategia)
+- **Criterio de decisión**: `decision_score` ≥ 0.65 (perfil conservative)
+- **Directional Accuracy mínima** (en el perfil): 58% como piso para aprobar señales
 
-**Métricas objetivo**:
-- Sharpe neto > 0.9
-- Max Drawdown < 15%
-- Turnover < 1 rotación/mes
-- Win rate > 55%
+**Métricas objetivo (para `decision_score`, perfil conservative)**:
+- Sortino ≥ 1.0
+- Calmar ≥ 1.0
+- Max Drawdown ≤ 20%
+- Directional Accuracy ≥ 0.58
+- `decision_score` ≥ 0.65 para emitir señal BUY
 
-## 🏗️ Arquitectura del Modelo
+## 🧮 Decision Score Compuesto
+
+- El pipeline calcula un `decision_score` por **perfil** (conservative/moderate/aggressive).
+- Para E1 se usa por defecto el perfil `conservative` (ver `splits.strategy_profile`).
+- Los objetivos y pesos se configuran en `splits.decision_profiles.<profile>.{target_metrics,weights}` y el umbral BUY/HOLD en `splits.decision_profiles.<profile>.threshold`.
+- Se imprime en consola al final del walk-forward/time split, se persiste en `*_summary.csv` y se loguea en MLflow/Airflow.
+- Los componentes se loguean de forma **dinámica** como `decision_component_<metric>` (ej: `decision_component_sortino`, `decision_component_calmar`, `decision_component_max_drawdown`, `decision_component_directional_accuracy`).
+- También se registra `decision_profile` para poder comparar runs entre perfiles.
+
+## Arquitectura del Modelo
 
 ### GRU (Gated Recurrent Unit)
 
@@ -55,13 +68,12 @@ Output (1): predicción de retorno a 90 días
 
 | Archivo | Propósito | Estado |
 |---------|-----------|--------|
-| `src/data/download_daily.py` | Descarga OHLCV diario + benchmark SPY | ✅ |
-| `src/features/build_features_e1.py` | Cálculo de 22 features técnicos | ✅ |
-| `src/features/build_sequences.py` | Conversión a secuencias RNN | ✅ |
-| `src/models/e1_gru.py` | Arquitectura GRU PyTorch | ✅ |
-| `src/train_e1_pipeline.py` | Pipeline end-to-end | ✅ |
-| `src/backtest/engine.py` | Motor de backtesting con costos | ⏳ |
-| `src/backtest/rules_e1.py` | Reglas de señal (filtros) | ⏳ |
+| `src/data/download_daily.py` | Descarga OHLCV diario + benchmark SPY |  |
+| `src/features/build_features_e1.py` | Cálculo de 22 features técnicos |  |
+| `src/features/build_sequences.py` | Conversión a secuencias RNN |  |
+| `src/models/e1_gru.py` | Arquitectura GRU PyTorch |  |
+| `src/train_e1_pipeline.py` | Pipeline end-to-end |  |
+| `src/backtest/daily.py` | Backtesting diario con costos (señales por `tau_buy`/`tau_sell`) + métricas |  |
 
 ## Cómo Usar
 
@@ -91,6 +103,8 @@ python -m src.train_e1_pipeline
 python -m src.train_e1_pipeline --tickers YPF,GGAL,AAPL
 ```
 
+El pipeline realiza validación walk-forward usando `temporal_train_val_split` internamente para preservar datos en train/val y aplica embargo configurable.
+
 ### Paso 4: Revisar resultados
 
 Los resultados se guardan en `runs/e1_conservative/<timestamp>/`:
@@ -102,16 +116,55 @@ runs/e1_conservative/20260105_153022/
 ├── YPF/
 │   ├── YPF_predictions.csv   # Predicciones (y_true, y_pred)
 │   ├── YPF_scaler.csv         # Scaler (mean/std de features)
-│   └── YPF_summary.csv        # Métricas ML
+│   ├── YPF_walkforward_folds.csv      # Resumen de folds (si se usa walk-forward)
+│   ├── YPF_walkforward_backtest.csv   # Backtest agregado walk-forward
+│   ├── YPF_walkforward_predictions.csv# Predicciones agregadas walk-forward
+│   └── YPF_summary.csv        # Métricas ML + trading + decision_score
 ├── GGAL/
 │   └── ...
 └── AAPL/
-    └── ...
+  └── ...
+
+Si `MLFLOW_TRACKING_URI` está configurado, cada ticker registra métricas y parámetros (incluyendo `decision_score` y sus componentes) en el experimento `E1_Conservative`.
 ```
 
 ## Parámetros (desde base.yaml)
 
 ```yaml
+splits:
+  method: "walk_forward"
+  folds: 5
+  strategy_profile:
+    e1_conservative: conservative
+
+  decision_profiles:
+    conservative:
+      threshold: 0.65
+      target_metrics:
+        sortino_min: 1.0
+        calmar_min: 1.0
+        max_drawdown_max: 0.20
+        directional_accuracy_min: 0.58
+      weights:
+        sortino: 0.35
+        calmar: 0.25
+        max_drawdown: 0.25
+        directional_accuracy: 0.15
+
+  # (fallback legacy)
+  target_metrics:
+    mae_max: 0.03
+    ic_min: 0.05
+    sharpe_min: 1.0
+    directional_accuracy_min: 0.58
+  decision_score:
+    threshold: 0.75
+    weights:
+      mae: 0.35
+      ic: 0.25
+      sharpe: 0.25
+      directional_accuracy: 0.15
+
 strategies:
   e1_conservative:
     lookback_days: 180        # Ventana de entrada
@@ -149,7 +202,7 @@ Según especificación del documento:
 - Fundamentales (P/E, dividend yield) con lag de publicación
 - Sentimiento (score semanal) con ventana cerrada
 
-## 📊 Features Calculadas (27 indicadores)
+## Features Calculadas (27 indicadores)
 
 **Precio y retorno (9 features)**:
 - `ret_1d`, `ret_5d`, `ret_20d`, `ret_60d` - Retornos a distintos horizontes
@@ -161,7 +214,7 @@ Según especificación del documento:
 **Tendencia de largo plazo (14 features)**:
 - `sma_50`, `sma_200` - Medias móviles simples
 - `close_sma200_dist` - Distancia relativa: Close/SMA(200) - 1
-- `🎯 Lógica de Señales de Trading
+- ` Lógica de Señales de Trading
 
 **Criterio de compra** (entrada larga):
 - **Condición principal**: `ŷ^(90) > τ_buy` (predicción > 6%)
@@ -189,11 +242,14 @@ Cada ejecución genera outputs en `runs/e1_conservative/<timestamp>/`:
 ```
 runs/e1_conservative/20260105_153022/
 ├── config_used.yaml              # Configuración exacta usada
-├── summary_all.csv                # Resumen de todos los tickers
+├── summary_all.csv                # Resumen de todos los tickers (incluye decision_score promedio)
 ├── AAPL/
 │   ├── AAPL_predictions.csv      # (timestamp, y_true, y_pred)
 │   ├── AAPL_scaler.csv            # Parámetros de normalización
-│   └── AAPL_summary.csv           # Métricas ML
+│   ├── AAPL_walkforward_folds.csv # Métricas por fold (walk-forward)
+│   ├── AAPL_walkforward_backtest.csv # Serie PnL agregada walk-forward
+│   ├── AAPL_walkforward_predictions.csv # Predicciones agregadas walk-forward
+│   └── AAPL_summary.csv           # Métricas ML + trading + decision_score
 ├── MSFT/
 │   └── ...
 └── YPF/
@@ -203,19 +259,19 @@ runs/e1_conservative/20260105_153022/
 ## 🔄 Próximos Pasos
 
 **Estado actual**:
-1. ✅ Descarga de datos
-2. ✅ Feature engineering (27 indicadores)
-3. ✅ Modelo GRU con regularización
-4. ✅ Pipeline de entrenamiento
-5. ✅ Métricas ML (MAE/RMSE/IC)
+1.  Descarga de datos
+2.  Feature engineering (27 indicadores)
+3.  Modelo GRU con regularización
+4.  Pipeline de entrenamiento
+5.  Métricas ML (MAE/RMSE/IC)
 
 **Pendiente**:
-6. ⏳ **Backtest engine** - Convertir predicciones → señales → PnL
-7. ⏳ **Reglas de trading** - Implementar filtros RSI/MACD/Bollinger
-8. ⏳ **Reportes visuales** - Equity curves, drawdown, tablas LaTeX
-9. ⏳ **Benchmarks** - Buy & Hold, SMA crossover con mismos costos
+6.  **Backtest engine** - Convertir predicciones → señales → PnL
+7.  **Reglas de trading** - Implementar filtros RSI/MACD/Bollinger
+8.  **Reportes visuales** - Equity curves, drawdown, tablas LaTeX
+9.  **Benchmarks** - Buy & Hold, SMA crossover con mismos costos
 
-## ✅ Validación Rápida
+## Validación Rápida
 
 ```bash
 # Probar con un ticker
@@ -230,11 +286,12 @@ Creando secuencias... ✓ 894 muestras
 Split temporal: train=626 val=134 test=134
 Entrenando GRU...
   Epoch 45/200, Val Loss: 0.002134 (early stop)
+  Decision score 0.78 (threshold 0.75) → COMPRAR
 ✓ AAPL: MAE=0.0156 RMSE=0.0234 IC=0.342 Dir_Acc=58.2%
 Guardado en runs/e1_conservative/20260105_153022/
 ```
 
-## 📚 Referencias
+## Referencias
 
 - [README general](README.md) - Overview del proyecto
 - [base.yaml](src/config/base.yaml) - Configuración completa
@@ -251,10 +308,10 @@ Guardado en runs/e1_conservative/20260105_153022/
 
 ## Próximos Pasos
 
-1. ✅ **Datos + Features + Modelo** (COMPLETO)
-2. ⏳ **Backtest con costos** - Crear `src/backtest/engine.py`
-3. ⏳ **Reglas de trading** - Implementar `src/backtest/rules_e1.py`
-4. ⏳ **Reportes** - Equity curves + tablas en `reports/`
+1.  **Datos + Features + Modelo** (COMPLETO)
+2.  **Backtest con costos** (COMPLETO) - Implementado en `src/backtest/daily.py`
+3.  **Reglas de trading** (COMPLETO) - Integradas en el backtest diario (taus + holding period)
+4.  **Reportes** - Equity curves + tablas en `reports/`
 
 ## Validación Rápida
 
@@ -277,10 +334,10 @@ Entrenando GRU para AAPL...
 
 ### Posibles mejoras futuras:
 #### Fase 1 - Corto Plazo (1-2 semanas) 
-⭐⭐⭐ Hyperparameter tuning con Optuna ✅
+⭐⭐⭐ Hyperparameter tuning con Optuna 
 - Optimizar tau_buy, tau_sell, arquitectura 
 - Documentar proceso de búsqueda 
-⭐⭐⭐ Walk-forward validation ✅
+⭐⭐⭐ Walk-forward validation 
 - Demostrar robustez temporal 
 - Gráficos de IC y Sharpe por ventana 
 #### Fase 2 - Mediano Plazo (2-3 semanas) 

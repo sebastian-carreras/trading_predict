@@ -21,7 +21,7 @@ Predicción de retornos acumulados a 20 días usando arquitectura LSTM para capt
 - Win rate > 50%
 - Profit Factor > 1.2
 
-## 🏗️ Arquitectura del Modelo
+## Arquitectura del Modelo
 
 ### LSTM (Long Short-Term Memory)
 
@@ -55,12 +55,12 @@ Output (1): predicción de retorno a 20 días
 
 | Archivo | Propósito | Estado |
 |---------|-----------|--------|
-| `src/features/build_features_e2.py` | Features momentum/volatilidad | ⏳ TODO |
-| `src/models/e2_lstm.py` | Arquitectura LSTM PyTorch | ⏳ TODO |
-| `src/train_e2_pipeline.py` | Pipeline end-to-end | ⏳ TODO |
-| `src/backtest/rules_e2.py` | Reglas de señal (MACD, RSI) | ⏳ TODO |
+| `src/features/build_features_e2.py` | Features momentum/volatilidad |  TODO |
+| `src/models/e2_lstm.py` | Arquitectura LSTM PyTorch |  TODO |
+| `src/train_e2_pipeline.py` | Pipeline end-to-end |  TODO |
+| `src/backtest/rules_e2.py` | Reglas de señal (MACD, RSI) |  TODO |
 
-## 📊 Features a Calcular (~25 indicadores)
+## Features a Calcular (~25 indicadores)
 
 **Precio y retorno core**:
 - `ret_1d`, `ret_5d`, `ret_10d`, `ret_20d` - Retornos múltiples horizontes
@@ -92,7 +92,7 @@ Output (1): predicción de retorno a 20 días
 - `bench_ret_1d`, `bench_ret_20d` - Retornos benchmark
 - Opcional: FX, sentimiento diario
 
-## 🎯 Lógica de Señales de Trading
+## Lógica de Señales de Trading
 
 **Criterio de compra** (entrada larga):
 - **Condición principal**: `ŷ^(20) > τ_buy` (predicción > 2.5%)
@@ -112,7 +112,7 @@ Output (1): predicción de retorno a 20 días
 - Selección: momentum relativo (ranking por predicción)
 - Rebalanceo: semanal o quincenal
 
-## 📈 Métricas de Evaluación
+## Métricas de Evaluación
 
 **ML (offline)**:
 - **MAE**: Mean Absolute Error sobre retornos
@@ -164,26 +164,26 @@ cat runs/e2_moderate/*/summary_all.csv
 
 ## 🔄 Próximos Pasos para Implementación
 
-1. ⏳ **Adaptar build_features_e2.py** desde E1:
+1.  **Adaptar build_features_e2.py** desde E1:
    - Agregar features momentum (RSI, Stochastic, ROC)
    - Agregar MACD, OBV
    - Reducir lookback a 60 días
 
-2. ⏳ **Crear e2_lstm.py**:
+2.  **Crear e2_lstm.py**:
    - Copiar estructura desde `e1_gru.py`
    - Reemplazar GRU → LSTM layers
    - Ajustar hiperparámetros (patience=12, epochs=150)
 
-3. ⏳ **Crear train_e2_pipeline.py**:
+3.  **Crear train_e2_pipeline.py**:
    - Copiar desde `train_e1_pipeline.py`
    - Cambiar imports (E2 features, LSTM model)
    - Ajustar horizon=20, lookback=60
 
-4. ⏳ **Implementar rules_e2.py**:
+4.  **Implementar rules_e2.py**:
    - Filtros MACD + RSI + volume z-score
    - Stops más ajustados (7% vs 10% de E1)
 
-## 📚 Referencias
+## Referencias
 
 - [README general](README.md) - Overview del proyecto
 - [README_E1.md](README_E1.md) - Estrategia conservadora (referencia)
@@ -191,4 +191,4 @@ cat runs/e2_moderate/*/summary_all.csv
 
 ---
 
-**Estado**: ⏳ Especificada, pendiente codificación
+**Estado**:  Especificada, pendiente codificación

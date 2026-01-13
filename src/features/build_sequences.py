@@ -84,3 +84,42 @@ def time_split(
     idx_test = np.arange(val_end, n)
 
     return idx_train, idx_val, idx_test
+
+
+def temporal_train_val_split(
+    indices: np.ndarray,
+    *,
+    val_fraction: float = 0.15,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Divide un bloque temporal en train y val tomando la cola como validación.
+
+    Args:
+        indices: Índices ordenados temporalmente.
+        val_fraction: Fracción a reservar para validación (0 < val_fraction < 1).
+
+    Returns:
+        idx_train, idx_val (ambos subconjuntos de ``indices``)
+    """
+
+    if not 0 < val_fraction < 1:
+        raise ValueError("val_fraction debe estar entre 0 y 1")
+
+    if len(indices) < 2:
+        raise ValueError("Se requieren al menos dos muestras para separar train/val")
+
+    val_size = max(1, int(round(len(indices) * val_fraction)))
+    if val_size >= len(indices):
+        val_size = 1
+
+    split = len(indices) - val_size
+    if split <= 0:
+        split = len(indices) - 1
+
+    train_idx = indices[:split]
+    val_idx = indices[split:]
+
+    if len(val_idx) == 0:
+        val_idx = indices[-1:]
+        train_idx = indices[:-1]
+
+    return train_idx, val_idx

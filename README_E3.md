@@ -22,7 +22,7 @@ Predicción de retornos a 30 minutos usando ensemble de LSTM para trading intrad
 - Win rate > 50% (no obligatorio si payoff asimétrico)
 - Control estricto de slippage
 
-## 🏗️ Arquitectura del Modelo
+## Arquitectura del Modelo
 
 ### LSTM Ensemble
 
@@ -56,14 +56,14 @@ Extensión: weighted average por performance reciente (validación rolling)
 
 | Archivo | Propósito | Estado |
 |---------|-----------|--------|
-| `src/e3_intraday_pipeline.py` | Pipeline completo (download/run/backtest) | ✅ |
-| `src/data/intraday_yfinance.py` | Descarga OHLCV 5-min (Yahoo Finance) | ✅ |
-| `src/features/intraday.py` | Features intradía (7 indicadores) | ✅ |
-| `src/models/torch_lstm.py` | LSTMRegressor PyTorch | ✅ |
-| `src/backtest/intraday.py` | Backtesting con costos 20 bps | ✅ |
-| `src/reporting/intraday_metrics.py` | Métricas (MAE/RMSE/IC/Directional) | ✅ |
+| `src/e3_intraday_pipeline.py` | Pipeline completo (download/run/backtest) |  |
+| `src/data/intraday_yfinance.py` | Descarga OHLCV 5-min (Yahoo Finance) |  |
+| `src/features/intraday.py` | Features intradía (7 indicadores) |  |
+| `src/models/torch_lstm.py` | LSTMRegressor PyTorch |  |
+| `src/backtest/intraday.py` | Backtesting con costos 20 bps |  |
+| `src/reporting/intraday_metrics.py` | Métricas (MAE/RMSE/IC/Directional) |  |
 
-## 📊 Features Calculadas (7 indicadores baseline)
+## Features Calculadas (7 indicadores baseline)
 
 **OHLCV 5-min** (siempre disponibles, sin leakage):
 
@@ -77,7 +77,7 @@ Extensión: weighted average por performance reciente (validación rolling)
 
 **Nota**: Diseño minimalista para evitar overfitting en alta frecuencia. Features adicionales (order flow, bid-ask spread) requieren datos nivel 2.
 
-## 🎯 Lógica de Señales de Trading
+## Lógica de Señales de Trading
 
 **Criterio de compra** (posición larga):
 - **Condición principal**: `ŷ^(6) > τ_buy` Y `ŷ^(6)` > (costos + slippage)
@@ -97,7 +97,7 @@ Extensión: weighted average por performance reciente (validación rolling)
 - Tamaño: 20-30% capital por operación
 - **NO operar**: primeros 30 min (volatilidad de apertura), últimos 30 min (cierre)
 
-## 📈 Métricas de Evaluación
+## Métricas de Evaluación
 
 **ML (offline)**:
 - **Directional Accuracy**: % de predicciones con signo correcto (clave en intradía)
@@ -179,7 +179,7 @@ head -20 runs/e3_intraday/*/SPY_predictions.csv
 tail -1 runs/e3_intraday/*/SPY_backtest.csv
 ```
 
-## ✅ Validación Rápida
+## Validación Rápida
 
 ```bash
 # Probar con SPY (activo líquido)
@@ -229,7 +229,7 @@ e3_intraday:
     max_epochs: 30
 ```
 
-## ⚠️ Consideraciones Importantes
+## ⚠ Consideraciones Importantes
 
 **Limitaciones de datos Yahoo Finance**:
 - Historial 5-min: típicamente 60 días (limitado)
@@ -242,7 +242,7 @@ e3_intraday:
 - **Overfitting**: validar con walk-forward estricto
 - **Latencia**: delay de 1 barra es optimista (real: 1-5 barras)
 
-## 📚 Referencias
+## Referencias
 
 - [README general](README.md) - Overview del proyecto
 - [base.yaml](src/config/base.yaml) - Configuración E3
@@ -250,4 +250,4 @@ e3_intraday:
 
 ---
 
-**Estado**: ✅ Completamente implementada y funcional
+**Estado**:  Completamente implementada y funcional

@@ -1,10 +1,10 @@
-# Walk-Forward Validation - E1 Estrategia Conservadora
+# Walk-Forward Validation - Estrategias E1 y E2
 
-## 🎯 Objetivo
+## Objetivo
 
-Validar la **robustez temporal** de la estrategia E1 mediante validación walk-forward, demostrando que el modelo mantiene capacidad predictiva en múltiples ventanas temporales no vistas durante el entrenamiento.
+Validar la **robustez temporal** de las estrategias E1 (GRU Conservadora) y E2 (LSTM Moderada) mediante validación walk-forward, demostrando que los modelos mantienen capacidad predictiva en múltiples ventanas temporales no vistas durante el entrenamiento.
 
-## 📊 ¿Qué es Walk-Forward Validation?
+## ¿Qué es Walk-Forward Validation?
 
 Walk-forward es una técnica de validación específica para series temporales que:
 
@@ -36,7 +36,7 @@ Fold 5: [train.......................................] -> [test5]
 Ventana completa OOS: [test1][test2][test3][test4][test5]
 ```
 
-## ⚙️ Configuración
+## Configuración
 
 ### En `src/config/base.yaml`
 
@@ -47,7 +47,8 @@ splits:
   
   # Embargo para evitar leakage temporal
   embargo_days:
-    e1: 90   # Gap entre train y test (= horizon_days)
+    e1: 90   # Gap entre train y test (= horizon_days E1)
+    e2: 20   # Gap entre train y test (= horizon_days E2)
     e2: 20
     e3: 0
     e4: 0
@@ -70,8 +71,9 @@ splits:
 
 ## 🚀 Ejecución
 
-### Opción 1: Ejecutar con Walk-Forward (Modo Actual)
+### Opción 1: Ejecutar con Walk-Forward (Modo Recomendado)
 
+**E1 (Conservadora - GRU):**
 ```bash
 # Asegurar que splits.method = "walk_forward" en base.yaml
 python -m src.train_e1_pipeline --tickers AAPL
@@ -89,6 +91,24 @@ python -m src.train_e1_pipeline --tickers AAPL
 ✓ AAPL: MAE=0.1727 IC=-0.254
 ```
 
+**E2 (Moderada - LSTM):**
+```bash
+# Asegurar que splits.method = "walk_forward" en base.yaml
+python -m src.train_e2_pipeline --tickers NVDA
+```
+
+**Output esperado:**
+```
+✓ Procesando NVDA (E2 - Moderada)
+▶ Ejecutando walk-forward (5 folds, test=auto)
+  Fold 1: 2019-01-15 -> 2020-05-22 | MAE=0.0934 IC=0.512 Sharpe=1.23
+  Fold 2: 2020-05-25 -> 2021-10-01 | MAE=0.1245 IC=0.687 Sharpe=2.71
+  Fold 3: 2021-10-04 -> 2023-02-08 | MAE=0.1678 IC=0.234 Sharpe=0.45
+  Fold 4: 2023-02-09 -> 2024-06-17 | MAE=0.1123 IC=0.598 Sharpe=1.89
+  Fold 5: 2024-06-18 -> 2025-10-25 | MAE=0.0987 IC=0.445 Sharpe=1.12
+✓ NVDA: MAE=0.1193 IC=0.495
+```
+
 ### Opción 2: Volver a Split Simple
 
 ```yaml
@@ -100,21 +120,25 @@ splits:
 Luego ejecutar normalmente:
 ```bash
 python -m src.train_e1_pipeline --tickers AAPL
+python -m src.train_e2_pipeline --tickers NVDA
 ```
 
 ## 📁 Archivos Generados
 
-Cada ejecución walk-forward genera (en `runs/e1_conservative/<timestamp>/<ticker>/`):
+Cada ejecución walk-forward genera (en `runs/<estrategia>/<timestamp>/<ticker>/`):
+
+**E1:** `runs/e1_conservative/<timestamp>/<ticker>/`  
+**E2:** `runs/e2_moderate/<timestamp>/<ticker>/`
 
 ### 1. `<ticker>_walkforward_folds.csv`
 
 Métricas por fold individual:
 
-| fold | window | ml_mae | ml_ic | bt_sharpe | bt_calmar | ... |
-|------|--------|--------|-------|-----------|-----------|-----|
-| 1 | 2018-11-19 -> 2020-03-27 | 0.137 | 0.319 | 0.61 | 1.07 | ... |
-| 2 | 2020-03-30 -> 2021-08-03 | 0.236 | 0.766 | 2.49 | 9.16 | ... |
-| ... | ... | ... | ... | ... | ... | ... |
+| fold | window | ml_mae | ml_ic | bt_sharpe | bt_calmar | bt_profit_factor | ... |
+|------|--------|--------|-------|-----------|-----------|------------------|-----|
+| 1 | 2018-11-19 -> 2020-03-27 | 0.137 | 0.319 | 0.61 | 1.07 | 1.23 | ... |
+| 2 | 2020-03-30 -> 2021-08-03 | 0.236 | 0.766 | 2.49 | 9.16 | 2.87 | ... |
+| ... | ... | ... | ... | ... | ... | ... | ... |
 
 **Columnas clave:**
 - `test_start`, `test_end`: ventana temporal de cada fold
@@ -173,7 +197,7 @@ AAPL,2045,1700,5,0.173,-0.254,0.635,0.581,...
 - `ml_ic`: IC calculado sobre predicciones concatenadas de todos los folds
 - `bt_sharpe`: Sharpe del backtest completo (all folds combined)
 
-## 📊 Interpretación de Resultados
+## Interpretación de Resultados
 
 ### Métricas ML
 
@@ -216,9 +240,9 @@ Agregado: IC=-0.254, Sharpe=0.635
 ```
 
 **Interpretación:**
-- ✅ Modelo muestra capacidad predictiva en 4/5 folds (IC > 0.1)
-- ⚠️  Fold 3 (2021-2022): degradación severa (bear market)
-- ⚠️  IC agregado negativo sugiere que el modelo podría beneficiarse de:
+- Modelo muestra capacidad predictiva en 4/5 folds (IC > 0.1)
+- ⚠  Fold 3 (2021-2022): degradación severa (bear market)
+- ⚠  IC agregado negativo sugiere que el modelo podría beneficiarse de:
   - Retraining periódico (drift detection)
   - Features adicionales para capturar regímenes de mercado
   - Ensemble de modelos para mayor robustez
@@ -273,7 +297,7 @@ ic_combined = compute_ic(all_y_true, all_y_pred)
 
 **Output:** N valores de IC (1 por fold) + 1 IC agregado
 
-## 🎓 Justificación Académica
+## Justificación Académica
 
 Walk-forward validation es **gold standard** en investigación de trading porque:
 
@@ -287,14 +311,13 @@ Walk-forward validation es **gold standard** en investigación de trading porque
 - **Prado, M. L. (2018).** *Advances in Financial Machine Learning*. Wiley. Cap. 7: "Cross-Validation in Finance"
 - **Aronson, D. (2006).** *Evidence-Based Technical Analysis*. Wiley. Cap. 9: "Walk-Forward Analysis"
 
-## 🛠️ Troubleshooting
+## 🛠 Troubleshooting
 
 ### Error: "No hay muestras disponibles para walk-forward"
 
 **Causa:** Dataset muy pequeño después de eliminar NaNs y aplicar lookback.
 
-**Solución:**
-```yaml
+**Solución:**```yaml
 # Reducir tamaño de test por fold
 splits:
   test_size: 100  # En lugar de test_size automático
@@ -312,34 +335,49 @@ splits:
 
 **Causa:** El tamaño de test es menor o igual que el embargo (gap).
 
-**Solución:**
-```yaml
+**Solución:**```yaml
 splits:
   test_size: 200  # Aumentar manualmente
   embargo_days:
     e1: 60  # O reducir embargo (con precaución!)
 ```
 
-## 📈 Próximos Pasos
+## Próximos Pasos
 
 1. **Optimizar hiperparámetros por fold** (opcional):
    - Buscar `tau_buy`, `tau_sell` óptimos para cada régimen
-   - Ver [README_HYPERPARAMETER_TUNING.md](README_HYPERPARAMETER_TUNING.md)
+   - Ver [README_E1_OPTIMIZATION.md](README_E1_OPTIMIZATION.md) y [README_E2_OPTIMIZATION.md](README_E2_OPTIMIZATION.md)
 
 2. **Detección de drift**:
    - Implementar monitoreo de IC por ventana deslizante
    - Retraining automático cuando IC < threshold
 
 3. **Ensemble de modelos**:
-   - Combinar predicciones de todos los folds con pesos adaptativos
+   - Combinar predicciones E1 (GRU) y E2 (LSTM) con pesos adaptativos
    - Mejorar robustez ante concept drift
 
 4. **Portfolio optimization**:
    - Aplicar walk-forward a múltiples tickers simultáneamente
    - Optimizar pesos de portfolio maximizando Sharpe global
 
+## Diferencias E1 vs E2 en Walk-Forward
+
+| Aspecto | E1 (GRU Conservadora) | E2 (LSTM Moderada) |
+|---------|----------------------|-------------------|
+| **Horizon** | 90 días | 20 días |
+| **Embargo** | 90 días (= horizon) | 20 días (= horizon) |
+| **Modelo** | GRU (2 capas, 64-256 unidades) | LSTM (2 capas, 64-256 unidades) |
+| **Objetivo** | Information Coefficient | Sharpe + Profit Factor + CAGR |
+| **Filtros** | No tiene RSI filters | rsi14_min/max opcionales |
+| **Complejidad** | Menos parámetros (~70K) | Más parámetros (~100K) |
+| **Velocidad** | ~15-20% más rápida | Más lenta pero más expresiva |
+
+**Recomendación de uso:**
+- **E1**: Para estrategias de largo plazo, mayor estabilidad temporal
+- **E2**: Para estrategias tácticas, mayor capacidad de capturar patrones complejos
+
 ---
 
-**Documentado:** 2026-01-07  
+**Documentado:** 2026-01-09 (actualizado con E2)  
 **Autor:** Sebastian Carreras  
 **Proyecto:** Trading Predict - FIUBA IA CEIA 18co

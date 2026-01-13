@@ -250,6 +250,37 @@ def compute_profit_factor(returns: np.ndarray) -> float:
     return float(pf)
 
 
+def compute_sortino_ratio(
+    returns: np.ndarray,
+    periods_per_year: int = 252,
+    *,
+    risk_free_rate: float = 0.0,
+) -> float:
+    """Sortino ratio: retorno excedente / downside deviation.
+
+    Similar a Sharpe pero usando solo volatilidad negativa.
+    """
+    if len(returns) == 0:
+        return 0.0
+
+    # excess returns per period
+    rf_per_period = risk_free_rate / periods_per_year if periods_per_year > 0 else 0.0
+    excess = returns - rf_per_period
+
+    downside = excess[excess < 0]
+    if len(downside) == 0:
+        # Sin retornos negativos: ratio muy alto (capado por callers si hace falta)
+        return float("inf")
+
+    downside_std = float(np.std(downside))
+    if downside_std <= 0:
+        return 0.0
+
+    mean_excess = float(np.mean(excess))
+    sortino = (mean_excess / downside_std) * np.sqrt(periods_per_year)
+    return float(sortino)
+
+
 def compute_win_rate(returns: np.ndarray) -> float:
     """
     Win rate: porcentaje de días con retorno positivo.
@@ -307,6 +338,7 @@ def summarize_backtest(bt: pd.DataFrame, periods_per_year: int = 252) -> dict:
     
     # Métricas de riesgo
     sharpe = compute_sharpe_ratio(net_ret, periods_per_year)
+    sortino = compute_sortino_ratio(net_ret, periods_per_year)
     max_dd = compute_max_drawdown(equity)
     calmar = compute_calmar_ratio(net_ret, equity, periods_per_year)
     
@@ -328,10 +360,12 @@ def summarize_backtest(bt: pd.DataFrame, periods_per_year: int = 252) -> dict:
         'total_return': float(total_return),
         'cagr': float(cagr),
         'sharpe': float(sharpe),
+        'sortino': float(sortino),
         'max_drawdown': float(max_dd),
         'calmar': float(calmar),
         'profit_factor': float(profit_factor),
         'win_rate': float(win_rate),
+        'hit_rate': float(win_rate),
         'num_trades': int(num_trades),
         'avg_turnover': float(avg_turnover),
         'total_costs': float(total_costs),

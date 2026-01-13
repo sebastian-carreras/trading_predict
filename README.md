@@ -2,13 +2,13 @@
 
 Sistema de trading automatizado con Machine Learning implementando cuatro estrategias diferenciadas por horizonte temporal y perfil de riesgo.
 
-## 🎯 Objetivo del Proyecto
+## Objetivo del Proyecto
 
 Desarrollar e implementar un sistema automatizado de predicción y ejecución de operaciones en mercados financieros, utilizando técnicas de Machine Learning (redes neuronales recurrentes GRU/LSTM, k-NN) y análisis técnico para cuatro estrategias con diferentes horizontes y perfiles de riesgo.
 
-## � Modos de Ejecución
+## Modos de Ejecución
 
-### 🐳 **Producción (Docker - RECOMENDADO)**
+### **Producción (Docker - RECOMENDADO)**
 
 Stack completo con Airflow (orquestación) + MLflow (tracking) + FastAPI (API):
 
@@ -25,9 +25,9 @@ docker-compose --profile all up -d
 # - FastAPI Docs: http://localhost:8800/docs
 ```
 
-📘 **Ver documentación completa**: [README_DOCKER.md](README_DOCKER.md)
+ **Ver documentación completa**: [README_DOCKER.md](README_DOCKER.md)
 
-### 💻 **Desarrollo Local**
+### **Desarrollo Local**
 
 Para debugging y desarrollo rápido:
 
@@ -40,7 +40,7 @@ python -m src.train_e1_pipeline --tickers AAPL
 python -m src.train_e2_pipeline --tickers AAPL
 ```
 
-## 📊 Estrategias Implementadas
+## Estrategias Implementadas
 
 | Estrategia | Modelo | Horizonte | Target | Perfil | README |
 |------------|--------|-----------|--------|--------|---------|
@@ -69,7 +69,7 @@ trading_predict/
 
 **Filosofía de diseño**: Separación clara datos → código → resultados para máxima reproducibilidad y trazabilidad.
 
-## ⚙️ Configuración Centralizada
+## Configuración Centralizada
 
 Todos los parámetros están en [`src/config/base.yaml`](src/config/base.yaml):
 
@@ -78,20 +78,19 @@ Todos los parámetros están en [`src/config/base.yaml`](src/config/base.yaml):
 - **Horizontes de predicción**: E1=90d, E2=20d, E3=30min, E4=10d
 - **Umbrales de trading**: τ_buy, τ_sell por estrategia
 - **Hiperparámetros de modelos**: arquitecturas, learning rates, regularización
+- **Criterios de decisión**: perfiles de scoring (`decision_profiles`) con objetivos/pesos/threshold por estrategia
 
-## 🎯 Ejecutar Estrategias
+## Ejecutar Estrategias
 
 Ver README específico de cada estrategia para comandos detallados:
 
-**E1 - Conservadora (GRU)**
-```bash
+**E1 - Conservadora (GRU)**```bash
 python -m src.data.download_daily
 python -m src.train_e1_pipeline --tickers AAPL
 ```
 → Ver [README_E1.md](README_E1.md)
 
-**E2 - Moderada (LSTM)**
-```bash
+**E2 - Moderada (LSTM)**```bash
 python -m src.data.download_daily
 python -m src.train_e2_pipeline --tickers AAPL
 ```
@@ -100,19 +99,17 @@ python -m src.train_e2_pipeline --tickers AAPL
 La ejecución de E2 guarda artefactos por ticker en `runs/e2_moderate/<timestamp>/<TICKER>/`, incluyendo:
 - `*_predictions.csv`, `*_summary.csv` y el modelo entrenado `*_model.pth`.
 
-**E3 - Intradía (Ensemble)**
-```bash
+**E3 - Intradía (Ensemble)**```bash
 python -m src.e3_intraday_pipeline --mode run --tickers SPY
 ```
 → Ver [README_E3.md](README_E3.md)
 
-**E4 - Pairs Trading (k-NN)**
-```bash
+**E4 - Pairs Trading (k-NN)**```bash
 # TODO: pendiente implementación
 ```
 → Ver [README_E4.md](README_E4.md)
 
-## 📈 Métricas de Evaluación
+## Métricas de Evaluación
 
 **Métricas ML (offline)**:
 - MAE, RMSE: error de predicción
@@ -123,22 +120,36 @@ python -m src.e3_intraday_pipeline --mode run --tickers SPY
  - Information Coefficient (IC) representa la correlación de Spearman entre las predicciones del modelo y los retornos reales, evaluando la capacidad del modelo de rankear correctamente los activos. IC > 0.05 suele considerarse significativo en finanzas. IC < 0 indica overfitting o falta de capacidad predictiva.
 
 
+**Criterio compuesto de decisión (`decision_score`)**:
+- Se calcula por **perfil** y estrategia (ej: E1 → `conservative`, E2 → `moderate`, E3 → `aggressive`).
+- La estrategia elige el perfil vía `splits.strategy_profile`, y cada perfil define `threshold`, `weights` y `target_metrics` en `splits.decision_profiles`.
+- Los componentes se registran como `decision_component_<metric>` (dinámico) + `decision_profile`.
+- Se mantiene compatibilidad con el esquema legacy `splits.target_metrics` + `splits.decision_score` si no hay perfiles configurados.
+
+**Cómo conviven `tau_buy`/`tau_sell` con `decision_score`**:
+- `tau_buy` y `tau_sell` (por estrategia) definen la lógica de **señales y trading** a partir de la predicción: cuándo entrar/salir en el backtest.
+- `decision_score` es un criterio **macro de calidad (go/no-go)** del run: resume métricas ML + trading y produce `decision_signal` (BUY/HOLD) comparando contra un `threshold`.
+- En otras palabras: los *taus* gobiernan el comportamiento del backtest (trades), y el `decision_score` gobierna si “habilitamos” recomendar/operar esa estrategia para ese ticker.
+
+
 **Métricas de Trading (online)**:
 - CAGR, Sharpe, Sortino: retorno ajustado por riesgo
- - El CAGR (Compound Annual Growth Rate) mide el retorno anualizado compuesto de la estrategia.
-   - El Sharpe Ratio evalúa el retorno ajustado por la volatilidad total del portafolio, siendo una métrica estándar para comparar estrategias (objetivos típicos: E1 ≥0.9, E2 ≥0.8, E4 ≥1.0)
-   - El Sortino Ratio se enfoca en la volatilidad negativa (downside), siendo más relevante para inversionistas que solo se preocupan por pérdidas.
-- Max Drawdown, Calmar: control de pérdidas
+ - El CAGR (Compound Annual Growth Rate) mide el retorno anualizado compuesto de la estrategia/inversión.
+ - Nota: en ventanas menores a 1 año, el CAGR sigue siendo válido como **anualización**, pero puede volverse más ruidoso/volátil (la anualización amplifica retornos cortos). Por eso conviene interpretarlo junto con Max Drawdown, Sharpe/Sortino, Calmar, Profit Factor y hit rate.
+ - El Sharpe Ratio evalúa el retorno ajustado por riesgo de una inversión o estrategia de trading, siendo una métrica estándar para comparar estrategias. Se compara con un retorno libre de riesgo y la volatilidad de la estrategia/inversión (objetivos típicos: E1 ≥0.9, E2 ≥0.8, E4 ≥1.0) 
+ - El Sortino Ratio se enfoca en la volatilidad negativa (downside), siendo más relevante para inversionistas que solo se preocupan por pérdidas.
 - Profit Factor, Hit Rate: calidad de operaciones
  - El Profit Factor es el ratio entre ganancias brutas totales y pérdidas brutas totales (objetivo mínimo 1.2-1.4 para estrategia intradía E3)
  - Hit Rate es el porcentaje de operaciones ganadoras sobre el total (idealmente > 50% para E1/E2, aunque depende de la estrategia) 
+- Max Drawdown, Calmar: control de pérdidas
+ - El Max Drawdown representa el peor escenario de pérdida que experimentó una estrategia de trading o inversión durante un período específico. Esta métrica cuantifica el "dolor" financiero máximo al que estuvo expuesto un inversionista entre un punto máximo y su subsecuente mínimo. Un Max Drawdown bajo es crucial para estrategias conservadoras (E1) y moderadas (E2), ya que refleja la capacidad de la estrategia para proteger el capital en mercados adversos.
  - El ratio de Calmar divide el CAGR por el Max Drawdown absoluto, proporcionando una medida de retorno ajustado por pérdida máxima, particularmente relevante para inversionistas con baja tolerancia al riesgo
 - Turnover: frecuencia de rebalanceo
  - Turnover cuantifica la frecuencia de rebalanceo del portafolio, típicamente expresado como el valor total transaccionado dividido por el capital bajo gestión. Esta métrica es crítica porque alta frecuencia de operaciones incrementa los costos de transacción, pudiendo erosionar completamente la rentabilidad predicha por el modelo. El sistema evalúa todas las estrategias con costos de transacción incluidos (10 bps para estrategias diarias, 20 bps para intradía) en el backtesting neto, asegurando que las métricas reflejen performance ejecutable
 
 Todas las estrategias se evalúan con **costos de transacción** incluidos (backtesting neto).
 
-## 🔬 Reproducibilidad
+## Reproducibilidad
 
 Cada ejecución del pipeline genera una carpeta timestamped en `runs/`:
 
@@ -155,31 +166,31 @@ runs/<estrategia>/<YYYYMMDD_HHMMSS>/
 - Versionado automático de experimentos
 - Facilita comparación entre runs
 
-## 📚 Metodología Anti-Leakage
+## Metodología Anti-Leakage
 
 **Principios fundamentales** (críticos en tesis):
 
-✅ **Features "as-of"**: toda variable en timestamp `t` usa solo datos ≤ `t`  
-✅ **Normalización correcta**: scaler fit solo en train, aplicado a val/test  
-✅ **Split temporal**: walk-forward (expanding/rolling), nunca shuffle  
-✅ **Embargo**: gap de H días entre train y validación para evitar solapamiento  
-✅ **Costos realistas**: backtesting incluye comisiones + slippage
+ **Features "as-of"**: toda variable en timestamp `t` usa solo datos ≤ `t`  
+ **Normalización correcta**: scaler fit solo en train, aplicado a val/test  
+ **Split temporal**: walk-forward (expanding/rolling) + helper `temporal_train_val_split` para evitar fugas y pérdida de muestras en validación, nunca shuffle  
+ **Embargo**: gap de H días entre train y validación para evitar solapamiento  
+ **Costos realistas**: backtesting incluye comisiones + slippage
 
-## 🏗️ Estado del Proyecto
+## Estado del Proyecto
 
 | Componente | Estado | Notas |
 |------------|--------|-------|
-| E1 - Descarga datos | ✅ | `src/data/download_daily.py` |
-| E1 - Features | ✅ | 27 indicadores técnicos |
-| E1 - Modelo GRU | ✅ | `src/models/e1_gru.py` |
-| E1 - Pipeline | ✅ | `src/train_e1_pipeline.py` |
-| E1 - Backtest | ⏳ | Pendiente `src/backtest/engine.py` |
-| E2 - Modelo + Pipeline | ✅ | `src/models/e2_lstm.py`, `src/train_e2_pipeline.py` |
-| E3 - Pipeline completo | ✅ | `src/e3_intraday_pipeline.py` |
-| E3 - Backtest | ✅ | Incluido con costos 20 bps |
-| E4 - Implementación | ⏳ | Especificada, no codificada |
+| E1 - Descarga datos |  | `src/data/download_daily.py` |
+| E1 - Features |  | 27 indicadores técnicos |
+| E1 - Modelo GRU |  | `src/models/e1_gru.py` |
+| E1 - Pipeline |  | `src/train_e1_pipeline.py` |
+| E1 - Backtest |  | Implementado: `src/backtest/daily.py` (costos + señales por `tau_buy`/`tau_sell`) |
+| E2 - Modelo + Pipeline |  | `src/models/e2_lstm.py`, `src/train_e2_pipeline.py` |
+| E3 - Pipeline completo |  | `src/e3_intraday_pipeline.py` |
+| E3 - Backtest |  | Implementado: `src/backtest/intraday.py` (costos intradía) |
+| E4 - Implementación |  | Especificada, no codificada |
 
-## 📖 Documentación Adicional
+## Documentación Adicional
 
 ### Guías de Implementación
 - **[README_HYPERPARAMETER_TUNING.md](README_HYPERPARAMETER_TUNING.md)** - Optimización de hiperparámetros con Optuna + MLflow
@@ -215,16 +226,16 @@ python scripts/run_data_cleaning.py
 Ver cada README específico para comandos detallados.
 
 
-## 🎓 Contexto Académico
+## Contexto Académico
 
 Proyecto final - Posgrado en Inteligencia Artificial FIUBA  
 **Fases de desarrollo** (plan de trabajo):
 
-1. ✅ Investigación y análisis
-2. ✅ Diseño de arquitectura
-3. 🔄 Implementación de modelos ML (en progreso)
-4. ⏳ Integración y pruebas
-5. ⏳ Documentación y presentación
+1.  Investigación y análisis
+2.  Diseño de arquitectura
+3.  Implementación de modelos ML (en progreso)
+4.  Integración y pruebas
+5.  Documentación y presentación
 
 ---
 
@@ -338,8 +349,7 @@ Para poder implementar y evaluar de punta a punta sin bloquearse por disponibili
 - **Sentimiento (si hay pipeline)**
    - Score agregado semanal con ventana cerrada (p. ej. lunes 00:00–domingo 23:59) y se aplica desde el lunes siguiente
 
-**Arquitectura de red (GRU)**
-```
+**Arquitectura de red (GRU)**```
 Input: (sequence_length=180, features=F)
 ↓
 GRU 1 (128 units, return_sequences=True, recurrent_dropout=0.1)
@@ -430,8 +440,7 @@ Output (1): predicción de retorno a H días
 - Contexto: retornos del benchmark y FX (mejor que “close” crudo)
 - Sentimiento: si existe, usarlo con ventana cerrada diaria y/o agregación horaria (sin mirar futuro)
 
-**Arquitectura de red (LSTM, alineada con target retorno)**
-```
+**Arquitectura de red (LSTM, alineada con target retorno)**```
 Input: (sequence_length=60, features=F)
 ↓
 LSTM 1 (128 units, return_sequences=True)
@@ -516,8 +525,7 @@ Output (1): predicción de retorno a H días
 
 - **Evitar leakage intradía**: no usar información posterior al cierre de la barra actual.
 
-**Arquitectura Ensemble (alineada con ventanas y target)**
-```
+**Arquitectura Ensemble (alineada con ventanas y target)**```
 Ensemble de 3 modelos LSTM independientes:
 
 Modelo base (x5, distintas inicializaciones/seed):
@@ -617,8 +625,7 @@ Opcional: weighted average con pesos por performance reciente (validación rolli
 - Estimar $\beta$ en ventana rolling y fijar $S_t$ con ese $\beta$.
 - Re-validar cointegración en cada recalibración; si falla, pausar el par.
 
-**Algoritmo k-NN (especificación implementable)**
-```
+**Algoritmo k-NN (especificación implementable)**```
 1. Construcción del espacio de estados:
    - Estado: [S_t, \Delta S_t, Z_t, Corr_{30}, VolumeRatio]
    
@@ -823,7 +830,7 @@ Esta estructura está pensada para que puedas ejecutar el pipeline “end-to-end
 
 La organización separa claramente **datos → código → resultados**, siguiendo un flujo lógico de trabajo:
 
-**📊 `data/`** - Datos descargados y procesados (raw → clean → features)
+**`data/`** - Datos descargados y procesados (raw → clean → features)
 - `raw/` → Datos originales descargados (OHLCV diario y 5-min), **nunca se modifican** (principio de inmutabilidad)
 - `clean/` → Datos limpios y alineados temporalmente (fechas validadas, faltantes tratados)
 - `features/` → Dataset con indicadores técnicos ya calculados (RSI, MACD, retornos, volatilidad, etc.)
@@ -831,7 +838,7 @@ La organización separa claramente **datos → código → resultados**, siguien
 
 **Ventaja**: trazabilidad completa - siempre se puede volver a los datos originales si algo falla en pasos posteriores.
 
-**⚙️ `src/`** - Código fuente (motor del sistema)
+**`src/`** - Código fuente (motor del sistema)
 - `config/` → Archivos YAML con parámetros de configuración (universo de tickers, costos, umbrales, hiperparámetros)
 - `data/` → Scripts para descarga y limpieza de datos
 - `features/` → Scripts para calcular indicadores técnicos y construir targets
@@ -843,13 +850,13 @@ La organización separa claramente **datos → código → resultados**, siguien
 
 **Ventaja**: código modular y reutilizable - cada carpeta tiene una responsabilidad única y bien definida.
 
-**📈 `reports/`** - Outputs finales para documentación
+**`reports/`** - Outputs finales para documentación
 - `figures/` → Gráficos generados (equity curves, drawdown, distribuciones)
 - `tables/` → Tablas de métricas en formato publicable (CSV/LaTeX)
 
 **Ventaja**: todo lo que va en el documento de tesis queda centralizado y listo para usar.
 
-**🔬 `runs/`** - Historial de experimentos (versionado automático)
+**`runs/`** - Historial de experimentos (versionado automático)
 - Cada ejecución del pipeline crea una carpeta timestamped: `YYYYMMDD_HHMMSS/`
 - Dentro se guardan: config usado, predicciones, métricas, backtest CSV, checkpoints de modelos
 - Ejemplo para E3: `runs/e3_intraday/20260105_143022/GGAL_backtest.csv`
@@ -873,8 +880,7 @@ La organización separa claramente **datos → código → resultados**, siguien
 6. Reportes → lee de runs/, genera figuras/tablas en reports/
 ```
 
-**Para E3 intradía (pipeline automatizado):**
-```bash
+**Para E3 intradía (pipeline automatizado):**```bash
 # Paso 1: Descarga OHLCV 5-min → data/raw/intraday/
 python -m src.e3_intraday_pipeline --mode download
 
@@ -884,13 +890,12 @@ python -m src.e3_intraday_pipeline --mode run
 
 ### Ventajas de esta arquitectura
 
-✅ **Reproducible**: mismo config + mismos datos = mismos resultados  
-✅ **Auditable**: cada corrida queda guardada con su configuración exacta  
-✅ **Modular**: se puede cambiar una parte sin romper las demás  
-✅ **Thesis-friendly**: `reports/` tiene todo listo para copiar al documento final  
-✅ **Escalable**: fácil agregar nuevas estrategias o fuentes de datos
-**Árbol sugerido**
-```
+ **Reproducible**: mismo config + mismos datos = mismos resultados  
+ **Auditable**: cada corrida queda guardada con su configuración exacta  
+ **Modular**: se puede cambiar una parte sin romper las demás  
+ **Thesis-friendly**: `reports/` tiene todo listo para copiar al documento final  
+ **Escalable**: fácil agregar nuevas estrategias o fuentes de datos
+**Árbol sugerido**```
 trading_predict/
    data/
       raw/                      # descargas originales (no modificar)
@@ -925,12 +930,9 @@ trading_predict/
          build_spread.py         # beta rolling + Z-score + half-life
          knn_confirm.py          # k-NN confirmatorio
       backtest/
-         engine.py               # motor común (costos, posiciones)
-         rules_e1.py             # reglas E1 (tau + filtros)
-         rules_e2.py             # reglas E2
-         rules_e4.py             # reglas E4 (Z-score)
-         benchmarks.py           # buy&hold + SMA crossover
-         metrics.py              # Sharpe/Sortino/MaxDD/Calmar/turnover
+         daily.py                # backtest diario E1/E2 (señales por tau + costos + métricas)
+         intraday.py             # backtest intradía E3 (costos + métricas)
+         rules_e2.py             # reglas E2 (si aplica)
       reporting/
          make_report.py          # tablas + gráficos finales
    notebooks/
@@ -958,7 +960,7 @@ trading_predict/
 4. `src/features/build_targets.py` + `src/features/build_sequences.py` → datasets E1/E2
 5. `src/models/train.py` → entrena walk-forward y guarda predicciones OOS
 6. `src/pairs/select_pairs.py` + `src/pairs/build_spread.py` (+ `src/pairs/knn_confirm.py`) → pipeline E4
-7. `src/backtest/engine.py` (con `rules_*.py`) → backtests + benchmarks
+7. Backtesting: `src/backtest/daily.py` (E1/E2) / `src/backtest/intraday.py` (E3)
 8. `src/reporting/make_report.py` → tablas/figuras finales
 
 **Convenciones prácticas**
@@ -1061,8 +1063,7 @@ Según la planificación del proyecto y la literatura especializada en predicci�
 
 ### Estructura general de datos para descarga
 
-**Formato recomendado:**
-```
+**Formato recomendado:**```
 timestamp, ticker, open, high, low, close, volume, [indicadores técnicos calculados]
 ```
 

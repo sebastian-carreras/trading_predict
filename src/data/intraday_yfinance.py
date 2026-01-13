@@ -59,7 +59,7 @@ def download_ohlcv_5m(
         df = df.rename(columns=rename_map)
 
         # Ensure timestamp is UTC-naive ISO for portability
-        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        df["timestamp"] = pd.to_datetime(df["timestamp"], format='ISO8601', utc=True)
 
         out_path = out_dir / f"{ticker}_5m.csv"
         df.to_csv(out_path, index=False)
@@ -73,7 +73,7 @@ def load_ohlcv_csv(path: Path) -> pd.DataFrame:
     if "timestamp" not in df.columns:
         raise ValueError(f"Missing 'timestamp' column in {path}")
 
-    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+    df["timestamp"] = pd.to_datetime(df["timestamp"], format='ISO8601', utc=True)
     df = df.sort_values("timestamp")
     df = df.set_index("timestamp")
 
