@@ -105,7 +105,7 @@ docker exec -it airflow_webserver airflow dags trigger e1_conservative_pipeline
 **Schedule**: Diario 1 AM
 
 ```bash
-docker exec -it airflow_webserver airflow dags trigger e3_intraday_pipeline
+docker exec -it airflow_webserver airflow dags trigger train_e3_pipeline
 ```
 
 **Pasos**:
@@ -131,7 +131,7 @@ conda activate ia_ceia_18co
 python -m src.train_e1_pipeline --tickers AAPL
 
 # E3 manual
-python -m src.e3_intraday_pipeline --mode run --tickers SPY
+python -m src.train_e3_pipeline --mode run --tickers SPY
 
 # Con tracking MLflow
 export MLFLOW_TRACKING_URI=http://localhost:5000

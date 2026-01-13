@@ -56,10 +56,10 @@ Extensión: weighted average por performance reciente (validación rolling)
 
 | Archivo | Propósito | Estado |
 |---------|-----------|--------|
-| `src/e3_intraday_pipeline.py` | Pipeline completo (download/run/backtest) |  |
+| `src/train_e3_pipeline.py` | Pipeline completo (download/run/backtest) |  |
 | `src/data/intraday_yfinance.py` | Descarga OHLCV 5-min (Yahoo Finance) |  |
 | `src/features/intraday.py` | Features intradía (7 indicadores) |  |
-| `src/models/torch_lstm.py` | LSTMRegressor PyTorch |  |
+| `src/models/e3_lstm.py` | LSTMRegressor PyTorch |  |
 | `src/backtest/intraday.py` | Backtesting con costos 20 bps |  |
 | `src/reporting/intraday_metrics.py` | Métricas (MAE/RMSE/IC/Directional) |  |
 
@@ -136,10 +136,10 @@ runs/e3_intraday/20260105_143022/
 
 ```bash
 # Descargar datos 5-min para tickers específicos
-python -m src.e3_intraday_pipeline --mode download --tickers SPY QQQ
+python -m src.train_e3_pipeline --mode download --tickers SPY QQQ
 
 # Todos los tickers E3 (desde base.yaml)
-python -m src.e3_intraday_pipeline --mode download
+python -m src.train_e3_pipeline --mode download
 ```
 
 → Guarda en `data/raw/intraday/<TICKER>_5min.csv`
@@ -148,13 +148,13 @@ python -m src.e3_intraday_pipeline --mode download
 
 ```bash
 # Un ticker
-python -m src.e3_intraday_pipeline --mode run --tickers SPY
+python -m src.train_e3_pipeline --mode run --tickers SPY
 
 # Múltiples tickers
-python -m src.e3_intraday_pipeline --mode run --tickers SPY QQQ AMD
+python -m src.train_e3_pipeline --mode run --tickers SPY QQQ AMD
 
 # Todos los tickers E3
-python -m src.e3_intraday_pipeline --mode run
+python -m src.train_e3_pipeline --mode run
 ```
 
 **Qué hace internamente**:
@@ -183,7 +183,7 @@ tail -1 runs/e3_intraday/*/SPY_backtest.csv
 
 ```bash
 # Probar con SPY (activo líquido)
-python -m src.e3_intraday_pipeline --mode run --tickers SPY
+python -m src.train_e3_pipeline --mode run --tickers SPY
 ```
 
 **Output esperado**:
@@ -246,7 +246,7 @@ e3_intraday:
 
 - [README general](README.md) - Overview del proyecto
 - [base.yaml](src/config/base.yaml) - Configuración E3
-- [src/e3_intraday_pipeline.py](src/e3_intraday_pipeline.py) - Código fuente
+- [src/train_e3_pipeline.py](src/train_e3_pipeline.py) - Código fuente
 
 ---
 

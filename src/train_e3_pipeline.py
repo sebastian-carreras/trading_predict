@@ -14,7 +14,7 @@ from .backtest.intraday import (
 )
 from .data.intraday_yfinance import download_ohlcv_5m, load_ohlcv_csv
 from .features.intraday import compute_intraday_features, make_sequences, make_target_return
-from .models.torch_lstm import LSTMRegressor
+from .models.e3_lstm import LSTMRegressor
 from .reporting.intraday_metrics import directional_accuracy, mae, rmse
 from .utils import ensure_dir, get_nested, load_yaml, project_root
 

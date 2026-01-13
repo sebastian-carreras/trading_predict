@@ -100,7 +100,7 @@ La ejecución de E2 guarda artefactos por ticker en `runs/e2_moderate/<timestamp
 - `*_predictions.csv`, `*_summary.csv` y el modelo entrenado `*_model.pth`.
 
 **E3 - Intradía (Ensemble)**```bash
-python -m src.e3_intraday_pipeline --mode run --tickers SPY
+python -m src.train_e3_pipeline --mode run --tickers SPY
 ```
 → Ver [README_E3.md](README_E3.md)
 
@@ -186,7 +186,7 @@ runs/<estrategia>/<YYYYMMDD_HHMMSS>/
 | E1 - Pipeline |  | `src/train_e1_pipeline.py` |
 | E1 - Backtest |  | Implementado: `src/backtest/daily.py` (costos + señales por `tau_buy`/`tau_sell`) |
 | E2 - Modelo + Pipeline |  | `src/models/e2_lstm.py`, `src/train_e2_pipeline.py` |
-| E3 - Pipeline completo |  | `src/e3_intraday_pipeline.py` |
+| E3 - Pipeline completo |  | `src/train_e3_pipeline.py` |
 | E3 - Backtest |  | Implementado: `src/backtest/intraday.py` (costos intradía) |
 | E4 - Implementación |  | Especificada, no codificada |
 
@@ -846,7 +846,7 @@ La organización separa claramente **datos → código → resultados**, siguien
 - `pairs/` → Código para selección de pares cointegrados y cálculo de spreads
 - `backtest/` → Motor de backtesting (simula operaciones de compra/venta con costos de transacción)
 - `reporting/` → Generación de tablas de métricas y visualizaciones finales
-- `e3_intraday_pipeline.py` → **Entrypoint completo para E3** (descarga → entrena → backtest en un comando)
+- `train_e3_pipeline.py` → **Entrypoint completo para E3** (descarga → entrena → backtest en un comando)
 
 **Ventaja**: código modular y reutilizable - cada carpeta tiene una responsabilidad única y bien definida.
 
@@ -882,10 +882,10 @@ La organización separa claramente **datos → código → resultados**, siguien
 
 **Para E3 intradía (pipeline automatizado):**```bash
 # Paso 1: Descarga OHLCV 5-min → data/raw/intraday/
-python -m src.e3_intraday_pipeline --mode download
+python -m src.train_e3_pipeline --mode download
 
 # Paso 2: Entrena + backtest → runs/e3_intraday/<timestamp>/
-python -m src.e3_intraday_pipeline --mode run
+python -m src.train_e3_pipeline --mode run
 ```
 
 ### Ventajas de esta arquitectura
@@ -903,7 +903,7 @@ trading_predict/
       features/                 # dataset con features (por fecha/ticker)
       pairs/                    # spreads, betas, cointegración
    src/
-      e3_intraday_pipeline.py   # entrypoint E3 (descarga/train/backtest)
+      train_e3_pipeline.py   # entrypoint E3 (descarga/train/backtest)
       config/
          base.yaml               # universo, costos, horizontes, umbrales
          experiment_e1.yaml
@@ -922,7 +922,7 @@ trading_predict/
       models/
          e1_gru.py               # definición GRU
          e2_lstm.py              # definición LSTM
-         torch_lstm.py            # LSTM regressor (baseline)
+         e3_lstm.py              # LSTM regressor (baseline)
          train.py                # entrenamiento (fold-aware)
          predict.py              # predicciones out-of-sample
       pairs/
@@ -951,7 +951,7 @@ trading_predict/
 ```
 
 **Entrypoints prácticos (baseline)**
-- E3 (intradía): `python -m src.e3_intraday_pipeline --mode download` y luego `python -m src.e3_intraday_pipeline --mode run`.
+- E3 (intradía): `python -m src.train_e3_pipeline --mode download` y luego `python -m src.train_e3_pipeline --mode run`.
 
 **Entry points mínimos (orden recomendado)**
 1. `src/data/download.py` → baja OHLCV + SPY

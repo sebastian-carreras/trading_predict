@@ -84,7 +84,7 @@ def train_e3_with_mlflow(**context):
     import sys
     sys.path.insert(0, '/opt/airflow')
     
-    from src.e3_intraday_pipeline import run_intraday_for_ticker
+    from src.train_e3_pipeline import run_for_ticker
     from src.utils import load_yaml
     from pathlib import Path
     
@@ -145,10 +145,10 @@ def train_e3_with_mlflow(**context):
             })
             
             try:
-                result = run_intraday_for_ticker(
+                result = run_for_ticker(
                     config=config,
                     ticker=ticker,
-                    root=root,
+                    raw_dir=root / "data/raw/intraday",
                     out_dir=out_dir,
                 )
                 
