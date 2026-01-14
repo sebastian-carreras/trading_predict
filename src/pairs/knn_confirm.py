@@ -115,11 +115,14 @@ def train_knn_model(
         - test_score: R² en test
     """
     
-    # Alinear features y target
+    # === Preparar datos ===
+    # Combinar features (estado actual) con target (cambio futuro)
     df = state_features.copy()
-    df["target"] = target
-    df = df.dropna()
+    df["target"] = target  # Spread_{t+H} - Spread_t
+    df = df.dropna()  # Eliminar filas con NaN
     
+    # Validar que hay suficientes datos
+    # Necesitamos al menos 5k observaciones para tener vecinos significativos
     if len(df) < k * 5:
         logger.warning(f"Insufficient data for k-NN: {len(df)} < {k*5}")
         return {
@@ -129,39 +132,77 @@ def train_knn_model(
             "test_score": np.nan,
         }
     
-    # Split temporal
-    split_idx = int(len(df) * (1 - test_size))
-    train_df = df.iloc[:split_idx]
-    test_df = df.iloc[split_idx:]
+    # === Split temporal (NO aleatorio) ===
+    # En series temporales NUNCA usar shuffle
+    # Entrenamos con datos antiguos, validamos con datos recientes
+    # Esto simula la realidad: predecir el futuro con el pasado
+    split_idx = int(len(df) * (1 - test_size))  # 80% train, 20% test
+    train_df = df.iloc[:split_idx]   # Primeros 80%: datos antiguos
+    test_df = df.iloc[split_idx:]    # Últimos 20%: datos recientes
     
     X_train = train_df.drop(columns=["target"]).values
     y_train = train_df["target"].values
     X_test = test_df.drop(columns=["target"]).values
     y_test = test_df["target"].values
     
-    # Normalizar features
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
+    # === Normalizar features (CRÍTICO para k-NN) ===
+    # k-NN usa distancias, por lo que las escalas importan
+    # 
+    # Sin normalizar:
+    #   spread = 0-100, zscore = -3 a +3
+    #   → El spread dominaría la distancia (mala predicción)
+    # 
+    # Con StandardScaler:
+    #   Todas las features tienen media=0, std=1
+    #   → Cada feature contribuye equitativamente
     
-    # Configurar métrica de distancia
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)  # Aprende μ y σ del train
+    X_test_scaled = scaler.transform(X_test)        # Aplica mismos μ y σ al test
+    
+    # === Configurar métrica de distancia ===
+    # 
+    # Euclidiana: distancia "en línea recta" entre puntos
+    #   d = √[(x₁-x₂)² + (y₁-y₂)² + ...]
+    #   Simple y funciona bien para la mayoría de casos
+    # 
+    # Mahalanobis: considera correlaciones entre features
+    #   Más sofisticado pero requiere matriz de covarianza
+    #   (no implementado completamente aquí)
+    
     if distance == "euclidean":
         metric = "euclidean"
     elif distance == "mahalanobis":
         metric = "mahalanobis"
-        # Para Mahalanobis necesitamos matriz de covarianza
-        # (implementación simplificada)
+        # Para Mahalanobis necesitamos matriz de covarianza inversa
+        # (implementación simplificada - usar euclidiana por ahora)
         metric = "euclidean"  # Fallback
         logger.warning("Mahalanobis not fully implemented, using euclidean")
     else:
         metric = "euclidean"
     
-    # Entrenar k-NN
+    # === Entrenar k-NN ===
+    # 
+    # Algoritmo:
+    #   1. Para cada punto nuevo, encontrar los k vecinos más cercanos
+    #   2. Promediar los targets de esos k vecinos
+    #   3. Ponderar por 1/distancia (vecinos cercanos pesan más)
+    # 
+    # Ejemplo con k=5:
+    #   Estado actual: [spread=2.5, zscore=1.8, ...]
+    #   Vecinos más cercanos en el pasado con estados similares:
+    #     - Vecino 1 (dist=0.1): cambio futuro = +0.5
+    #     - Vecino 2 (dist=0.2): cambio futuro = +0.3
+    #     - Vecino 3 (dist=0.3): cambio futuro = +0.4
+    #     - Vecino 4 (dist=0.4): cambio futuro = -0.1
+    #     - Vecino 5 (dist=0.5): cambio futuro = +0.2
+    #   Predicción: promedio ponderado ≈ +0.35
+    
     model = KNeighborsRegressor(
-        n_neighbors=k,
-        weights="distance",  # Ponderado por 1/distancia
-        metric=metric,
-        algorithm="auto",
+        n_neighbors=k,           # Número de vecinos a considerar
+        weights="distance",      # Ponderar por 1/distancia (cercanos pesan más)
+        metric=metric,           # Cómo medir distancia
+        algorithm="auto",        # Sklearn elige mejor algoritmo (ball_tree, kd_tree, brute)
     )
     
     model.fit(X_train_scaled, y_train)

@@ -52,35 +52,51 @@ def calculate_hedge_ratio(
             return pd.Series(np.nan, index=df.index)
     
     if window_days is None:
-        # Beta estático (toda la serie)
-        X = df["b"].values.reshape(-1, 1)
-        y = df["a"].values
+        # === Beta estático: usar TODOS los datos históricos ===
+        # Útil para relaciones muy estables que no cambian en el tiempo
+        # Ejemplo: KO vs PEP (Coca-Cola vs Pepsi)
         
+        # Preparar datos para regresión OLS
+        X = df["b"].values.reshape(-1, 1)  # Variable independiente (predictor)
+        y = df["a"].values                  # Variable dependiente (target)
+        
+        # Regresión lineal: P_A = α + β·P_B + ε
+        # fit_intercept=True incluye el término α (intercepto)
         model = LinearRegression(fit_intercept=True)
         model.fit(X, y)
         
+        # β es la pendiente: cuánto cambia P_A por cada cambio en P_B
         beta = model.coef_[0]
         return beta
     
     else:
-        # Beta rolling
+        # === Beta rolling: recalcular cada día con ventana móvil ===
+        # Útil cuando la relación cambia en el tiempo
+        # Ejemplo: Acciones que cambian su correlación por cambios fundamentales
+        
         betas = []
         
+        # Iterar sobre cada día
         for i in range(len(df)):
+            # Primeros días: no hay suficiente historia → NaN
             if i < window_days:
                 betas.append(np.nan)
                 continue
             
+            # Tomar ventana de los últimos N días (ej: 120 días)
             window = df.iloc[i-window_days:i]
             X = window["b"].values.reshape(-1, 1)
             y = window["a"].values
             
+            # OLS en la ventana
             model = LinearRegression(fit_intercept=True)
             model.fit(X, y)
             
+            # β calculado con los últimos 120 días
             beta = model.coef_[0]
             betas.append(beta)
         
+        # Retornar serie temporal de betas (uno por día)
         return pd.Series(betas, index=df.index)
 
 
@@ -113,21 +129,38 @@ def build_spread(
         logger.warning(f"Insufficient data for spread: {len(df)} < 30")
         return pd.Series(np.nan, index=df.index)
     
-    # Calcular o usar hedge ratio
+    # === Obtener hedge ratio (β) ===
+    # El β determina cuántas unidades de B necesitas por cada unidad de A
+    # para crear un spread market-neutral
+    
     if hedge_ratio is None:
-        # Calcular β rolling
+        # Opción 1: Calcular β dinámicamente (ventana móvil)
+        # Se recalcula cada día → se adapta a cambios en la relación
         beta = calculate_hedge_ratio(df["a"], df["b"], window_days=window_days)
     elif isinstance(hedge_ratio, (int, float)):
-        # β estático
+        # Opción 2: β fijo (un solo número para todo el período)
+        # Más simple pero asume relación constante
         beta = hedge_ratio
     else:
-        # β como serie (debe estar alineado)
+        # Opción 3: β pre-calculado (serie temporal)
+        # Permite usar β calculado externamente
         beta = hedge_ratio.reindex(df.index)
     
-    # Calcular spread
+    # === Construir spread ===
+    # Spread = P_A - β·P_B
+    # 
+    # Ejemplo: Si GGAL=$100, BMA=$50, β=2.0
+    #   Spread = 100 - 2.0*50 = 0
+    # 
+    # Si GGAL sube a $105 pero BMA se queda en $50:
+    #   Spread = 105 - 2.0*50 = 5 → ¡Oportunidad de short!
+    #   (Esperas que GGAL baje o BMA suba para cerrar en 0)
+    
     if isinstance(beta, pd.Series):
+        # Beta cambia cada día → spread también es dinámico
         spread = df["a"] - beta * df["b"]
     else:
+        # Beta constante → spread simple
         spread = df["a"] - beta * df["b"]
     
     return spread
@@ -152,13 +185,24 @@ def calculate_zscore(
         Serie temporal del z-score
     """
     
-    # Calcular media y std rolling
+    # === Calcular estadísticas móviles del spread ===
+    # Usamos ventana de 60 días para capturar el comportamiento "normal" reciente
     rolling = spread.rolling(window=window_days, min_periods=min_periods)
     
-    mean = rolling.mean()
-    std = rolling.std()
+    mean = rolling.mean()  # Media del spread en los últimos 60 días
+    std = rolling.std()    # Desviación estándar en los últimos 60 días
     
-    # Z-score
+    # === Z-score: normalización del spread ===
+    # Z-score = (valor actual - media) / desviación estándar
+    # 
+    # Interpretación:
+    #   z = 0:  Spread en su valor promedio → No hacer nada
+    #   z = +2: Spread está 2 desviaciones por encima → Anormalmente ALTO
+    #           → Short el spread (apostar a que baje)
+    #   z = -2: Spread está 2 desviaciones por debajo → Anormalmente BAJO
+    #           → Long el spread (apostar a que suba)
+    # 
+    # El +1e-12 evita división por cero cuando std=0
     zscore = (spread - mean) / (std + 1e-12)
     
     return zscore

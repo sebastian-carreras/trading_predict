@@ -61,33 +61,60 @@ def estimate_ou_parameters(
             "log_likelihood": np.nan,
         }
     
-    # Valores del spread
+    # Extraer valores numéricos del spread
     s = spread_clean.values
     
-    # Método discreto (Euler-Maruyama)
-    # ΔS_t ≈ θ(μ - S_t)Δt + σ√Δt ε_t
-    # donde ε_t ~ N(0, 1)
+    # === Proceso Ornstein-Uhlenbeck (OU) ===
+    # Ecuación diferencial estocástica:
+    #   dS_t = θ(μ - S_t)dt + σ dW_t
+    # 
+    # Componentes:
+    #   θ (theta): Velocidad de reversión a la media
+    #              - θ alto → reversión rápida (buenos pares para trading)
+    #              - θ bajo → reversión lenta (pares menos predecibles)
+    #   μ (mu): Nivel medio del spread (equilibrio de largo plazo)
+    #   σ (sigma): Volatilidad del proceso (ruido aleatorio)
+    # 
+    # Versión discreta (Euler-Maruyama para datos diarios):
+    #   ΔS_t ≈ θ(μ - S_t)Δt + σ√Δt ε_t
+    #   donde ε_t ~ N(0, 1) es ruido gaussiano
     
-    # Primera estimación: μ = media del spread
+    # Primera estimación: μ es simplemente la media histórica del spread
     mu_init = np.mean(s)
     
-    # Regresión AR(1) para estimar θ
-    # S_{t+1} - S_t = θμΔt - θS_t Δt + σ√Δt ε_t
-    # Reordenando: S_{t+1} = (1 - θΔt)S_t + θμΔt + σ√Δt ε_t
-    #              S_{t+1} = α + β S_t + ε_t
-    # donde β = (1 - θΔt), α = θμΔt
+    # === Estimación vía regresión AR(1) (AutoRegresivo de orden 1) ===
+    # 
+    # Del proceso OU discreto:
+    #   S_{t+1} - S_t = θμΔt - θS_t Δt + σ√Δt ε_t
+    # 
+    # Reordenando:
+    #   S_{t+1} = (1 - θΔt)S_t + θμΔt + σ√Δt ε_t
+    #   S_{t+1} = α + β S_t + ε_t    ← Forma AR(1)
+    # 
+    # Donde:
+    #   β = (1 - θΔt)  → Si β ≈ 1: sin reversión; β < 1: hay reversión
+    #   α = θμΔt       → Relacionado con nivel medio
+    # 
+    # De β y α podemos recuperar θ y μ:
+    #   θ = (1 - β) / Δt
+    #   μ = α / (θ Δt) = α / (1 - β)
     
-    s_lagged = s[:-1]
-    s_next = s[1:]
+    # Crear arrays con valores desplazados
+    s_lagged = s[:-1]  # S_t (valores actuales)
+    s_next = s[1:]     # S_{t+1} (valores siguiente día)
     
-    # OLS para estimar α, β
-    # β = cov(S_t, S_{t+1}) / var(S_t)
-    # α = mean(S_{t+1}) - β * mean(S_t)
+    # === Mínimos cuadrados ordinarios (OLS) para estimar α y β ===
+    # 
+    # Fórmulas:
+    #   β = Cov(S_t, S_{t+1}) / Var(S_t)
+    #   α = E[S_{t+1}] - β·E[S_t]
     
-    mean_s = np.mean(s_lagged)
-    mean_s_next = np.mean(s_next)
+    mean_s = np.mean(s_lagged)      # Media de S_t
+    mean_s_next = np.mean(s_next)   # Media de S_{t+1}
     
+    # Covarianza entre S_t y S_{t+1}
     cov = np.mean((s_lagged - mean_s) * (s_next - mean_s_next))
+    # Varianza de S_t
     var_s = np.var(s_lagged, ddof=1)
     
     if var_s < 1e-12:
@@ -100,29 +127,53 @@ def estimate_ou_parameters(
             "log_likelihood": np.nan,
         }
     
-    beta = cov / var_s
-    alpha = mean_s_next - beta * mean_s
+    # Calcular coeficientes de la regresión AR(1)
+    beta = cov / var_s           # Coeficiente β
+    alpha = mean_s_next - beta * mean_s  # Intercepto α
     
-    # Recuperar θ y μ desde α y β
+    # === Recuperar parámetros OU desde α y β ===
+    # 
     # θ = (1 - β) / Δt
+    #   - Si β = 0.95 y Δt = 1: θ = 0.05 → reversión lenta
+    #   - Si β = 0.70 y Δt = 1: θ = 0.30 → reversión rápida
+    # 
     # μ = α / (θ Δt) = α / (1 - β)
     
     theta = (1 - beta) / dt
     
+    # Validar que hay reversión a la media
     if abs(theta) < 1e-6:
+        # θ ≈ 0 significa que NO hay reversión (caminata aleatoria)
+        # El spread no es estacionario → mal par para trading
         logger.warning("Theta near zero - no mean reversion")
         mu = mu_init
     else:
+        # Calcular nivel medio desde α y θ
         mu = alpha / (theta * dt)
     
-    # Estimar σ desde residuales
+    # === Estimar volatilidad (σ) desde residuales ===
+    # Los residuales son los errores del modelo AR(1)
     residuals = s_next - (alpha + beta * s_lagged)
     sigma = np.std(residuals, ddof=1) / np.sqrt(dt)
     
-    # Calcular half-life
+    # === Half-life: tiempo característico de reversión ===
+    # Half-life = ln(2) / θ
+    # 
+    # Es el tiempo esperado para que el spread recorra
+    # la mitad de la distancia hacia su media
+    # 
+    # Ejemplo:
+    #   - θ = 0.10 → half-life = 6.9 días
+    #   - θ = 0.05 → half-life = 13.9 días
+    # 
+    # Half-life ideal para trading: 5-20 días
+    #   - Muy corto (< 5): ruido aleatorio, difícil de operar
+    #   - Muy largo (> 30): reversión lenta, capital inmovilizado
+    
     if theta > 1e-6:
         half_life = np.log(2) / theta
     else:
+        # Sin reversión → half-life infinito
         half_life = np.inf
     
     # Log-likelihood (Gaussian)

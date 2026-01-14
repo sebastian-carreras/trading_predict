@@ -59,28 +59,47 @@ def test_pair_cointegration(
     
     if method == "engle-granger":
         # Test de Engle-Granger (2-step method)
-        # Paso 1: OLS regression para obtener residuales
-        # Paso 2: Test ADF en los residuales
+        # ==========================================
+        # Paso 1: Regresión OLS (Ordinary Least Squares)
+        #   - Ajusta: P_A = α + β·P_B + residuos
+        #   - Encuentra β (hedge ratio) que minimiza varianza de residuos
+        # 
+        # Paso 2: Test ADF (Augmented Dickey-Fuller) sobre residuos
+        #   - H0: Los residuos NO son estacionarios (tienen raíz unitaria)
+        #   - H1: Los residuos SÍ son estacionarios (revierten a la media)
+        #   - Si p-value < 0.05: rechazamos H0 → hay cointegración ✓
+        
+        # statsmodels.coint() ejecuta ambos pasos automáticamente
         score, pvalue, crit_value = coint(df["a"].values, df["b"].values)
         
         return {
-            "pvalue": pvalue,
-            "is_cointegrated": pvalue < significance,
-            "test_statistic": score,
-            "critical_value": crit_value[1],  # 5% critical value
+            "pvalue": pvalue,  # Probabilidad de observar estos datos si NO hay cointegración
+            "is_cointegrated": pvalue < significance,  # True si p < 0.05 (cointegrados)
+            "test_statistic": score,  # Estadístico ADF (más negativo = más evidencia)
+            "critical_value": crit_value[1],  # Valor crítico al 5% de significancia
         }
     
     elif method == "johansen":
         # Test de Johansen (multivariado)
+        # ==================================
+        # Diferencia con Engle-Granger:
+        #   - E-G: Solo detecta 1 relación de cointegración
+        #   - Johansen: Puede detectar múltiples relaciones (útil para >2 series)
+        # 
+        # Para 2 series (pares), ambos métodos son equivalentes
+        # Johansen es más robusto pero más complejo de interpretar
+        
+        # det_order=0: No incluir tendencia determinística en el modelo
+        # k_ar_diff=1: Usar 1 lag en diferencias (modelo VAR(1))
         result = coint_johansen(df[["a", "b"]].values, det_order=0, k_ar_diff=1)
         
-        # Usar trace statistic (más común)
+        # Usar trace statistic (estadístico de traza - más común que max eigenvalue)
         trace_stat = result.lr1[0]  # Primera estadística de traza
-        crit_val_5pct = result.cvt[0, 1]  # Valor crítico al 5%
+        crit_val_5pct = result.cvt[0, 1]  # Valor crítico al 5% de significancia
         
         # Aproximar p-value basado en comparación con valor crítico
-        # (Johansen no retorna p-value directamente)
-        is_coint = trace_stat > crit_val_5pct
+        # (Johansen no retorna p-value directamente, solo estadísticos)
+        is_coint = trace_stat > crit_val_5pct  # Si supera umbral → cointegrados
         approx_pvalue = 0.01 if is_coint else 0.10  # Aproximación conservadora
         
         return {
@@ -111,21 +130,29 @@ def calculate_correlation_stability(
         Coeficiente de variación de la correlación rolling
         (menor = más estable)
     """
+    # Alinear series temporalmente (eliminar fechas faltantes)
     df = pd.DataFrame({"a": price_a, "b": price_b}).dropna()
     
+    # Necesitamos al menos 2 ventanas de datos para calcular estabilidad
     if len(df) < window_days * 2:
         return np.nan
     
-    # Correlación rolling
+    # Calcular correlación en ventana móvil de 60 días
+    # Esto muestra cómo cambia la relación entre activos en el tiempo
     rolling_corr = df["a"].rolling(window_days).corr(df["b"])
     
-    # Coeficiente de variación (std / mean)
-    mean_corr = rolling_corr.mean()
-    std_corr = rolling_corr.std()
+    # Coeficiente de variación (CV) = desviación estándar / media
+    # Mide qué tan estable es la correlación:
+    #   - CV bajo (< 0.3): correlación estable → buen par
+    #   - CV alto (> 0.5): correlación errática → mal par
+    mean_corr = rolling_corr.mean()  # Correlación promedio
+    std_corr = rolling_corr.std()    # Volatilidad de la correlación
     
+    # Evitar división por cero
     if abs(mean_corr) < 1e-6:
         return np.nan
     
+    # CV = qué porcentaje de la media es la desviación estándar
     cv = std_corr / abs(mean_corr)
     return cv
 
