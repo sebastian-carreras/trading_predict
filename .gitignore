@@ -179,11 +179,44 @@ cython_debug/
 # Ignore .DS_Store in any subdirectory
 .DS_Store
 
-# MLflow artifacts (local storage)
-runs/mlflow_artifacts/*
-runs/mlflow_local/*
-data/*
-runs/*
-mlruns/*
-reports/*
-dockerfiles/airflow/logs/*
+# Data files and folders
+data/**
+!data/.gitkeep
+data/raw/**
+data/clean/**
+data/features/**
+data/pairs/**
+data/cache/**
+
+# CSV, data formats
+*.csv
+*.parquet
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.feather
+*.arrow
+
+# MLflow artifacts and runs
+runs/**
+!runs/.gitkeep
+runs/mlflow_artifacts/**
+runs/mlflow_local/**
+runs/e1_conservative/**
+runs/e2_moderate/**
+runs/e4_pairs/**
+runs/optuna_trials/**
+runs/test_wf_e2/**
+mlruns/**
+!mlruns/.gitkeep
+
+# Reports and outputs
+reports/**
+!reports/.gitkeep
+reports/figures/**
+reports/hyperparameter_optimization/**
+reports/tables/**
+
+# Airflow logs
+dockerfiles/airflow/logs/**
