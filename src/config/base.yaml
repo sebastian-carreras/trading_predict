@@ -61,7 +61,31 @@ universe:
       - "JNJ"
       - "PG"
       - "V"
+    e1_simple:
+      # Mismo universo que e1_conservative
+      - "YPFD.BA"
+      - "GGAL.BA"
+      - "PAMP.BA"
+      - "BYMA.BA"
+      - "CEPU.BA"
+      - "AAPL"
+      - "MSFT"
+      - "JNJ"
+      - "PG"
+      - "V"
     e2_moderate:
+      - "BBAR.BA"
+      - "BMA.BA"
+      - "EDN.BA"
+      - "TGSUD.BA"
+      - "LOMA.BA"
+      - "NVDA"
+      - "GOOGL"
+      - "AMZN"
+      - "META"
+      - "NFLX"
+    e2_simple:
+      # Mismo universo que e2_moderate
       - "BBAR.BA"
       - "BMA.BA"
       - "EDN.BA"
@@ -103,7 +127,9 @@ splits:
   # Preferred (new): multi-profile configuration. Strategies pick a profile; profiles define targets/weights/threshold.
   strategy_profile:
     e1_conservative: conservative
+    e1_simple: conservative
     e2_moderate: moderate
+    e2_simple: moderate
     e3_intraday: aggressive
 
   decision_profiles:
@@ -213,6 +239,45 @@ strategies:
       allow_short: false  # Solo long positions (estrategia conservadora)
       max_position: 1.0  # 100% del capital en una posición
 
+  e1_simple:
+    enabled: true
+    frequency: "1D"
+    lookback_days: 180
+    horizon_days: 90
+    rebalance: "monthly"
+
+    thresholds:
+      tau_buy: 0.06
+      tau_sell: 0.00
+
+    filters:
+      # Simplificado: solo filtro de tendencia
+      regime:
+        type: "sma200"
+        sma200_required: true
+
+    risk:
+      stop_loss_pct: 0.10
+
+    model:
+      type: "GRU"
+      gru_units: [64]  # Solo 1 capa (simplificado)
+      dropout: 0.2
+      dense_units: 16
+      loss: "huber"
+      huber_delta: 1.0
+      optimizer: "adamw"
+      learning_rate: 0.001
+      batch_size: 64
+      max_epochs: 100
+      early_stopping_patience: 10
+      clipnorm: 1.0
+
+    backtest:
+      holding_period_days: 90
+      allow_short: false
+      max_position: 1.0
+
   e2_moderate:
     enabled: true
     frequency: "1D"
@@ -249,6 +314,46 @@ strategies:
       max_epochs: 150
       early_stopping_patience: 12
       clipnorm: 1.0
+
+  e2_simple:
+    enabled: true
+    frequency: "1D"
+    lookback_days: 60
+    horizon_days: 20
+    rebalance: "weekly"
+
+    thresholds:
+      tau_buy: 0.025
+      tau_sell: 0.00
+
+    filters:
+      rsi14_min: 35
+      rsi14_max: 70
+      macd_confirmation: true
+      volume_zscore_window: 20
+      volume_zscore_min: 0
+
+    risk:
+      stop_loss_pct: 0.07
+
+    model:
+      type: "LSTM"
+      lstm_units: [128, 64]  # 2 capas LSTM
+      dropout: 0.2
+      dense_units: 16
+      loss: "huber"
+      huber_delta: 1.0
+      optimizer: "adamw"
+      learning_rate: 0.001
+      batch_size: 64
+      max_epochs: 100  # Menos epochs (más rápido)
+      early_stopping_patience: 10
+      clipnorm: 1.0
+
+    backtest:
+      holding_period_days: 20
+      allow_short: false
+      max_position: 1.0
 
   e4_pairs:
     enabled: true
@@ -416,3 +521,20 @@ reporting:
     ml: ["mae", "rmse", "directional_accuracy"]
     trading: ["cagr", "sharpe", "sortino", "max_drawdown", "calmar", "profit_factor", "turnover", "hit_rate"]
   output_dir: "reports"
+
+# Decision score simplificado para e1_simple
+# Solo 5 métricas: IC, directional_accuracy, sharpe, MAE, RMSE
+decision:
+  targets:
+    ic_min: 0.05
+    directional_accuracy_min: 0.55
+    sharpe_min: 1.0
+    mae_max: 0.03
+    rmse_max: 0.05
+  weights:
+    ic: 0.25
+    directional_accuracy: 0.20
+    sharpe: 0.30
+    mae: 0.15
+    rmse: 0.10
+  threshold: 0.70  # Umbral para señal BUY

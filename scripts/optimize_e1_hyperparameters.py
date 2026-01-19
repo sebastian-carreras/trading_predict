@@ -120,11 +120,31 @@ class E1HyperparameterOptimizer:
             mlflow.set_experiment(experiment_name)
             print(f"✓ Usando experimento '{experiment_name}'")
         except Exception as e:
+            error_msg = str(e)
             print(f"⚠️  Error configurando experimento: {e}")
+            
+            # Si es un error de revisión de Alembic, recrear la base de datos
+            if "Can't locate revision" in error_msg or "alembic" in error_msg.lower():
+                if mlflow_tracking_uri == "local":
+                    print(f"⚠️  Base de datos MLflow corrupta. Recreando...")
+                    # Eliminar base de datos corrupta
+                    if mlflow_db.exists():
+                        mlflow_db.unlink()
+                        print(f"✓ Base de datos antigua eliminada: {mlflow_db}")
+                    
+                    # Reconectar con base de datos nueva
+                    mlflow.set_tracking_uri(tracking_uri)
+                    print(f"✓ Nueva base de datos MLflow creada")
+            
             # Crear experimento manualmente con artifact location local
-            mlflow.create_experiment(experiment_name, artifact_location=artifact_location)
-            mlflow.set_experiment(experiment_name)
-            print(f"✓ Experimento '{experiment_name}' creado")
+            try:
+                mlflow.create_experiment(experiment_name, artifact_location=artifact_location)
+                mlflow.set_experiment(experiment_name)
+                print(f"✓ Experimento '{experiment_name}' creado")
+            except Exception as create_error:
+                # Si el experimento ya existe, solo establecerlo
+                mlflow.set_experiment(experiment_name)
+                print(f"✓ Experimento '{experiment_name}' configurado")
         
         # Optuna
         self.optuna_db_path = optuna_db_path

@@ -37,11 +37,17 @@ def download_ohlcv_5m(
             interval=interval,
             auto_adjust=False,
             progress=False,
-            threads=True,
+            threads=False,  # Avoid thread issues with single ticker
         )
         if df is None or df.empty:
+            print(f"⚠️ No data for {ticker}")
             continue
 
+        # Handle MultiIndex columns (yfinance sometimes returns this for single tickers)
+        if isinstance(df.columns, pd.MultiIndex):
+            # Flatten MultiIndex by taking first level (drop ticker name)
+            df.columns = df.columns.get_level_values(0)
+        
         df = df.reset_index().rename(columns={"Datetime": "timestamp", "Date": "timestamp"})
         if "timestamp" not in df.columns:
             # yfinance can return an index without name
@@ -64,6 +70,7 @@ def download_ohlcv_5m(
         out_path = out_dir / f"{ticker}_5m.csv"
         df.to_csv(out_path, index=False)
         written.append(out_path)
+        print(f"✓ Downloaded {ticker}: {len(df)} bars")
 
     return written
 

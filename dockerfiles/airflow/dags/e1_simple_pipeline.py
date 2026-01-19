@@ -1,12 +1,18 @@
 """
-DAG de Airflow para Estrategia E1 - Conservadora (GRU)
+DAG de Airflow para Estrategia E1 Simple - Simplificada (GRU sin walk-forward)
 
 Flujo:
 1. Descargar datos diarios → data/raw/daily/
-2. Calcular features E1 (27 indicadores)
-3. Entrenar modelo GRU con MLflow tracking
+2. Limpiar y validar datos
+3. Entrenar modelo GRU simple con MLflow tracking
 4. Guardar predicciones y métricas
 5. Notificar a FastAPI (modelo disponible)
+
+Diferencias vs E1 Conservative:
+- Sin walk-forward: usa un único split temporal (train/val/test)
+- Decision score simplificado: 5 componentes (IC, directional accuracy, sharpe, MAE, RMSE)
+- Arquitectura GRU más simple: 1 capa vs 2-3 capas en E1 Conservative
+- Más rápido de entrenar, ideal para experimentos y prototipado
 """
 
 from datetime import datetime, timedelta
@@ -32,16 +38,16 @@ default_args = {
 }
 
 dag = DAG(
-    'e1_conservative_pipeline',
+    'e1_simple_pipeline',
     default_args=default_args,
-    description='Pipeline E1: Predicción de retornos a 90 días (GRU)',
-    schedule_interval='0 2 * * 1',  # Lunes 2 AM (semanal, para actualizar datos)
+    description='Pipeline E1 Simple: GRU simplificado sin walk-forward',
+    schedule_interval='0 3 * * 1',  # Lunes 3 AM (después del E1 Conservative)
     catchup=False,
-    tags=['trading', 'e1', 'conservative', 'gru'],
+    tags=['trading', 'e1', 'simple', 'gru', 'simplified'],
     params={
-        'tickers': 'YPFD.BA, GGAL.BA, PAMP.BA, BYMA.BA, CEPU.BA, AAPL, MSFT, JNJ, PG, V',  # Comma-separated tickers: "AAPL,MSFT,GOOGL,META,NVDA", vacío = todos del config
-        'use_tuned_params': 'False',  # True = aplicar overrides por ticker desde YAML (Optuna)
-        'tuned_params_path': 'reports/hyperparameter_optimization/e1_tuned_params_by_ticker.yaml',
+        'tickers': 'YPFD.BA, GGAL.BA, PAMP.BA, BYMA.BA, CEPU.BA, AAPL, MSFT, JNJ, PG, V',
+        'skip_download': 'False',  # Permite reutilizar datos descargados por E1 Conservative
+        'skip_cleaning': 'False',   # Permite reutilizar datos limpios
     },
 )
 
@@ -63,6 +69,13 @@ def download_daily_data(**context):
     from src.utils import load_yaml
     from pathlib import Path
     
+    skip_download = _as_bool(context['params'].get('skip_download'))
+    
+    if skip_download:
+        context['task_instance'].xcom_push(key='files_downloaded', value=0)
+        context['task_instance'].xcom_push(key='tickers_to_train', value=[])
+        return "Descarga omitida (skip_download=True)"
+    
     root = Path("/opt/airflow")
     config = load_yaml(root / "src/config/base.yaml")
     
@@ -75,8 +88,19 @@ def download_daily_data(**context):
         if benchmark not in tickers:
             tickers.append(benchmark)
     else:
-        # Usar todos los tickers del config
-        tickers = list(config.get("universe", {}).get("tickers", []))
+        # Usar todos los tickers del config para E1 Simple
+        tickers = list(
+            config.get("universe", {})
+            .get("tickers_by_strategy", {})
+            .get("e1_simple", [])
+        )
+        if not tickers:
+            # Fallback a E1 conservative
+            tickers = list(
+                config.get("universe", {})
+                .get("tickers_by_strategy", {})
+                .get("e1_conservative", [])
+            )
     
     out_dir = root / "data/raw/daily"
     
@@ -84,8 +108,8 @@ def download_daily_data(**context):
         tickers, 
         out_dir=out_dir, 
         period="10y",
-        skip_existing=True,  # No re-descargar si fresco
-        min_days_fresh=1,    # Considerar fresco si < 1 día
+        skip_existing=True,
+        min_days_fresh=1,
     )
     
     context['task_instance'].xcom_push(key='files_downloaded', value=len(written))
@@ -101,6 +125,13 @@ def clean_daily_data(**context):
     from src.data.clean_daily import process_daily_data_with_cleaning
     from pathlib import Path
     
+    skip_cleaning = _as_bool(context['params'].get('skip_cleaning'))
+    
+    if skip_cleaning:
+        context['task_instance'].xcom_push(key='cleaned_tickers', value=0)
+        context['task_instance'].xcom_push(key='rejected_tickers', value=0)
+        return "Limpieza omitida (skip_cleaning=True)"
+    
     root = Path("/opt/airflow")
     raw_dir = root / "data/raw/daily"
     clean_dir = root / "data/clean"
@@ -109,9 +140,9 @@ def clean_daily_data(**context):
     reports = process_daily_data_with_cleaning(
         raw_dir=raw_dir,
         clean_dir=clean_dir,
-        strategy="forward_fill",  # Conservador: propaga último valor válido
-        min_days=252,  # Mínimo 1 año de datos después de limpieza
-        remove_zero_volume=True,  # Eliminar días con volumen=0 (sin trading real)
+        strategy="forward_fill",
+        min_days=252,
+        remove_zero_volume=True,
         verbose=True,
     )
     
@@ -125,12 +156,12 @@ def clean_daily_data(**context):
     return f"Limpiados {cleaned_count} tickers, rechazados {rejected_count}"
 
 
-def train_e1_with_mlflow(**context):
-    """Task 2: Entrenar modelos E1 con tracking MLflow."""
+def train_e1_simple_with_mlflow(**context):
+    """Task 2: Entrenar modelos E1 Simple con tracking MLflow."""
     import sys
     sys.path.insert(0, '/opt/airflow')
     
-    from src.train_e1_pipeline import run_e1_for_ticker, load_ohlcv_csv
+    from src.train_e1_simple_pipeline import run_e1_simple_for_ticker
     from src.utils import load_yaml
     from pathlib import Path
     import pandas as pd
@@ -146,35 +177,10 @@ def train_e1_with_mlflow(**context):
             return 1e8 if v > 0 else -1e8
         return v
     
-    mlflow.set_experiment("E1_Conservative_Strategy")
+    mlflow.set_experiment("E1_Simple_Strategy")
     
     root = Path("/opt/airflow")
     config = load_yaml(root / "src/config/base.yaml")
-
-    # Elegir baseline vs tuned params (Optuna) desde la UI del DAG.
-    use_tuned_params = _as_bool(context['params'].get('use_tuned_params'))
-    tuned_params_path = str(context['params'].get('tuned_params_path') or '').strip()
-
-    tuned_map = None
-    if use_tuned_params:
-        if not tuned_params_path:
-            tuned_params_path = 'reports/hyperparameter_optimization/e1_tuned_params_by_ticker.yaml'
-
-        resolved_tuned_path = root / tuned_params_path
-        os.environ['E1_TUNED_PARAMS_PATH'] = str(resolved_tuned_path)
-
-        if resolved_tuned_path.exists():
-            try:
-                tuned_map = load_yaml(resolved_tuned_path)
-            except Exception as e:
-                print(f"⚠️ No se pudo cargar tuned params YAML: {resolved_tuned_path}: {e}")
-                tuned_map = None
-        else:
-            print(f"⚠️ use_tuned_params=True pero no existe: {resolved_tuned_path}")
-    else:
-        # Asegurar baseline aunque haya quedado una env var de ejecuciones previas.
-        os.environ.pop('E1_TUNED_PARAMS_PATH', None)
-        os.environ.pop('TUNED_PARAMS_PATH', None)
     
     # Obtener tickers del XCom (pasados desde download_daily_data)
     tickers_from_download = context['task_instance'].xcom_pull(
@@ -183,28 +189,52 @@ def train_e1_with_mlflow(**context):
     )
     
     if tickers_from_download:
-        # Filtrar solo los tickers de E1 que fueron descargados
-        e1_tickers_config = set(
+        # Filtrar solo los tickers de E1 Simple que fueron descargados
+        e1_simple_tickers_config = set(
             config.get("universe", {})
             .get("tickers_by_strategy", {})
-            .get("e1_conservative", [])
+            .get("e1_simple", [])
         )
-        tickers = [t for t in tickers_from_download if t in e1_tickers_config]
+        if not e1_simple_tickers_config:
+            # Fallback a E1 conservative
+            e1_simple_tickers_config = set(
+                config.get("universe", {})
+                .get("tickers_by_strategy", {})
+                .get("e1_conservative", [])
+            )
+        tickers = [t for t in tickers_from_download if t in e1_simple_tickers_config]
     else:
-        # Usar todos los tickers E1 del config
+        # Usar todos los tickers E1 Simple del config
         tickers = list(
             config.get("universe", {})
             .get("tickers_by_strategy", {})
-            .get("e1_conservative", [])
+            .get("e1_simple", [])
         )
+        if not tickers:
+            # Fallback a E1 conservative
+            tickers = list(
+                config.get("universe", {})
+                .get("tickers_by_strategy", {})
+                .get("e1_conservative", [])
+            )
     
     if not tickers:
-        return "No tickers to train for E1 strategy"
+        return "No tickers to train for E1 Simple strategy"
     
-    # Benchmark
+    # Cargar benchmark
+    def load_ohlcv_csv(path: Path) -> pd.DataFrame:
+        """Cargar OHLCV desde CSV."""
+        df = pd.read_csv(path, index_col=0, parse_dates=True)
+        df.index = pd.to_datetime(df.index)
+        return df
+    
     benchmark = config.get("universe", {}).get("benchmark", "SPY")
+    clean_dir = root / "data/clean"
     raw_dir = root / "data/raw/daily"
-    benchmark_path = raw_dir / f"{benchmark}_daily.csv"
+    
+    benchmark_path = clean_dir / f"{benchmark}_daily.csv"
+    if not benchmark_path.exists():
+        benchmark_path = raw_dir / f"{benchmark}_daily.csv"
     
     if benchmark_path.exists():
         benchmark_df = load_ohlcv_csv(benchmark_path)
@@ -213,51 +243,42 @@ def train_e1_with_mlflow(**context):
     
     # Output dir con timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = root / "runs/e1_conservative" / timestamp
+    out_dir = root / "runs/e1_simple" / timestamp
     out_dir.mkdir(parents=True, exist_ok=True)
     
     results = []
     for ticker in tickers:
-        with mlflow.start_run(run_name=f"E1_{ticker}_{timestamp}"):
-            mlflow.log_param("use_tuned_params", use_tuned_params)
-            mlflow.log_param("tuned_params_path", tuned_params_path if use_tuned_params else "")
-            if use_tuned_params and isinstance(tuned_map, dict):
-                overrides_for_ticker = tuned_map.get(ticker) or {}
-                # Guardar un snapshot (string) para reproducibilidad
-                mlflow.log_param(
-                    "tuned_overrides",
-                    json.dumps(overrides_for_ticker, sort_keys=True, ensure_ascii=False),
-                )
-
+        with mlflow.start_run(run_name=f"E1Simple_{ticker}_{timestamp}"):
             # Extraer configuración del modelo
-            e1_config = config["strategies"]["e1_conservative"]
-            model_config = e1_config.get("model", {})
+            e1_simple_config = config.get("strategies", {}).get("e1_simple", {})
+            model_config = e1_simple_config.get("model", {})
             
             # Log parámetros de estrategia
             mlflow.log_params({
-                "strategy": "e1_conservative",
+                "strategy": "e1_simple",
                 "ticker": ticker,
-                "lookback_days": e1_config["lookback_days"],
-                "horizon_days": e1_config["horizon_days"],
+                "lookback_days": e1_simple_config.get("lookback_days", 180),
+                "horizon_days": e1_simple_config.get("horizon_days", 90),
                 "model_type": "GRU",
+                "walk_forward": False,
             })
             
             # Log hiperparámetros del modelo
             mlflow.log_params({
-                "gru_units": str(model_config.get("gru_units", [128, 64])),
+                "gru_units": str(model_config.get("gru_units", [64])),
                 "dropout": model_config.get("dropout", 0.2),
-                "dense_units": model_config.get("dense_units", 32),
-                "learning_rate": model_config.get("learning_rate", 1e-3),
+                "dense_units": model_config.get("dense_units", 16),
+                "learning_rate": model_config.get("learning_rate", 0.001),
                 "batch_size": model_config.get("batch_size", 64),
-                "max_epochs": model_config.get("max_epochs", 200),
-                "early_stopping_patience": model_config.get("early_stopping_patience", 15),
+                "max_epochs": model_config.get("max_epochs", 100),
+                "early_stopping_patience": model_config.get("early_stopping_patience", 10),
                 "loss": model_config.get("loss", "huber"),
                 "huber_delta": model_config.get("huber_delta", 1.0),
                 "seed": config.get("project", {}).get("seed", 42),
             })
             
             try:
-                result = run_e1_for_ticker(
+                result = run_e1_simple_for_ticker(
                     config=config,
                     ticker=ticker,
                     raw_dir=raw_dir,
@@ -286,19 +307,23 @@ def train_e1_with_mlflow(**context):
                     "bt_num_trades": sanitize_metric(result.get("bt_num_trades", 0)),
                 })
 
-                if result.get("decision_profile"):
-                    mlflow.log_param("decision_profile", result.get("decision_profile"))
-
+                # Log decision score (sin componentes individuales)
                 if result.get("decision_score") is not None:
                     mlflow.log_metric("decision_score", sanitize_metric(result.get("decision_score", 0)))
-                # No loguear componentes individuales del decision score
                 if result.get("decision_signal"):
                     mlflow.log_param("decision_signal", result.get("decision_signal"))
+                if result.get("decision_profile"):
+                    mlflow.log_param("decision_profile", result.get("decision_profile"))
                 
-                # Log modelo GRU como artifact
+                # Log modelo como artifact
                 model_path = out_dir / ticker / f"{ticker}_model.pth"
                 if model_path.exists():
                     mlflow.log_artifact(str(model_path), artifact_path="models")
+                
+                # Log predicciones como artifact
+                pred_path = out_dir / ticker / f"{ticker}_predictions.csv"
+                if pred_path.exists():
+                    mlflow.log_artifact(str(pred_path), artifact_path="predictions")
                 
                 # Log backtest como artifact
                 backtest_path = out_dir / ticker / f"{ticker}_backtest.csv"
@@ -309,9 +334,12 @@ def train_e1_with_mlflow(**context):
                     "ticker": ticker,
                     "status": "success",
                     "mae": result.get("ml_mae"),
+                    "rmse": result.get("ml_rmse"),
                     "ic": result.get("ml_ic"),
+                    "directional_accuracy": result.get("ml_directional_accuracy"),
                     "sharpe": result.get("bt_sharpe"),
                     "max_dd": result.get("bt_max_drawdown"),
+                    "cagr": result.get("bt_cagr"),
                     "decision_score": result.get("decision_score"),
                     "decision_signal": result.get("decision_signal"),
                     "decision_profile": result.get("decision_profile"),
@@ -325,14 +353,14 @@ def train_e1_with_mlflow(**context):
                     "error": str(e),
                 })
     
-    # Guardar resumen
+    # Guardar y loggear resumen
     summary_df = pd.DataFrame(results)
     summary_path = out_dir / "summary_all.csv"
     summary_df.to_csv(summary_path, index=False)
     
     # Calcular métricas agregadas
-    successful_results = [r for r in results if r["status"] == "success" and r.get("ic") is not None]
-    ic_values = [r["ic"] for r in successful_results]
+    successful_results = [r for r in results if r["status"] == "success"]
+    ic_values = [r["ic"] for r in successful_results if isinstance(r.get("ic"), (int, float))]
     sharpe_values = [r.get("sharpe") for r in successful_results if isinstance(r.get("sharpe"), (int, float))]
     decision_scores = [r.get("decision_score") for r in successful_results if isinstance(r.get("decision_score"), (int, float))]
     buy_signals = sum(1 for r in successful_results if r.get("decision_signal") == "buy")
@@ -349,7 +377,7 @@ def train_e1_with_mlflow(**context):
     targets = {**default_targets, **decision_cfg.get("targets", {})}
     
     # Log resumen como artifact en MLflow
-    with mlflow.start_run(run_name=f"E1_Summary_{timestamp}"):
+    with mlflow.start_run(run_name=f"E1Simple_Summary_{timestamp}"):
         mlflow.log_artifact(str(summary_path))
         mlflow.log_metric("total_tickers", len(tickers))
         mlflow.log_metric("successful_tickers", len(successful_results))
@@ -362,7 +390,7 @@ def train_e1_with_mlflow(**context):
             mlflow.log_metric("ic_min", float(min(ic_values)))
             mlflow.log_metric("ic_max", float(max(ic_values)))
             mlflow.log_metric("ic_positive_count", sum(1 for ic in ic_values if ic > 0))
-            mlflow.log_metric("ic_above_threshold", sum(1 for ic in ic_values if ic > targets['ic_min']))  # IC > target
+            mlflow.log_metric("ic_above_threshold", sum(1 for ic in ic_values if ic > targets['ic_min']))
             mlflow.log_param("ic_target_min", targets['ic_min'])
         
         # Métricas agregadas de Sharpe
@@ -373,6 +401,8 @@ def train_e1_with_mlflow(**context):
             mlflow.log_metric("sharpe_max", float(max(sharpe_values)))
             mlflow.log_metric("sharpe_above_threshold", sum(1 for s in sharpe_values if s > targets['sharpe_min']))
             mlflow.log_param("sharpe_target_min", targets['sharpe_min'])
+        
+        # Métricas agregadas de Decision Score
         if decision_scores:
             mlflow.log_metric("decision_score_mean", float(sum(decision_scores) / len(decision_scores)))
             mlflow.log_metric("decision_score_min", float(min(decision_scores)))
@@ -380,20 +410,23 @@ def train_e1_with_mlflow(**context):
             mlflow.log_param("decision_score_threshold", float(decision_cfg.get("threshold", 0.70)))
     
     context['task_instance'].xcom_push(key='run_dir', value=str(out_dir))
-    return f"Entrenados {len(results)} modelos"
+    return f"Entrenados {len(successful_results)}/{len(tickers)} modelos E1 Simple"
 
 
 def notify_api_model_ready(**context):
     """Task 3: Notificar a FastAPI que nuevos modelos están listos."""
     import requests
     
-    run_dir = context['task_instance'].xcom_pull(task_ids='train_e1_models', key='run_dir')
+    run_dir = context['task_instance'].xcom_pull(task_ids='train_e1_simple_models', key='run_dir')
+    
+    if not run_dir:
+        return "Sin run_dir, notificación omitida"
     
     try:
         response = requests.post(
             "http://fastapi:8800/models/register",
             json={
-                "strategy": "e1_conservative",
+                "strategy": "e1_simple",
                 "run_dir": run_dir,
                 "timestamp": datetime.now().isoformat(),
             },
@@ -420,8 +453,8 @@ task_clean = PythonOperator(
 )
 
 task_train = PythonOperator(
-    task_id='train_e1_models',
-    python_callable=train_e1_with_mlflow,
+    task_id='train_e1_simple_models',
+    python_callable=train_e1_simple_with_mlflow,
     dag=dag,
 )
 

@@ -104,14 +104,25 @@ def load_ohlcv_csv(path: Path) -> pd.DataFrame:
 
 
 def compute_information_coefficient(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    """Calcula el Information Coefficient (correlación) de forma robusta."""
+    """
+    Calcula el Information Coefficient (correlación de Spearman).
+    
+    IC > 0.05 se considera significativo en finanzas.
+    IC < 0 indica overfitting o falta de capacidad predictiva.
+    """
     if len(y_true) <= 1:
         return float("nan")
 
     if np.std(y_true) == 0 or np.std(y_pred) == 0:
         return float("nan")
 
-    return float(np.corrcoef(y_true, y_pred)[0, 1])
+    try:
+        from scipy.stats import spearmanr
+        ic, _ = spearmanr(y_true, y_pred)
+        return float(ic) if np.isfinite(ic) else 0.0
+    except Exception:
+        # Fallback a Pearson si scipy no está disponible
+        return float(np.corrcoef(y_true, y_pred)[0, 1])
 
 
 def _resolve_decision_profile(
@@ -749,9 +760,13 @@ def run_e1_walk_forward(
         "plot_file": as_relative(plot_path),
         "decision_score": decision_score,
         "decision_signal": decision_signal,
-          "decision_profile": str(decision_profile),
+        "decision_profile": str(decision_profile),
         "decision_threshold": float(decision_threshold),
-          **{f"decision_component_{k}": float(v) for k, v in decision_components.items()},
+        # Target columns for reference
+        "ic_target_min": float(decision_targets.get('ic_min', 0.05)),
+        "sharpe_target_min": float(decision_targets.get('sharpe_min', 0.9)),
+        "mae_target_max": float(decision_targets.get('mae_max', 0.03)),
+        "rmse_target_max": float(decision_targets.get('rmse_max', 0.05)),
     }
 
     return summary
@@ -1071,7 +1086,6 @@ def run_e1_for_ticker(
         "decision_signal": decision_signal,
         "decision_profile": str(decision_profile),
         "decision_threshold": float(decision_threshold),
-        **{f"decision_component_{k}": float(v) for k, v in decision_components.items()},
     }
     pd.Series(summary).to_csv(out_dir / f"{ticker}_summary.csv")
 
@@ -1205,11 +1219,7 @@ def main() -> None:
                     if summary.get("decision_profile"):
                         mlflow.log_param("decision_profile", str(summary["decision_profile"]))
 
-                    for k, v in summary.items():
-                        if not isinstance(k, str) or not k.startswith("decision_component_"):
-                            continue
-                        if isinstance(v, (int, float)):
-                            mlflow.log_metric(k, float(v))
+                    # No loguear componentes individuales del decision score en MLflow
 
                     if summary.get("decision_signal"):
                         mlflow.log_param("decision_signal", str(summary["decision_signal"]))

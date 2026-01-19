@@ -39,7 +39,7 @@ dag = DAG(
     tags=['trading', 'e2', 'moderate', 'lstm'],
     params={
         'tickers': 'BBAR.BA, BMA.BA, EDN.BA, TGSUD.BA, LOMA.BA, NVDA, GOOGL, AMZN, META, NFLX',
-        'use_tuned_params': 'False',
+        'use_tuned_params': 'True',
         'tuned_params_path': 'reports/hyperparameter_optimization/e2_tuned_params_by_ticker.yaml',
     },
 )
@@ -220,6 +220,23 @@ def train_e2_with_mlflow(**context):
                 "early_stopping_patience": model_cfg.get("early_stopping_patience", 12),
             })
             
+            # Loggear filtros
+            filters_cfg = config.get("strategies", {}).get("e2_moderate", {}).get("filters", {})
+            mlflow.log_params({
+                "rsi14_min": filters_cfg.get("rsi14_min", 35),
+                "rsi14_max": filters_cfg.get("rsi14_max", 70),
+                "macd_confirmation": filters_cfg.get("macd_confirmation", True),
+                "volume_zscore_window": filters_cfg.get("volume_zscore_window", 20),
+                "volume_zscore_min": filters_cfg.get("volume_zscore_min", 0),
+            })
+            
+            # Loggear thresholds
+            thresholds_cfg = config.get("strategies", {}).get("e2_moderate", {}).get("thresholds", {})
+            mlflow.log_params({
+                "tau_buy": thresholds_cfg.get("tau_buy", 0.025),
+                "tau_sell": thresholds_cfg.get("tau_sell", 0.00),
+            })
+            
             try:
                 result = run_e2_for_ticker(
                     config=config,
@@ -283,12 +300,31 @@ def train_e2_with_mlflow(**context):
     # Calcular métricas agregadas
     successful_results = [r for r in results if r["status"] == "success" and r.get("ic") is not None]
     ic_values = [r["ic"] for r in successful_results]
+    sharpe_values = [r["sharpe"] for r in successful_results if r.get("sharpe") is not None]
+    decision_scores = [r["decision_score"] for r in successful_results if r.get("decision_score") is not None]
+    
+    # Targets/thresholds de las métricas (desde config)
+    decision_cfg = config.get("decision", {})
+    
+    # Targets por defecto para E2 Moderate (mismo que en train_e2_pipeline.py)
+    default_targets = {
+        'ic_min': 0.05,
+        'directional_accuracy_min': 0.55,
+        'sharpe_min': 1.0,
+        'mae_max': 0.03,
+        'rmse_max': 0.05,
+    }
+    targets = {**default_targets, **decision_cfg.get("targets", {})}
     
     # Log resumen como artifact en MLflow
     with mlflow.start_run(run_name=f"E2_Summary_{timestamp}"):
         mlflow.log_artifact(str(summary_path))
         mlflow.log_metric("total_tickers", len(tickers))
         mlflow.log_metric("successful_tickers", len(successful_results))
+        
+            # Contar señales de decisión
+            buy_signals = sum(1 for r in successful_results if r.get("decision_signal") == "buy")
+            mlflow.log_metric("decision_buy_signals", buy_signals)
         
         # Métricas agregadas de IC
         if ic_values:
@@ -297,7 +333,29 @@ def train_e2_with_mlflow(**context):
             mlflow.log_metric("ic_min", float(min(ic_values)))
             mlflow.log_metric("ic_max", float(max(ic_values)))
             mlflow.log_metric("ic_positive_count", sum(1 for ic in ic_values if ic > 0))
-            mlflow.log_metric("ic_above_threshold", sum(1 for ic in ic_values if ic > 0.05))
+            mlflow.log_metric("ic_above_threshold", sum(1 for ic in ic_values if ic > targets['ic_min']))
+            # Loggear target
+            mlflow.log_param("ic_target_min", targets['ic_min'])
+        
+        # Métricas agregadas de Sharpe
+        if sharpe_values:
+            mlflow.log_metric("sharpe_mean", float(sum(sharpe_values) / len(sharpe_values)))
+            mlflow.log_metric("sharpe_median", float(sorted(sharpe_values)[len(sharpe_values) // 2]))
+            mlflow.log_metric("sharpe_min", float(min(sharpe_values)))
+            mlflow.log_metric("sharpe_max", float(max(sharpe_values)))
+            mlflow.log_metric("sharpe_above_threshold", sum(1 for s in sharpe_values if s > targets['sharpe_min']))
+            # Loggear target
+            mlflow.log_param("sharpe_target_min", targets['sharpe_min'])
+        
+        # Métricas agregadas de Decision Score
+        if decision_scores:
+            mlflow.log_metric("decision_score_mean", float(sum(decision_scores) / len(decision_scores)))
+            mlflow.log_metric("decision_score_median", float(sorted(decision_scores)[len(decision_scores) // 2]))
+            mlflow.log_metric("decision_score_min", float(min(decision_scores)))
+            mlflow.log_metric("decision_score_max", float(max(decision_scores)))
+            # Loggear threshold
+            decision_threshold = float(decision_cfg.get("threshold", 0.70))
+            mlflow.log_param("decision_score_threshold", decision_threshold)
     
     context['task_instance'].xcom_push(key='run_dir', value=str(out_dir))
     return f"Entrenados {len(results)} modelos E2"

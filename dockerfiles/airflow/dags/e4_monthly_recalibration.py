@@ -253,6 +253,11 @@ def recalibrate_ou_parameters(**context):
         mlflow.log_metric("active_pairs", len(active_pairs))
         mlflow.log_metric("paused_pairs", len(paused_pairs))
         mlflow.log_metric("breakdown_rate", len(paused_pairs) / len(pairs) if pairs else 0)
+        # Log targets configurados (para referencia en summary)
+        max_pvalue = e4_config.get('filters', {}).get('cointegration_pvalue_max', 0.05)
+        max_half_life = e4_config.get('filters', {}).get('half_life_days_max', 20)
+        mlflow.log_param("cointegration_pvalue_max", float(max_pvalue))
+        mlflow.log_param("half_life_days_max", float(max_half_life))
         mlflow.log_artifact(str(csv_path))
         mlflow.log_artifact(str(status_file))
         

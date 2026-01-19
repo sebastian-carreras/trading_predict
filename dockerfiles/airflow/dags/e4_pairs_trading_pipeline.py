@@ -428,6 +428,18 @@ def process_pairs_with_mlflow(**context):
             mlflow.log_metric("avg_win_rate", summary_df['win_rate'].mean())
             mlflow.log_metric("total_trades", summary_df['num_trades'].sum())
             
+            # Log targets/thresholds
+            from src.utils import load_yaml
+            from pathlib import Path
+            root = Path("/opt/airflow")
+            config = load_yaml(root / "src/config/base.yaml")
+            decision_cfg = config.get("decision", {})
+            default_targets = {
+                'sharpe_min': 1.0,
+            }
+            targets = {**default_targets, **decision_cfg.get("targets", {})}
+            mlflow.log_param("sharpe_target_min", targets['sharpe_min'])
+            
             # Log el resumen como artifact
             mlflow.log_artifact(str(summary_csv))
         

@@ -2,7 +2,13 @@
 
 **Horizonte**: 20 días | **Frecuencia**: diaria | **Perfil**: Riesgo medio, mediano plazo
 
-Predicción de retornos acumulados a 20 días usando arquitectura LSTM para capturar momentum y cambios de tendencia con rebalanceo semanal.
+Predicción de retornos acumulados a 20 días usando arquitectura LSTM para capturar momentum y cambios de tendencia con rebalanceo semanal. Validación mediante walk-forward testing.
+
+**Variantes disponibles**:
+- **E2 Moderate** (este documento): LSTM con 2 capas, walk-forward validation, filtros complejos
+- **[E2 Simple](README_E2_SIMPLE.md)**: LSTM con 1 capa, split temporal simple, prototipado rápido
+
+Elige **E2 Moderate** para producción robusta; **E2 Simple** para investigación rápida.
 
 ## 📋 Resumen de la Estrategia
 
@@ -183,12 +189,25 @@ cat runs/e2_moderate/*/summary_all.csv
    - Filtros MACD + RSI + volume z-score
    - Stops más ajustados (7% vs 10% de E1)
 
+## Variantes Disponibles
+
+### E2 Moderate (Este documento)
+- ✅ Walk-forward validation (5 folds)
+- ✅ 2 capas LSTM (128 → 64 units)
+- ✅ Filtros complejos (MACD, RSI, volume zscore)
+- ✅ Decision score con perfil "moderate" (4 métricas)
+- 📋 Uso: Evaluación rigurosa, producción
+
+### E2 Simple (Ver [README_E2_SIMPLE.md](README_E2_SIMPLE.md))
+- ⚡ Split temporal simple (sin walk-forward)
+- ⚡ 2 capas LSTM (128 → 64 units, misma arquitectura)
+- ⚡ Filtros completos (RSI + MACD + volume zscore)
+- ⚡ Decision score con 5 métricas (IC, accuracy, sharpe, MAE, RMSE)
+- 🚀 Uso: Prototipado rápido, investigación
+
 ## Referencias
 
 - [README general](README.md) - Overview del proyecto
-- [README_E1.md](README_E1.md) - Estrategia conservadora (referencia)
-- [base.yaml](src/config/base.yaml) - Configuración E2
-
----
-
-**Estado**:  Especificada, pendiente codificación
+- [README_E1.md](README_E1.md) - Estrategia E1 Conservative
+- [README_E1_SIMPLE.md](README_E1_SIMPLE.md) - Estrategia E1 Simple (patrón análogo)
+- [README_E2_SIMPLE.md](README_E2_SIMPLE.md) - Estrategia E2 Simple (esta versión simplificada)

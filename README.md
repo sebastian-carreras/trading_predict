@@ -45,9 +45,12 @@ python -m src.train_e2_pipeline --tickers AAPL
 | Estrategia | Modelo | Horizonte | Target | Perfil | README |
 |------------|--------|-----------|--------|--------|---------|
 | **E1** Conservadora | GRU | 90 días | Retorno acumulado | Bajo riesgo, largo plazo | [README_E1.md](README_E1.md) |
+| **E1 Simple** ⚡ | GRU (1 capa) | 90 días | Retorno acumulado | Desarrollo rápido | [README_E1_SIMPLE.md](README_E1_SIMPLE.md) |
 | **E2** Moderada | LSTM | 20 días | Retorno acumulado | Riesgo medio, mediano plazo | [README_E2.md](README_E2.md) |
 | **E3** Intradía | LSTM Ensemble | 30 min | Retorno 6 barras | Alto riesgo, alta frecuencia | [README_E3.md](README_E3.md) |
 | **E4** Pairs Trading | k-NN + OU | 10 días | Spread cointegrado | Market-neutral | [README_E4.md](README_E4.md) |
+
+**⚡ E1 Simple**: Versión simplificada de E1 para desarrollo rápido (sin walk-forward, decision score simple). Ideal para experimentación. [Quickstart →](QUICKSTART_E1_SIMPLE.md)
 
 Ver documentación específica de cada estrategia para detalles de implementación, uso y configuración.
 
@@ -88,15 +91,18 @@ Ver README específico de cada estrategia para comandos detallados:
 python -m src.data.download_daily
 python -m src.train_e1_pipeline --tickers AAPL
 ```
-→ Ver [README_E1.md](README_E1.md)
+→ Ver [README_E1.md](README_E1.md) y [README_E1_SIMPLE.md](README_E1_SIMPLE.md)
 
 **E2 - Moderada (LSTM)**```bash
 python -m src.data.download_daily
-python -m src.train_e2_pipeline --tickers AAPL
+# E2 Moderate (walk-forward, 2-layer LSTM)
+python -m src.train_e2_pipeline --tickers NVDA
+# E2 Simple (time split, 1-layer LSTM, rápido)
+python -m src.train_e2_simple_pipeline --tickers NVDA
 ```
-→ Ver [README_E2.md](README_E2.md)
+→ Ver [README_E2.md](README_E2.md) y [README_E2_SIMPLE.md](README_E2_SIMPLE.md)
 
-La ejecución de E2 guarda artefactos por ticker en `runs/e2_moderate/<timestamp>/<TICKER>/`, incluyendo:
+La ejecución de E2 guarda artefactos por ticker en `runs/e2_moderate/<timestamp>/<TICKER>/` (o `runs/e2_simple/<timestamp>/<TICKER>/` para E2 Simple), incluyendo:
 - `*_predictions.csv`, `*_summary.csv` y el modelo entrenado `*_model.pth`.
 
 **E3 - Intradía (Ensemble)**```bash
@@ -113,12 +119,15 @@ python -m src.train_e3_pipeline --mode run --tickers SPY
 
 **Métricas ML (offline)**:
 - MAE, RMSE: error de predicción
- - El MAE mide el error promedio absoluto, siendo más robusto ante outliers, mientras que el RMSE penaliza más los errores grandes debido a la elevación al cuadrado.
+ - El MAE mide el error promedio absoluto, siendo más robusto ante outliers, mientras que el 
+ - RMSE penaliza más los errores grandes debido a la elevación al cuadrado.
 - Directional Accuracy: % de predicciones con signo correcto
  - Directional Accuracy mide el porcentaje de predicciones donde el modelo acierta el signo correcto del movimiento (alza o baja), independientemente de la magnitud. Accuracy superior al 50% indica capacidad predictiva.
 - IC (Information Coefficient): correlación predicción vs realidad
  - Information Coefficient (IC) representa la correlación de Spearman entre las predicciones del modelo y los retornos reales, evaluando la capacidad del modelo de rankear correctamente los activos. IC > 0.05 suele considerarse significativo en finanzas. IC < 0 indica overfitting o falta de capacidad predictiva.
 
+**Baselines para comparación**:
+- **E1 Baseline - Regresión Lineal**: Modelo simple para comparar contra GRU → [README_E1_BASELINE.md](README_E1_BASELINE.md)
 
 **Criterio compuesto de decisión (`decision_score`)**:
 - Se calcula por **perfil** y estrategia (ej: E1 → `conservative`, E2 → `moderate`, E3 → `aggressive`).

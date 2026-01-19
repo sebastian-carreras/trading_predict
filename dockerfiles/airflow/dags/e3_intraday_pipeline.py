@@ -41,7 +41,7 @@ def download_intraday_data(**context):
     import sys
     sys.path.insert(0, '/opt/airflow')
     
-    from src.data.intraday_yfinance import download_yfinance_intraday
+    from src.data.intraday_yfinance import download_ohlcv_5m
     from src.utils import load_yaml
     from pathlib import Path
     
@@ -61,19 +61,19 @@ def download_intraday_data(**context):
     e3_cfg = config.get("strategies", {}).get("e3_intraday", {})
     period = e3_cfg.get("data", {}).get("period", "60d")
     
-    downloaded = []
-    for ticker in tickers:
-        try:
-            df = download_yfinance_intraday(
-                ticker=ticker,
-                period=period,
-                interval="5m",
-            )
-            out_path = out_dir / f"{ticker}_5min.csv"
-            df.to_csv(out_path, index=True)
-            downloaded.append(ticker)
-        except Exception as e:
-            print(f"⚠️ Error descargando {ticker}: {e}")
+    # Download all tickers at once
+    try:
+        written_paths = download_ohlcv_5m(
+            tickers=tickers,
+            out_dir=out_dir,
+            period=period,
+            interval="5m",
+        )
+        downloaded = [p.stem.replace("_5m", "") for p in written_paths]
+        print(f"✓ Downloaded {len(downloaded)} tickers: {downloaded}")
+    except Exception as e:
+        print(f"⚠️ Error descargando tickers: {e}")
+        downloaded = []
     
     context['task_instance'].xcom_push(key='tickers_downloaded', value=downloaded)
     return f"Descargados {len(downloaded)} tickers 5-min"
@@ -98,89 +98,76 @@ def train_e3_with_mlflow(**context):
         return "No tickers to train"
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = root / "runs/e3_intraday" / timestamp
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_base = root / "runs/e3_intraday" / timestamp
+    out_base.mkdir(parents=True, exist_ok=True)
+    
+    # Set MLflow environment variables for the training pipeline
+    os.environ["MLFLOW_TRACKING_URI"] = MLFLOW_TRACKING_URI
+    os.environ["MLFLOW_EXPERIMENT_NAME"] = "E3_Intraday_Strategy"
     
     results = []
     for ticker in tickers:
-        with mlflow.start_run(run_name=f"E3_{ticker}_{timestamp}"):
-            # Extraer configuración del modelo
-            e3_config = config["strategies"]["e3_intraday"]
-            model_config = e3_config.get("model", {})
-            bt_config = e3_config.get("backtest", {})
-            thresholds = e3_config.get("thresholds", {})
+        ticker_out = out_base / ticker
+        print(f"\n{'='*60}")
+        print(f"Training E3 ensemble for {ticker}")
+        print(f"{'='*60}")
+        
+        try:
+            summary = run_for_ticker(
+                config=config,
+                ticker=ticker,
+                raw_dir=root / "data/raw/intraday",
+                out_dir=ticker_out,
+            )
             
-            # Log parámetros de estrategia
-            mlflow.log_params({
-                "strategy": "e3_intraday",
+            print(f"\n✓ {ticker} complete:")
+            print(f"  MAE: {summary.get('ml_mae', 0):.6f}")
+            print(f"  RMSE: {summary.get('ml_rmse', 0):.6f}")
+            print(f"  IC: {summary.get('ml_ic', 0):.4f}")
+            print(f"  Dir Acc: {summary.get('ml_directional_accuracy', 0):.3f}")
+            print(f"  Profit Factor: {summary.get('tr_profit_factor', 0):.3f}")
+            print(f"  Max DD: {summary.get('tr_max_drawdown', 0):.3%}")
+            
+            results.append({
                 "ticker": ticker,
-                "frequency": "5min",
-                "horizon_bars": e3_config.get("horizon_bars", 6),
-                "lookback_bars": e3_config.get("lookback_bars", 96),
-                "model_type": "LSTM_Ensemble",
+                "status": "success",
+                "profit_factor": summary.get("tr_profit_factor"),
+                "ic": summary.get("ml_ic"),
             })
             
-            # Log hiperparámetros del modelo
-            mlflow.log_params({
-                "ensemble_members": model_config.get("ensemble_members", 3),
-                "lstm_hidden_size": model_config.get("lstm_hidden_size", 64),
-                "lstm_num_layers": model_config.get("lstm_num_layers", 2),
-                "dropout": model_config.get("dropout", 0.2),
-                "learning_rate": model_config.get("learning_rate", 1e-3),
-                "batch_size": model_config.get("batch_size", 256),
-                "max_epochs": model_config.get("max_epochs", 30),
-                "early_stopping_patience": model_config.get("early_stopping_patience", 5),
-                "loss": model_config.get("loss", "huber"),
-                "huber_delta": model_config.get("huber_delta", 1.0),
-            })
-            
-            # Log parámetros de backtest
-            mlflow.log_params({
-                "tau_buy": thresholds.get("tau_buy", 0.001),
-                "tau_sell": thresholds.get("tau_sell", 0.001),
-                "round_trip_bps": config.get("costs", {}).get("intraday_round_trip_bps", 20),
-                "execution_delay_bars": bt_config.get("execution_delay_bars", 1),
-                "allow_short": bt_config.get("allow_short", True),
-                "max_position": bt_config.get("max_position", 1.0),
-            })
-            
-            try:
-                result = run_for_ticker(
-                    config=config,
-                    ticker=ticker,
-                    raw_dir=root / "data/raw/intraday",
-                    out_dir=out_dir,
-                )
-                
-                # Log métricas ML
-                mlflow.log_metrics({
-                    "mae": result.get("ml_mae", 0),
-                    "rmse": result.get("ml_rmse", 0),
-                    "directional_accuracy": result.get("ml_directional_accuracy", 0),
-                })
-                
-                # Log métricas de backtest
-                if "backtest" in result:
-                    bt = result["backtest"]
-                    mlflow.log_metrics({
-                        "profit_factor": bt.get("profit_factor", 0),
-                        "sharpe_intraday": bt.get("sharpe", 0),
-                        "max_drawdown": bt.get("max_drawdown", 0),
-                        "total_trades": bt.get("total_trades", 0),
-                    })
-                
-                results.append({
-                    "ticker": ticker,
-                    "status": "success",
-                    "profit_factor": result.get("backtest", {}).get("profit_factor"),
-                })
-                
-            except Exception as e:
-                mlflow.log_param("error", str(e))
-                results.append({"ticker": ticker, "status": "failed", "error": str(e)})
+        except Exception as e:
+            print(f"✗ Error en {ticker}: {e}")
+            import traceback
+            traceback.print_exc()
+            results.append({"ticker": ticker, "status": "failed", "error": str(e)})
     
-    context['task_instance'].xcom_push(key='run_dir', value=str(out_dir))
-    return f"Entrenados {len(results)} modelos E3"
+    # Guardar y loggear resumen agregado
+    summary_df = pd.DataFrame(results)
+    summary_path = out_base / "summary_all.csv"
+    summary_df.to_csv(summary_path, index=False)
+    
+    # Targets desde config
+    decision_cfg = config.get("decision", {})
+    default_targets = {
+        'ic_min': 0.05,
+    }
+    targets = {**default_targets, **decision_cfg.get("targets", {})}
+    
+    ic_values = [r.get("ic") for r in results if r.get("ic") is not None]
+    
+    with mlflow.start_run(run_name=f"E3_Intraday_Summary_{timestamp}"):
+        mlflow.log_artifact(str(summary_path))
+        mlflow.log_metric("total_tickers", len(results))
+        mlflow.log_metric("successful_tickers", sum(1 for r in results if r["status"] == "success"))
+        if ic_values:
+            mlflow.log_metric("ic_mean", float(sum(ic_values) / len(ic_values)))
+            mlflow.log_metric("ic_median", float(sorted(ic_values)[len(ic_values)//2]))
+            mlflow.log_metric("ic_above_threshold", sum(1 for ic in ic_values if ic > targets['ic_min']))
+            mlflow.log_param("ic_target_min", targets['ic_min'])
+    
+    context['task_instance'].xcom_push(key='run_dir', value=str(out_base))
+    successful = sum(1 for r in results if r["status"] == "success")
+    return f"Entrenados {successful}/{len(results)} modelos E3"
 
 
 # Definir tareas

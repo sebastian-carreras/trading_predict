@@ -472,6 +472,11 @@ def run_e2_walk_forward(
         "folds_file": as_relative(out_dir / f"{ticker}_walkforward_folds.csv"),
         "predictions_file": as_relative(out_dir / f"{ticker}_walkforward_predictions.csv"),
         "backtest_file": as_relative(out_dir / f"{ticker}_walkforward_backtest.csv"),
+        # Target columns for reference (E2 defaults)
+        "ic_target_min": 0.05,
+        "sharpe_target_min": 1.0,
+        "mae_target_max": 0.03,
+        "rmse_target_max": 0.05,
     }
 
     return summary

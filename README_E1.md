@@ -4,6 +4,59 @@
 
 Predicción de retornos acumulados a 90 días usando arquitectura GRU para inversión conservadora con rebalanceo mensual.
 
+---
+
+## 🎯 Versiones Disponibles
+
+### **E1 Conservative (Producción)** - `train_e1_pipeline.py`
+Pipeline completo con walk-forward validation y decision score multi-métrica para uso en producción.
+
+**Características:**
+- Walk-forward: 5 folds para validación robusta
+- Decision profiles: conservative/moderate/aggressive
+- Arquitectura: GRU 2 capas (128→64 units)
+- Airflow DAG: `e1_conservative_pipeline`
+- MLflow experiment: "E1_Conservative_Strategy"
+
+**Uso:**
+```bash
+# CLI
+python -m src.train_e1_pipeline --tickers AAPL,MSFT
+
+# Airflow
+docker compose exec -T airflow-scheduler airflow dags trigger \
+  e1_conservative_pipeline --conf '{"tickers": "AAPL,MSFT"}'
+```
+
+**Resultados:** `runs/e1_conservative/<timestamp>/`
+
+---
+
+### **E1 Simple (Desarrollo)** ⭐ - `train_e1_simple_pipeline.py` 
+**Versión simplificada** para desarrollo rápido, experimentación y baseline:
+
+**Simplificaciones:**
+- ✅ **Time split simple**: 70/15/15 (vs walk-forward)
+- ✅ **Decision score**: 5 métricas fijas (vs perfiles)
+- ✅ **GRU**: 1 capa 64 units (vs 2 capas 128→64)
+- ✅ **80% más rápido**: ~1 min vs ~5 min por ticker
+
+**Uso:**
+```bash
+# CLI (descarga y limpia automáticamente)
+python -m src.train_e1_simple_pipeline --tickers AAPL,MSFT
+
+# Airflow
+docker compose exec -T airflow-scheduler airflow dags trigger \
+  e1_simple_pipeline --conf '{"tickers": "AAPL,MSFT"}'
+```
+
+**Resultados:** `runs/e1_simple/<timestamp>/`
+
+**📖 Documentación completa:** [README_E1_SIMPLE.md](README_E1_SIMPLE.md)
+
+---
+
 ## 📋 Resumen de la Estrategia
 
 **Objetivo**: Capturar tendencias de mediano-largo plazo con bajo riesgo y turnover reducido.
@@ -25,14 +78,21 @@ Predicción de retornos acumulados a 90 días usando arquitectura GRU para inver
 - Directional Accuracy ≥ 0.58
 - `decision_score` ≥ 0.65 para emitir señal BUY
 
+**Nota:** Los `decision_component_*` se calculan internamente pero **ya no se loguean a MLflow** para simplificar el análisis de métricas. Solo se loguea `decision_score` final y `decision_signal`.
+
 ## 🧮 Decision Score Compuesto
 
 - El pipeline calcula un `decision_score` por **perfil** (conservative/moderate/aggressive).
-- Para E1 se usa por defecto el perfil `conservative` (ver `splits.strategy_profile`).
+- Para E1 Conservative se usa por defecto el perfil `conservative` (ver `splits.strategy_profile`).
 - Los objetivos y pesos se configuran en `splits.decision_profiles.<profile>.{target_metrics,weights}` y el umbral BUY/HOLD en `splits.decision_profiles.<profile>.threshold`.
 - Se imprime en consola al final del walk-forward/time split, se persiste en `*_summary.csv` y se loguea en MLflow/Airflow.
-- Los componentes se loguean de forma **dinámica** como `decision_component_<metric>` (ej: `decision_component_sortino`, `decision_component_calmar`, `decision_component_max_drawdown`, `decision_component_directional_accuracy`).
+- **Simplificación reciente:** Los componentes individuales (`decision_component_*`) ya no se loguean a MLflow para reducir ruido. Solo se loguean `decision_score` y `decision_signal`.
 - También se registra `decision_profile` para poder comparar runs entre perfiles.
+
+**Métricas sanitizadas:** Todos los valores NaN e Inf se convierten a valores válidos:
+- NaN → 0.0
+- Inf positivo → 1e8 (o 1e3 para sortino/profit_factor)
+- Esto evita problemas en MLflow y análisis posterior.
 
 ## Arquitectura del Modelo
 
@@ -68,12 +128,16 @@ Output (1): predicción de retorno a 90 días
 
 | Archivo | Propósito | Estado |
 |---------|-----------|--------|
-| `src/data/download_daily.py` | Descarga OHLCV diario + benchmark SPY |  |
-| `src/features/build_features_e1.py` | Cálculo de 22 features técnicos |  |
-| `src/features/build_sequences.py` | Conversión a secuencias RNN |  |
-| `src/models/e1_gru.py` | Arquitectura GRU PyTorch |  |
-| `src/train_e1_pipeline.py` | Pipeline end-to-end |  |
-| `src/backtest/daily.py` | Backtesting diario con costos (señales por `tau_buy`/`tau_sell`) + métricas |  |
+| `src/data/download_daily.py` | Descarga OHLCV diario + benchmark SPY | ✅ |
+| `src/data/clean_daily.py` | Limpieza y validación de datos | ✅ |
+| `src/features/build_features_e1.py` | Cálculo de 27 features técnicos | ✅ |
+| `src/features/build_sequences.py` | Conversión a secuencias RNN | ✅ |
+| `src/models/e1_gru.py` | Arquitectura GRU PyTorch | ✅ |
+| `src/train_e1_pipeline.py` | Pipeline E1 Conservative (walk-forward) | ✅ |
+| `src/train_e1_simple_pipeline.py` | Pipeline E1 Simple (time split) | ✅ |
+| `src/backtest/daily.py` | Backtesting con costos + métricas sanitizadas | ✅ |
+| `dockerfiles/airflow/dags/e1_conservative_pipeline.py` | Airflow DAG E1 Conservative | ✅ |
+| `dockerfiles/airflow/dags/e1_simple_pipeline.py` | Airflow DAG E1 Simple | ✅ |
 
 ## Cómo Usar
 
@@ -84,49 +148,67 @@ cd trading_predict
 pip install -r requirements.txt
 ```
 
-### Paso 2: Descargar datos
+### Paso 2: Entrenar E1
 
-```bash
-python -m src.data.download_daily
-# use this force a new download  python -m src.data.download_daily --force 
-```
-
-Esto descarga OHLCV diario para todos los tickers definidos en `src/config/base.yaml` y los guarda en `data/raw/daily/`.
-
-### Paso 3: Entrenar E1
+#### E1 Conservative (producción, walk-forward)
 
 ```bash
 # Entrenar para todos los tickers E1 del config
 python -m src.train_e1_pipeline
 
 # O especificar tickers manualmente
-python -m src.train_e1_pipeline --tickers YPF,GGAL,AAPL
+python -m src.train_e1_pipeline --tickers AAPL,MSFT,GGAL.BA
+
+# Con Airflow
+docker compose exec -T airflow-scheduler airflow dags trigger \
+  e1_conservative_pipeline --conf '{"tickers": "AAPL,MSFT"}'
 ```
 
-El pipeline realiza validación walk-forward usando `temporal_train_val_split` internamente para preservar datos en train/val y aplica embargo configurable.
+#### E1 Simple (desarrollo, time split)
 
-### Paso 4: Revisar resultados
+```bash
+# Entrenar (descarga y limpia automáticamente)
+python -m src.train_e1_simple_pipeline --tickers AAPL,MSFT
 
-Los resultados se guardan en `runs/e1_conservative/<timestamp>/`:
+# Skip download/clean para experimentos rápidos
+python -m src.train_e1_simple_pipeline --tickers AAPL --skip-download --skip-cleaning
+
+# Con Airflow
+docker compose exec -T airflow-scheduler airflow dags trigger \
+  e1_simple_pipeline --conf '{"tickers": "AAPL,MSFT"}'
+```
+
+### Paso 3: Revisar resultados
+
+**E1 Conservative:** `runs/e1_conservative/<timestamp>/`
+**E1 Simple:** `runs/e1_simple/<timestamp>/`
 
 ```
-runs/e1_conservative/20260105_153022/
-├── config_used.yaml          # Config usado (reproducibilidad)
-├── summary_all.csv            # Resumen de todos los tickers
-├── YPF/
-│   ├── YPF_predictions.csv   # Predicciones (y_true, y_pred)
-│   ├── YPF_scaler.csv         # Scaler (mean/std de features)
-│   ├── YPF_walkforward_folds.csv      # Resumen de folds (si se usa walk-forward)
-│   ├── YPF_walkforward_backtest.csv   # Backtest agregado walk-forward
-│   ├── YPF_walkforward_predictions.csv# Predicciones agregadas walk-forward
-│   └── YPF_summary.csv        # Métricas ML + trading + decision_score
-├── GGAL/
+runs/e1_conservative/20260118_153022/
+├── config_used.yaml                       # Config usado (reproducibilidad)
+├── summary_all.csv                        # Resumen de todos los tickers
+├── AAPL/
+│   ├── AAPL_predictions.csv              # Predicciones agregadas walk-forward
+│   ├── AAPL_scaler.csv                   # Scaler (mean/std de features)
+│   ├── AAPL_target_scaler.csv            # Scaler del target
+│   ├── AAPL_walkforward_folds.csv        # Resumen de folds
+│   ├── AAPL_walkforward_backtest.csv     # Backtest agregado walk-forward
+│   ├── AAPL_walkforward_predictions.csv  # Predicciones por fold
+│   ├── AAPL_walkforward_metrics.png      # Visualización de métricas
+│   ├── AAPL_model.pth                    # Modelo del último fold
+│   └── AAPL_summary.csv                  # Métricas ML + trading + decision_score
+├── MSFT/
 │   └── ...
-└── AAPL/
-  └── ...
-
-Si `MLFLOW_TRACKING_URI` está configurado, cada ticker registra métricas y parámetros (incluyendo `decision_score` y sus componentes) en el experimento `E1_Conservative`.
+└── GGAL.BA/
+    └── ...
 ```
+
+**MLflow:** Si `MLFLOW_TRACKING_URI` está configurado, cada ticker registra:
+- Métricas: mae, rmse, ic, directional_accuracy, bt_sharpe, bt_cagr, bt_max_drawdown, decision_score
+- Parámetros: strategy, ticker, lookback_days, gru_units, decision_profile, decision_signal
+- Artifacts: models/, predictions/, backtest/
+
+**Nota:** Ya no se loguean `decision_component_*` individuales a MLflow (simplificación reciente).
 
 ## Parámetros (desde base.yaml)
 
@@ -331,6 +413,130 @@ Entrenando GRU para AAPL...
 ---
 
 **Implementado según**: `3. Implementación de modelos de machine learning/Informacion basica de la implementacion.md`
+
+---
+
+## 📊 E1 Simple - Detalles de Implementación
+
+### ¿Cuándo usar E1 Simple vs E1 Conservadora?
+
+| Aspecto | E1 Simple | E1 Conservadora |
+|---------|-----------|-----------------|
+| **Tiempo de entrenamiento** | ~1 min | ~5 min |
+| **Validación** | Time split (1 fold) | Walk-forward (5 folds) |
+| **Decision score** | 5 métricas simples | 4-6 métricas por perfil |
+| **Arquitectura** | GRU 1 capa (64 units) | GRU 2 capas (64→32 units) |
+| **Uso recomendado** | Desarrollo, experimentación | Producción, validación robusta |
+| **Resultados** | Baseline rápido | Robustez temporal |
+
+### Decision Score Simplificado
+
+E1 Simple usa **solo 5 métricas** con interpretación clara:
+
+```yaml
+decision:
+  targets:
+    ic_min: 0.05                    # IC > 0.05 es significativo
+    directional_accuracy_min: 0.55  # >55% predice dirección correcta
+    sharpe_min: 1.0                 # Sharpe ≥ 1.0 es bueno
+    mae_max: 0.03                   # Error < 3% es aceptable
+    rmse_max: 0.05                  # RMSE < 5% es aceptable
+  
+  weights:
+    ic: 0.25                        # 25% peso - capacidad predictiva
+    directional_accuracy: 0.20      # 20% peso - acierto direccional
+    sharpe: 0.30                    # 30% peso - retorno ajustado por riesgo
+    mae: 0.15                       # 15% peso - error absoluto
+    rmse: 0.10                      # 10% peso - error cuadrático
+  
+  threshold: 0.70  # Score ≥ 0.70 → COMPRAR, < 0.70 → HOLD
+```
+
+**Cálculo del score:**
+```python
+# Para cada métrica se calcula un ratio normalizado [0, 1.5]
+component_ic = ic / ic_min                    # Higher is better
+component_dir = dir_acc / dir_acc_min         # Higher is better  
+component_sharpe = sharpe / sharpe_min        # Higher is better
+component_mae = mae_max / mae                 # Lower is better
+component_rmse = rmse_max / rmse              # Lower is better
+
+# Score ponderado
+decision_score = (
+    0.25 * component_ic +
+    0.20 * component_dir +
+    0.30 * component_sharpe +
+    0.15 * component_mae +
+    0.10 * component_rmse
+)
+
+# Decisión
+signal = "BUY" if decision_score >= 0.70 else "HOLD"
+```
+
+### Arquitectura GRU Simplificada
+
+```
+Input: (180 días, 27 features)
+↓
+GRU(64 units)
+↓
+Dropout(0.2)
+↓
+Dense(16 units, relu)
+↓
+Output(1): retorno predicho a 90 días
+```
+
+**Ventajas vs arquitectura de 2 capas:**
+- ✅ 50% menos parámetros → menos overfitting
+- ✅ 2x más rápido de entrenar
+- ✅ Más fácil de interpretar
+- ✅ Suficiente para horizontes largos (90 días)
+
+### Ejemplo de Output
+
+```bash
+$ python -m src.train_e1_simple_pipeline --tickers AAPL
+
+============================================================
+Pipeline E1 Simple - 1 tickers
+Output: runs/e1_simple/20260116_143522
+============================================================
+
+Benchmark: SPY (2547 días)
+
+[1/1] AAPL
+  ✓ Usando datos limpios: AAPL_daily.csv
+  Samples: 894 | Features: 27 | Lookback: 180d
+  Split: train=626 val=134 test=134
+  Entrenando GRU [64]...
+  ✓ Epochs: 42/100 | Val Loss: 0.002156
+  ✓ MAE=0.0148 RMSE=0.0221 IC=0.352 Dir=59.0% Sharpe=1.18
+  ✓ Decision score 0.782 (threshold 0.70) → BUY
+  ✓ Modelo guardado: AAPL_model.pth
+
+============================================================
+✓ Completado: 1/1 tickers
+  Resultados en: runs/e1_simple/20260116_143522/
+============================================================
+```
+
+### Estructura de Resultados
+
+```
+runs/e1_simple/20260116_143522/
+├── config_used.yaml              # Config usado
+├── summary_all.csv               # Resumen de todos los tickers
+└── AAPL/
+    ├── AAPL_predictions.csv      # (timestamp, y_true, y_pred)
+    ├── AAPL_backtest.csv          # Serie de PnL
+    ├── AAPL_scaler.csv            # Parámetros de normalización
+    ├── AAPL_model.pth             # Modelo entrenado
+    └── AAPL_summary.csv           # Métricas completas
+```
+
+---
 
 ### Posibles mejoras futuras:
 #### Fase 1 - Corto Plazo (1-2 semanas) 

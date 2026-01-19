@@ -356,18 +356,30 @@ def summarize_backtest(bt: pd.DataFrame, periods_per_year: int = 252) -> dict:
     # Time in market (% de días con posición != 0)
     time_in_market = (bt['pos'].abs() > 0).mean()
     
+    # Helper para sanitizar valores (NaN -> 0, Inf -> max_val)
+    def sanitize_value(v: float, default: float = 0.0, max_val: float = 1e8) -> float:
+        """Sanitiza NaN e Inf a valores válidos para MLflow."""
+        if not np.isfinite(v):
+            if np.isinf(v):
+                # Infinito positivo -> valor grande pero finito
+                return max_val if v > 0 else -max_val
+            else:
+                # NaN -> valor por defecto
+                return default
+        return v
+    
     return {
-        'total_return': float(total_return),
-        'cagr': float(cagr),
-        'sharpe': float(sharpe),
-        'sortino': float(sortino),
-        'max_drawdown': float(max_dd),
-        'calmar': float(calmar),
-        'profit_factor': float(profit_factor),
-        'win_rate': float(win_rate),
-        'hit_rate': float(win_rate),
+        'total_return': sanitize_value(float(total_return)),
+        'cagr': sanitize_value(float(cagr)),
+        'sharpe': sanitize_value(float(sharpe)),
+        'sortino': sanitize_value(float(sortino), max_val=1e3),  # Sortino menos extremo que Sharpe
+        'max_drawdown': sanitize_value(float(max_dd)),
+        'calmar': sanitize_value(float(calmar)),
+        'profit_factor': sanitize_value(float(profit_factor), max_val=1e3),
+        'win_rate': sanitize_value(float(win_rate)),
+        'hit_rate': sanitize_value(float(win_rate)),
         'num_trades': int(num_trades),
-        'avg_turnover': float(avg_turnover),
-        'total_costs': float(total_costs),
-        'time_in_market': float(time_in_market),
+        'avg_turnover': sanitize_value(float(avg_turnover)),
+        'total_costs': sanitize_value(float(total_costs)),
+        'time_in_market': sanitize_value(float(time_in_market)),
     }
