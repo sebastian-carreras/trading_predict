@@ -136,7 +136,7 @@ def print_comparison_table(df_comparison: pd.DataFrame) -> None:
     print(f"Baseline superior en: {baseline_wins} métricas ({baseline_wins/total_metrics*100:.1f}%)")
     
     # Mejoras más significativas
-    print("\n🏆 Top 3 mejoras del GRU:")
+    print("\n Top 3 mejoras del GRU:")
     top_improvements = df_comparison.nlargest(3, "Mejora %")[["Métrica", "Mejora %", "GRU Mejor"]]
     for idx, row in top_improvements.iterrows():
         status = "✓" if row["GRU Mejor"] == "✓" else "✗"

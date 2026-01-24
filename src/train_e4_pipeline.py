@@ -1,15 +1,24 @@
 """
 Pipeline completo E4 (Estrategia Pairs Trading).
 
+Characteristics:
+- Identifica pares de activos cointegrados (spread estacionario)
+- Estima parámetros Ornstein-Uhlenbeck del spread
+- Entrena modelo k-NN para confirmar señales
+- Genera señales cuando spread desviado de equilibrio
+- Backtest con gestión dollar-neutral (beta hedge)
+- Evalúa métricas de trading
+
 Flujo:
-1. Cargar datos de pares
-2. Validar cointegración
+1. Cargar datos de pares (precios históricos)
+2. Validar cointegración (ADF test)
 3. Construir spreads y calcular z-scores
 4. Estimar parámetros Ornstein-Uhlenbeck
-5. Entrenar k-NN (opcional)
-6. Generar señales de trading
-7. Backtest con gestión dollar-neutral
-8. Evaluar y guardar resultados
+5. Test de estacionariedad del spread
+6. Entrenar k-NN (opcional) para confirmar señales
+7. Generar señales de trading (entrada/salida)
+8. Backtest con gestión dollar-neutral
+9. Evaluar y guardar resultados
 """
 
 from __future__ import annotations
@@ -25,29 +34,29 @@ import numpy as np
 import pandas as pd
 
 from .pairs.select_pairs import (
-    find_cointegrated_pairs,
-    load_pair_prices,
-    test_pair_cointegration,
+    find_cointegrated_pairs,        # Identifica pares cointegrados
+    load_pair_prices,               # Carga precios de dos activos
+    test_pair_cointegration,        # Test de cointegración ADF
 )
 from .pairs.build_spread import (
-    build_pair_features,
-    calculate_hedge_ratio,
-    validate_spread_stability,
+    build_pair_features,            # Construye features del spread
+    calculate_hedge_ratio,          # Calcula ratio de hedge
+    validate_spread_stability,      # Valida estabilidad del spread
 )
 from .pairs.ou_process import (
-    estimate_ou_parameters,
-    test_stationarity,
+    estimate_ou_parameters,         # Estima parámetros OU
+    test_stationarity,              # Test ADF de estacionariedad
 )
 from .pairs.knn_confirm import (
-    train_knn_model,
-    build_knn_state_features,
-    create_knn_target,
-    cross_validate_knn,
+    train_knn_model,                # Entrena modelo k-NN
+    build_knn_state_features,       # Features para k-NN
+    create_knn_target,              # Target para k-NN
+    cross_validate_knn,             # Validación cruzada k-NN
 )
-from .backtest.rules_e4 import (
-    generate_pair_signals,
-    backtest_pair_strategy,
-    summarize_pair_backtest,
+from .backtest.backtest_rules_e4 import (
+    generate_pair_signals,          # Genera señales de entrada/salida
+    backtest_pair_strategy,         # Simula ejecución de trades
+    summarize_pair_backtest,        # Resumen de resultados
 )
 from .utils import ensure_dir, load_yaml, project_root
 
@@ -59,7 +68,11 @@ logger = logging.getLogger(__name__)
 
 
 def load_config() -> dict:
-    """Carga configuración desde base.yaml."""
+    """Carga configuración desde archivo base.yaml.
+    
+    Retorna:
+        dict: Configuración con estrategias, modelos, splits, etc
+    """
     config_path = project_root() / "src" / "config" / "base.yaml"
     return load_yaml(config_path)
 
@@ -74,12 +87,23 @@ def process_pair(
     """
     Procesa un par completo: validación, spread, OU, k-NN, backtest.
     
+    Procedimiento:
+    1. Carga precios de ambos activos
+    2. Valida cointegración (pvalue < 0.05)
+    3. Construye spread y features (beta, zscore)
+    4. Estima parámetros del proceso OU
+    5. Valida estacionariedad del spread
+    6. Entrena modelo k-NN (opcional) para confirmar señales
+    7. Genera señales de trading
+    8. Ejecuta backtest con rebalanceo diario
+    9. Guarda resultados
+    
     Args:
-        ticker_a: Ticker del activo A
-        ticker_b: Ticker del activo B
-        data_dir: Directorio con datos limpios
+        ticker_a: Ticker del activo A (ej: "AAPL")
+        ticker_b: Ticker del activo B (ej: "MSFT")
+        data_dir: Directorio con datos limpios (CSV)
         config: Configuración de la estrategia E4
-        output_dir: Directorio de salida
+        output_dir: Directorio para salidas
     
     Returns:
         Dict con resultados del par, o None si el par no es válido
@@ -92,14 +116,15 @@ def process_pair(
     pair_dir = output_dir / pair_name
     ensure_dir(pair_dir)
     
-    # 1. Cargar datos
+    # 1. CARGAR DATOS
+    # Carga series de precios de cierre para ambos activos
     try:
         price_a, price_b = load_pair_prices(data_dir, ticker_a, ticker_b)
     except FileNotFoundError as e:
         logger.error(f"Data not found for {pair_name}: {e}")
         return None
     
-    # Cargar también volumen (opcional)
+    # Cargar también volumen (opcional, para filtros)
     try:
         file_a = data_dir / f"{ticker_a}_daily.csv"
         file_b = data_dir / f"{ticker_b}_daily.csv"
@@ -115,7 +140,8 @@ def process_pair(
         volume_a = None
         volume_b = None
     
-    # 2. Test de cointegración
+    # 2. TEST DE COINTEGRACIÓN
+    # Verifica que el spread sea estacionario (condición para pairs trading)
     coint_config = config.get("filters", {})
     max_pvalue = coint_config.get("cointegration_pvalue_max", 0.05)
     
@@ -131,7 +157,9 @@ def process_pair(
         f"{pair_name} cointegrated: pvalue={coint_result['pvalue']:.4f}"
     )
     
-    # 3. Construir spread y features
+    # 3. CONSTRUIR SPREAD Y FEATURES
+    # Calcula el spread (diferencia hedgeada entre los precios)
+    # Incluye: zscore (desviaciones estándar del spread), beta, volumen
     beta_window = config.get("beta_lookback_days", 120)
     zscore_window = 60
     
@@ -147,7 +175,7 @@ def process_pair(
     spread = spread_features["spread"]
     zscore = spread_features["zscore"]
     
-    # Guardar spread timeseries
+    # Guardar spread timeseries para análisis
     spread_df = pd.DataFrame({
         "spread": spread,
         "zscore": zscore,
@@ -157,10 +185,15 @@ def process_pair(
     spread_df.to_csv(spread_csv)
     logger.info(f"Saved spread to {spread_csv}")
     
-    # 4. Estimar parámetros OU
+    # 4. ESTIMAR PARÁMETROS OU (Ornstein-Uhlenbeck)
+    # Modela el spread como proceso de reversión a la media:
+    # d(spread) = theta * (mu - spread) * dt + sigma * dW
+    # theta: velocidad de reversión (mayor = más rápida reversión)
+    # mu: media de largo plazo
+    # sigma: volatilidad instantánea
     ou_params = estimate_ou_parameters(spread)
     
-    # Validar half-life
+    # Validar half-life (tiempo para revertir 50% a la media)
     max_half_life = coint_config.get("half_life_days_max", 20)
     if ou_params["half_life"] > max_half_life:
         logger.warning(
@@ -174,19 +207,20 @@ def process_pair(
         f"half_life={ou_params['half_life']:.1f} days"
     )
     
-    # Guardar parámetros OU
+    # Guardar parámetros OU para futura inferencia
     ou_json = pair_dir / "ou_params.json"
     with open(ou_json, "w") as f:
         json.dump(ou_params, f, indent=2)
     
-    # Test de estacionariedad
+    # 5. TEST DE ESTACIONARIEDAD
     stationarity = test_stationarity(spread)
     logger.info(
         f"{pair_name} stationarity test: pvalue={stationarity['pvalue']:.4f}, "
         f"stationary={stationarity['is_stationary']}"
     )
     
-    # 5. k-NN confirmación (opcional)
+    # 6. k-NN CONFIRMACIÓN (OPCIONAL)
+    # Entrena modelo k-NN para confirmar/refinar señales del spread zscore
     knn_config = config.get("knn", {})
     use_knn = knn_config.get("enabled", True)
     knn_signals = None

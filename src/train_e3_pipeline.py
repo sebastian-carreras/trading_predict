@@ -1,3 +1,24 @@
+"""E3 Pipeline: Intraday Trading con LSTM Ensemble.
+
+Características:
+- Datos de 5 minutos (intraday)
+- Modelo: LSTM ensemble (múltiples miembros para robustez)
+- Estrategia: Predicción de retorno intradiario
+- Backtest: Con ejecución de órdenes y seguimiento de equity
+
+Flujo:
+1. Cargar datos OHLCV de 5 minutos
+2. Calcular features intraday
+3. Crear target: retorno forward (N barras)
+4. Crear secuencias temporales
+5. Split temporal train/val/test
+6. Entrenar ensemble de LSTM
+7. Combinar predicciones (promedio)
+8. Evaluar ML metrics (IC, MAE, RMSE, etc)
+9. Ejecutar backtest con reglas de trading
+10. Guardar resultados y análisis
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -8,10 +29,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .backtest.intraday import (
-    backtest_intraday_signals,
-    compute_max_drawdown,
-    compute_profit_factor,
+from .backtest.backtest_intraday import (
+    backtest_intraday_signals,  # Simula ejecución de órdenes
+    compute_max_drawdown,        # Calcula máxima caída del equity
+    compute_profit_factor,       # Calcula profit factor (ganancias/pérdidas)
 )
 from .data.intraday_yfinance import download_ohlcv_5m, load_ohlcv_csv
 from .features.intraday import compute_intraday_features, make_sequences, make_target_return
@@ -21,88 +42,144 @@ from .utils import ensure_dir, get_nested, load_yaml, project_root
 
 
 def _time_split(n: int, train_frac: float = 0.7, val_frac: float = 0.15):
+    """Divide datos en train/val/test respetando orden temporal.
+    
+    Args:
+        n: Total de muestras
+        train_frac: Fracción de datos para entrenamiento (default 70%)
+        val_frac: Fracción de datos para validación (default 15%)
+                  El resto (15%) se usa para test
+    
+    Returns:
+        (train_idx, val_idx, test_idx): Arrays de índices para cada split
+    """
+    # Validar que las fracciones son válidas
     if not (0 < train_frac < 1) or not (0 < val_frac < 1) or train_frac + val_frac >= 1:
         raise ValueError("Invalid split fractions")
 
+    # Calcular puntos de corte
     train_end = int(n * train_frac)
     val_end = int(n * (train_frac + val_frac))
+    
+    # Crear arrays de índices (mantiene orden temporal)
     idx_train = np.arange(0, train_end)
     idx_val = np.arange(train_end, val_end)
     idx_test = np.arange(val_end, n)
+    
     return idx_train, idx_val, idx_test
 
 
 def run_for_ticker(config: dict, ticker: str, raw_dir: Path, out_dir: Path) -> dict:
-    print(f"  Loading config for {ticker}...")
+    """Ejecuta pipeline E3 completo para un ticker.
+    
+    Procedimiento:
+    1. Carga datos OHLCV de 5 minutos
+    2. Extrae features intraday (momentum, volatilidad, etc)
+    3. Crea target: retorno forward en N barras
+    4. Divide en train/val/test manteniendo orden temporal
+    5. Normaliza features (Z-score)
+    6. Entrena ensemble de modelos LSTM
+    7. Evalúa métricas ML (IC, MAE, RMSE, Directional Accuracy)
+    8. Ejecuta backtest con señales de trading
+    9. Calcula métricas de trading (Sharpe, Max DD, Profit Factor)
+    10. Guarda todos los artefactos
+    
+    Args:
+        config: Diccionario de configuración
+        ticker: Símbolo del activo (ej: "AAPL")
+        raw_dir: Directorio con datos CSV intraday
+        out_dir: Directorio para salidas
+    
+    Returns:
+        dict: Resumen con todas las métricas
+    """
+    print(f"  Cargando configuración para {ticker}...")
     e3 = get_nested(config, ["strategies", "e3_intraday"], {})
     
-    print(f"  Extracting parameters...")
-    lookback_bars = int(e3.get("lookback_bars", 96))
-    horizon_bars = int(e3.get("horizon_bars", 6))
+    print(f"  Extrayendo parámetros...")
+    # Parámetros de secuencias
+    lookback_bars = int(e3.get("lookback_bars", 96))      # Histórico: 96 barras (8 horas)
+    horizon_bars = int(e3.get("horizon_bars", 6))         # Forward: 6 barras (30 minutos)
 
+    # Parámetros de señales de trading
     thresholds = e3.get("thresholds", {})
     print(f"  Thresholds type: {type(thresholds)}, value: {thresholds}")
-    tau_buy = float(thresholds.get("tau_buy", 0.001))
-    tau_sell = float(thresholds.get("tau_sell", 0.001))
+    tau_buy = float(thresholds.get("tau_buy", 0.001))      # Umbral para compra
+    tau_sell = float(thresholds.get("tau_sell", 0.001))    # Umbral para venta
 
+    # Costos de transacción
     costs = config.get("costs", {})
-    round_trip_bps = float(costs.get("intraday_round_trip_bps", 20))
+    round_trip_bps = float(costs.get("intraday_round_trip_bps", 20))  # Costo intraday (basis points)
 
+    # Configuración del modelo ensemble
     model_cfg = e3.get("model", {})
-    ensemble_members = int(model_cfg.get("ensemble_members", 3))
-    hidden_size = int(model_cfg.get("lstm_hidden_size", 64))
-    num_layers = int(model_cfg.get("lstm_num_layers", 2))
-    dropout = float(model_cfg.get("dropout", 0.2))
-    lr = float(model_cfg.get("learning_rate", 1e-3))
-    batch_size = int(model_cfg.get("batch_size", 256))
-    max_epochs = int(model_cfg.get("max_epochs", 30))
-    patience = int(model_cfg.get("early_stopping_patience", 5))
-    loss = str(model_cfg.get("loss", "huber"))
-    huber_delta = float(model_cfg.get("huber_delta", 1.0))
+    ensemble_members = int(model_cfg.get("ensemble_members", 3))    # Número de miembros en ensemble
+    hidden_size = int(model_cfg.get("lstm_hidden_size", 64))        # Unidades LSTM
+    num_layers = int(model_cfg.get("lstm_num_layers", 2))           # Capas LSTM
+    dropout = float(model_cfg.get("dropout", 0.2))                  # Regularización
+    lr = float(model_cfg.get("learning_rate", 1e-3))                # Velocidad de aprendizaje
+    batch_size = int(model_cfg.get("batch_size", 256))              # Tamaño de batch
+    max_epochs = int(model_cfg.get("max_epochs", 30))               # Épocas máx
+    patience = int(model_cfg.get("early_stopping_patience", 5))     # Early stopping
+    loss = str(model_cfg.get("loss", "huber"))                      # Función de pérdida
+    huber_delta = float(model_cfg.get("huber_delta", 1.0))          # Parámetro delta
 
+    # Configuración de backtest
     bt_cfg = e3.get("backtest", {})
-    execution_delay_bars = int(bt_cfg.get("execution_delay_bars", 1))
-    allow_short = bool(bt_cfg.get("allow_short", True))
-    max_position = float(bt_cfg.get("max_position", 1.0))
+    execution_delay_bars = int(bt_cfg.get("execution_delay_bars", 1))  # Delay en ejecución
+    allow_short = bool(bt_cfg.get("allow_short", True))                 # Permite ventas cortas
+    max_position = float(bt_cfg.get("max_position", 1.0))               # Posición máxima
 
+    # Cargar datos OHLCV intraday (5 minutos)
     csv_path = raw_dir / f"{ticker}_5m.csv"
     if not csv_path.exists():
         raise FileNotFoundError(f"Missing intraday CSV: {csv_path}")
 
     ohlcv = load_ohlcv_csv(csv_path)
+    
+    # Extraer features técnicos intraday
     features = compute_intraday_features(ohlcv)
+    
+    # Crear target: retorno forward (siguiente N barras)
     target = make_target_return(ohlcv, horizon_bars=horizon_bars)
 
+    # Crear secuencias: [n_samples, lookback_bars, n_features]
     X, y, ts, feat_names = make_sequences(features, target, lookback_bars=lookback_bars)
 
+    # Split temporal: 70% train, 15% val, 15% test
     idx_train, idx_val, idx_test = _time_split(len(X))
     X_train, y_train = X[idx_train], y[idx_train]
     X_val, y_val = X[idx_val], y[idx_val]
     X_test, y_test = X[idx_test], y[idx_test]
     ts_test = ts[idx_test]
 
-    # Standardize features (fit on train only)
-    # Flatten time dimension for scaling
+    # ESTANDARIZAR FEATURES (Z-score normalization)
+    # Compute statistics only on training data to prevent data leakage
     Xtr2d = X_train.reshape(-1, X_train.shape[-1])
     mean = Xtr2d.mean(axis=0)
     std = Xtr2d.std(axis=0) + 1e-12
 
     def scale(Xa: np.ndarray) -> np.ndarray:
+        """Aplica normalización Z-score a los datos."""
         return ((Xa - mean) / std).astype(np.float32)
 
     X_train_s = scale(X_train)
     X_val_s = scale(X_val)
     X_test_s = scale(X_test)
 
+    # ENTRENAR ENSEMBLE DE LSTM
+    # Entrenar múltiples modelos con diferentes seeds para mayor robustez
     preds_members: list[np.ndarray] = []
     val_losses: list[float] = []
 
     base_seed = int(get_nested(config, ["project", "seed"], 42))
 
-    print(f"\nTraining ensemble of {ensemble_members} LSTM models for {ticker}...")
+    print(f"\nEntrenando ensemble de {ensemble_members} modelos LSTM para {ticker}...")
     for m in range(ensemble_members):
-        print(f"\n  Model {m+1}/{ensemble_members} (seed={base_seed + 1000 * m}):")
+        print(f"\n  Modelo {m+1}/{ensemble_members} (seed={base_seed + 1000 * m}):")
         seed = base_seed + 1000 * m
+        
+        # Crear modelo LSTM
         model = LSTMRegressor(
             input_size=X_train_s.shape[-1],
             hidden_size=hidden_size,
@@ -110,6 +187,8 @@ def run_for_ticker(config: dict, ticker: str, raw_dir: Path, out_dir: Path) -> d
             dropout=dropout,
             seed=seed,
         )
+        
+        # Entrenar modelo
         res = model.fit(
             X_train_s,
             y_train,
@@ -123,15 +202,18 @@ def run_for_ticker(config: dict, ticker: str, raw_dir: Path, out_dir: Path) -> d
             huber_delta=huber_delta,
             verbose=True,
         )
+        
         val_losses.append(res.best_val_loss)
         preds_members.append(model.predict(X_test_s))
-        print(f"  Model {m+1} final: val_loss={res.best_val_loss:.6f}, epochs={res.epochs_ran}")
+        print(f"  Modelo {m+1} final: val_loss={res.best_val_loss:.6f}, epochs={res.epochs_ran}")
 
-    print(f"\nEnsemble training complete. Averaging {len(preds_members)} predictions...")
+    print(f"\nEnsemble completado. Promediando {len(preds_members)} predicciones...")
 
+    # COMBINAR PREDICCIONES DEL ENSEMBLE
+    # Promediamos las predicciones de todos los miembros para robustez
     y_pred = np.mean(np.stack(preds_members, axis=0), axis=0)
 
-    # ML metrics
+    # MÉTRICAS ML
     ml = {
         "mae": mae(y_test, y_pred),
         "rmse": rmse(y_test, y_pred),
@@ -140,12 +222,13 @@ def run_for_ticker(config: dict, ticker: str, raw_dir: Path, out_dir: Path) -> d
         "val_loss_mean": float(np.mean(val_losses)),
     }
 
-    # Backtest on test period
-    # 1-bar log return aligned to the same timestamps index
+    # BACKTEST
+    # Calcular retornos de 1 barra (log returns alineados con timestamps)
     close_series = ohlcv["close"].astype("float64")
     log_close = pd.Series(np.log(close_series.to_numpy()), index=close_series.index)
     bar_ret = log_close.diff().reindex(ts_test).fillna(0.0).to_numpy(dtype=np.float32)
 
+    # Ejecutar backtest con señales predichas
     bt = backtest_intraday_signals(
         timestamps=ts_test,
         bar_returns=bar_ret,
@@ -158,6 +241,7 @@ def run_for_ticker(config: dict, ticker: str, raw_dir: Path, out_dir: Path) -> d
         max_position=max_position,
     )
 
+    # MÉTRICAS DE TRADING
     trading = {
         "profit_factor": compute_profit_factor(bt["net_ret"].to_numpy(dtype=np.float32)),
         "max_drawdown": compute_max_drawdown(bt["equity"].to_numpy(dtype=np.float32)),
@@ -165,16 +249,20 @@ def run_for_ticker(config: dict, ticker: str, raw_dir: Path, out_dir: Path) -> d
         "time_in_market": float((bt["pos"].abs() > 0).mean()),
     }
 
-    # Persist artifacts
+    # GUARDAR ARTEFACTOS
     ensure_dir(out_dir)
+    
+    # Guardar backtest completo
     bt.to_csv(out_dir / f"{ticker}_backtest.csv")
 
+    # Guardar predicciones
     preds_df = pd.DataFrame(
         {"y_true": y_test, "y_pred": y_pred},
         index=ts_test,
     )
     preds_df.to_csv(out_dir / f"{ticker}_predictions.csv")
 
+    # Guardar metadatos y resumen
     meta = {
         "ticker": ticker,
         "n_samples": int(len(X)),

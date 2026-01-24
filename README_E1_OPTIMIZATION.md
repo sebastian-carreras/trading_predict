@@ -31,28 +31,28 @@ Este documento describe cómo optimizar los hiperparámetros de la estrategia E1
 
 ```bash
 # 10 trials, 3 tickers aleatorios (~10-15 minutos)
-python scripts/optimize_e1_hyperparameters.py --n_trials 10 --quick
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 10 --quick
 ```
 
 ### 2. Optimización Completa
 
 ```bash
 # 50 trials, todos los tickers E1 (~2-3 horas)
-python scripts/optimize_e1_hyperparameters.py --n_trials 50
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 50
 ```
 
 ### 3. Optimizar Un Solo Ticker
 
 ```bash
 # Útil para entender comportamiento de ticker específico
-python scripts/optimize_e1_hyperparameters.py --ticker GGAL.BA --n_trials 30
+python scripts/optimization/optimize_e1_hyperparameters.py --ticker GGAL.BA --n_trials 30
 ```
 
 ### 4. Optimización Por Ticker (Recomendado)
 
 ```bash
 # Genera YAML con mejores params para cada ticker
-python scripts/optimize_e1_hyperparameters.py --per_ticker --n_trials 30
+python scripts/optimization/optimize_e1_hyperparameters.py --per_ticker --n_trials 30
 ```
 
 Esto genera `reports/hyperparameter_optimization/e1_tuned_params_by_ticker.yaml`:
@@ -186,7 +186,7 @@ Optuna encontrará la combinación óptima para tus datos específicos.
 
 1. **Ejecutar optimización** (fuera de Airflow):
 ```bash
-python scripts/optimize_e1_hyperparameters.py --per_ticker --n_trials 50
+python scripts/optimization/optimize_e1_hyperparameters.py --per_ticker --n_trials 50
 ```
 
 2. **Copiar YAML** al contenedor Airflow:
@@ -258,7 +258,7 @@ optuna_studies.db
 **Continuar estudio previo**:
 ```bash
 # Usar mismo study_name para continuar
-python scripts/optimize_e1_hyperparameters.py \
+python scripts/optimization/optimize_e1_hyperparameters.py \
   --n_trials 50 \
   --study_name e1_hyperparameter_optimization
 ```
@@ -293,10 +293,10 @@ Alternativas:
 **Múltiples procesos** (cuidado con MLflow):
 ```bash
 # Terminal 1
-python scripts/optimize_e1_hyperparameters.py --n_trials 25 --study_name e1_opt
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 25 --study_name e1_opt
 
 # Terminal 2 (mismo study_name → comparte DB)
-python scripts/optimize_e1_hyperparameters.py --n_trials 25 --study_name e1_opt
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 25 --study_name e1_opt
 ```
 
 Optuna maneja concurrencia en SQLite, pero MLflow puede tener conflictos.
@@ -363,7 +363,7 @@ El script usa **walk-forward** interno (5 folds) para evaluar cada trial:
 rm -f runs/mlflow_local/mlflow.db
 
 # Volver a ejecutar
-python scripts/optimize_e1_hyperparameters.py --n_trials 10 --quick
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 10 --quick
 ```
 
 El script ahora fuerza `artifact_location` local.
@@ -396,7 +396,7 @@ tail -f nohup.out
 **Optimización**:
 ```bash
 # Solo 3 tickers más rápidos
-python scripts/optimize_e1_hyperparameters.py \
+python scripts/optimization/optimize_e1_hyperparameters.py \
   --ticker AAPL --ticker GOOGL --ticker MSFT \
   --n_trials 20
 ```
@@ -423,13 +423,13 @@ Abrir: http://localhost:5001
 
 ```bash
 # 1. Prueba rápida (3 tickers, 10 trials)
-python scripts/optimize_e1_hyperparameters.py --n_trials 10 --quick
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 10 --quick
 
 # 2. Ver resultados
 cat reports/hyperparameter_optimization/best_params_e1.yaml
 
 # 3. Si resultados buenos → optimización completa
-python scripts/optimize_e1_hyperparameters.py --per_ticker --n_trials 50
+python scripts/optimization/optimize_e1_hyperparameters.py --per_ticker --n_trials 50
 
 # 4. Entrenar con params optimizados
 export E1_TUNED_PARAMS_PATH="reports/hyperparameter_optimization/e1_tuned_params_by_ticker.yaml"
@@ -440,7 +440,7 @@ python src/train_e1_pipeline.py
 
 ```bash
 # 1. Optimizar ticker problemático
-python scripts/optimize_e1_hyperparameters.py \
+python scripts/optimization/optimize_e1_hyperparameters.py \
   --ticker GGAL.BA \
   --n_trials 50
 
@@ -458,7 +458,7 @@ cat reports/hyperparameter_optimization/by_ticker/GGAL.BA/best_params_e1.yaml
 python src/train_e1_pipeline.py > baseline_results.log
 
 # 2. Optimizar
-python scripts/optimize_e1_hyperparameters.py --per_ticker --n_trials 50
+python scripts/optimization/optimize_e1_hyperparameters.py --per_ticker --n_trials 50
 
 # 3. Entrenar con params optimizados
 export E1_TUNED_PARAMS_PATH="reports/hyperparameter_optimization/e1_tuned_params_by_ticker.yaml"
@@ -479,10 +479,10 @@ mlflow ui --backend-store-uri sqlite:///runs/mlflow_local/mlflow.db
 
 ```bash
 # Optimización rápida
-python scripts/optimize_e1_hyperparameters.py --n_trials 10 --quick
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 10 --quick
 
 # Optimización por ticker (producción)
-python scripts/optimize_e1_hyperparameters.py --per_ticker --n_trials 50
+python scripts/optimization/optimize_e1_hyperparameters.py --per_ticker --n_trials 50
 
 # Ver resultados MLflow
 mlflow ui --backend-store-uri sqlite:///runs/mlflow_local/mlflow.db

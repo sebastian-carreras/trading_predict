@@ -56,7 +56,7 @@ El script soporta dos modos de tracking MLflow:
 
 ```bash
 # Usa SQLite local - NO requiere Docker
-python scripts/optimize_e1_hyperparameters.py --n_trials 50
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 50
 ```
 
 **Características**:
@@ -70,7 +70,7 @@ python scripts/optimize_e1_hyperparameters.py --n_trials 50
 
 ```bash
 # Usa servidor MLflow remoto
-python scripts/optimize_e1_hyperparameters.py \
+python scripts/optimization/optimize_e1_hyperparameters.py \
   --n_trials 50 \
   --mlflow_uri http://localhost:5050
 ```
@@ -196,7 +196,7 @@ objective = 0.5 * IC_mean + 0.5 * Sharpe_mean + trade_penalty
 #### 1. Optimización Estándar (50 trials, modo local)
 
 ```bash
-python scripts/optimize_e1_hyperparameters.py --n_trials 50
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 50
 ```
 
 **Tiempo estimado**: ~3 horas (depende de hardware y número de tickers)
@@ -213,7 +213,7 @@ python scripts/optimize_e1_hyperparameters.py --n_trials 50
 
 ```bash
 # Solo 3 tickers aleatorios, 10 trials
-python scripts/optimize_e1_hyperparameters.py --n_trials 10 --quick
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 10 --quick
 ```
 
 **Tiempo estimado**: ~20 minutos
@@ -224,7 +224,7 @@ python scripts/optimize_e1_hyperparameters.py --n_trials 10 --quick
 
 ```bash
 # Optimizar solo para AAPL (útil para análisis individual)
-python scripts/optimize_e1_hyperparameters.py --ticker AAPL --n_trials 30
+python scripts/optimization/optimize_e1_hyperparameters.py --ticker AAPL --n_trials 30
 ```
 
 **Tiempo estimado**: ~30 minutos (1 ticker)
@@ -235,7 +235,7 @@ python scripts/optimize_e1_hyperparameters.py --ticker AAPL --n_trials 30
 
 ```bash
 # Agregar 20 trials más a estudio existente
-python scripts/optimize_e1_hyperparameters.py \
+python scripts/optimization/optimize_e1_hyperparameters.py \
   --study_name e1_hyperparameter_optimization \
   --n_trials 20
 ```
@@ -246,7 +246,7 @@ python scripts/optimize_e1_hyperparameters.py \
 
 ```bash
 # Detener después de 2 horas (7200 segundos)
-python scripts/optimize_e1_hyperparameters.py \
+python scripts/optimization/optimize_e1_hyperparameters.py \
   --n_trials 100 \
   --timeout 7200
 ```
@@ -255,7 +255,7 @@ python scripts/optimize_e1_hyperparameters.py \
 
 ```bash
 # Conectar a servidor MLflow en Docker
-python scripts/optimize_e1_hyperparameters.py \
+python scripts/optimization/optimize_e1_hyperparameters.py \
   --n_trials 50 \
   --mlflow_uri http://localhost:5050
 ```
@@ -265,7 +265,7 @@ python scripts/optimize_e1_hyperparameters.py \
 #### 7. Ajustar Rango de Búsqueda desde CLI
 
 ```bash
-python scripts/optimize_e1_hyperparameters.py \
+python scripts/optimization/optimize_e1_hyperparameters.py \
   --n_trials 40 \
   --tau_buy_min 0.03 \
   --tau_buy_max 0.07 \
@@ -279,7 +279,7 @@ python scripts/optimize_e1_hyperparameters.py \
 ### Todas las Opciones
 
 ```bash
-python scripts/optimize_e1_hyperparameters.py --help
+python scripts/optimization/optimize_e1_hyperparameters.py --help
 ```
 
 | Argumento | Default | Descripción |
@@ -546,7 +546,7 @@ Si ves este warning, verifica que estés usando la versión actualizada del scri
 ```bash
 # Limpiar directorio MLflow local y reiniciar
 rm -rf runs/mlflow_local/* setup
-python scripts/optimize_e1_hyperparameters.py --n_trials 10 --quick
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 10 --quick
 ```
 
 **Resultado**: Valores aproximados en ~20 minutos
@@ -556,7 +556,7 @@ python scripts/optimize_e1_hyperparameters.py --n_trials 10 --quick
 
 ```bash
 # 50 trials con todos los tickers (modo local)
-python scripts/optimize_e1_hyperparameters.py --n_trials 50
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 50
 ```
 
 **Resultado**: Parámetros óptimos en ~3 horas
@@ -581,7 +581,7 @@ mlflow ui --backend-store-uri sqlite:///runs/mlflow_local/mlflow.db --port 5001
 
 ```bash
 # Si no converge, agregar más trials al mismo estudio
-python scripts/optimize_e1_hyperparameters.py \
+python scripts/optimization/optimize_e1_hyperparameters.py \
   --study_name e1_hyperparameter_optimization \
   --n_trials 30
 # Total trials: 50 + 30 = 80
@@ -731,7 +731,7 @@ pip install --upgrade plotly kaleido
 
 ```bash
 # 10 trials con 3 tickers para validar
-python scripts/optimize_e1_hyperparameters.py --n_trials 10 --quick
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 10 --quick
 ```
 
 **Resultado**: Valores aproximados en ~20 minutos
@@ -740,7 +740,7 @@ python scripts/optimize_e1_hyperparameters.py --n_trials 10 --quick
 
 ```bash
 # 50 trials con todos los tickers
-python scripts/optimize_e1_hyperparameters.py --n_trials 50
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 50
 ```
 
 **Resultado**: Parámetros óptimos en ~3 horas

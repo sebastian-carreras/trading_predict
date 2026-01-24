@@ -114,13 +114,13 @@ clean:  [100, 105, 110, 115]  # Se pierde el día con NaN
 
 ### **Opción 1: Ejecutar manualmente (desarrollo)**```bash
 # Ver qué problemas hay en los datos
-python scripts/run_data_cleaning.py
+python scripts/data/run_data_cleaning.py
 
 # Usar interpolación en vez de forward fill
-python scripts/run_data_cleaning.py --interpolate
+python scripts/data/run_data_cleaning.py --interpolate
 
 # Eliminar filas con nulos (no recomendado)
-python scripts/run_data_cleaning.py --drop
+python scripts/data/run_data_cleaning.py --drop
 ```
 
 **Output:**```
@@ -325,7 +325,7 @@ else:
 ls data/raw/daily/
 
 # Ejecutar limpieza manualmente
-python scripts/run_data_cleaning.py
+python scripts/data/run_data_cleaning.py
 ```
 
 ### **Ticker rechazado por pocos días**```
@@ -351,6 +351,6 @@ print(features.isna().sum())  # Ver cuántos NaN por feature
 ## **Referencias**
 
 - **Código fuente**: `src/data/clean_daily.py`
-- **Script manual**: `scripts/run_data_cleaning.py`
+- **Script manual**: `scripts/data/run_data_cleaning.py`
 - **DAG integration**: `dockerfiles/airflow/dags/e1_conservative_pipeline.py`
 - **Pipeline E1**: `src/train_e1_pipeline.py`

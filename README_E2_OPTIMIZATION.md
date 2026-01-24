@@ -35,28 +35,28 @@ Este documento describe cómo optimizar los hiperparámetros de la estrategia E2
 
 ```bash
 # 10 trials, 3 tickers aleatorios (~10-15 minutos)
-python scripts/optimize_e2_hyperparameters.py --n_trials 10 --quick
+python scripts/optimization/optimize_e2_hyperparameters.py --n_trials 10 --quick
 ```
 
 ### 2. Optimización Completa
 
 ```bash
 # 50 trials, todos los tickers E2 (~2-3 horas)
-python scripts/optimize_e2_hyperparameters.py --n_trials 50
+python scripts/optimization/optimize_e2_hyperparameters.py --n_trials 50
 ```
 
 ### 3. Optimizar Un Solo Ticker
 
 ```bash
 # Útil para entender comportamiento de ticker específico
-python scripts/optimize_e2_hyperparameters.py --ticker NVDA --n_trials 30
+python scripts/optimization/optimize_e2_hyperparameters.py --ticker NVDA --n_trials 30
 ```
 
 ### 4. Optimización Por Ticker (Recomendado)
 
 ```bash
 # Genera YAML con mejores params para cada ticker
-python scripts/optimize_e2_hyperparameters.py --per_ticker --n_trials 30
+python scripts/optimization/optimize_e2_hyperparameters.py --per_ticker --n_trials 30
 ```
 
 Esto genera `reports/hyperparameter_optimization/e2_tuned_params_by_ticker.yaml`:
@@ -264,7 +264,7 @@ plt.show()
 
 ```bash
 # Agrega 20 trials más al estudio existente
-python scripts/optimize_e2_hyperparameters.py \
+python scripts/optimization/optimize_e2_hyperparameters.py \
     --study_name e2_hyperparameter_optimization \
     --n_trials 20
 ```
@@ -272,7 +272,7 @@ python scripts/optimize_e2_hyperparameters.py \
 ### Usar MLflow Remoto (Docker)
 
 ```bash
-python scripts/optimize_e2_hyperparameters.py \
+python scripts/optimization/optimize_e2_hyperparameters.py \
     --n_trials 50 \
     --mlflow_uri http://localhost:5050
 ```
@@ -281,7 +281,7 @@ python scripts/optimize_e2_hyperparameters.py \
 
 ```bash
 # Tech stocks
-python scripts/optimize_e2_hyperparameters.py \
+python scripts/optimization/optimize_e2_hyperparameters.py \
     --tickers "NVDA,GOOGL,META,AMZN" \
     --n_trials 40
 ```
@@ -300,7 +300,7 @@ self.lstm_units_1_bounds = {"min": 96, "max": 192, "step": 32}   # Reducir rango
 
 ```bash
 # Máximo 2 horas (7200 segundos)
-python scripts/optimize_e2_hyperparameters.py \
+python scripts/optimization/optimize_e2_hyperparameters.py \
     --n_trials 100 \
     --timeout 7200
 ```
@@ -320,7 +320,7 @@ pip install optuna kaleido plotly
 rm optuna_studies.db
 
 # Re-ejecutar optimización
-python scripts/optimize_e2_hyperparameters.py --n_trials 10
+python scripts/optimization/optimize_e2_hyperparameters.py --n_trials 10
 ```
 
 ### Trials muy lentos
@@ -332,7 +332,7 @@ python scripts/optimize_e2_hyperparameters.py --n_trials 10
 **Soluciones**:
 ```bash
 # Modo rápido (3 tickers)
-python scripts/optimize_e2_hyperparameters.py --quick --n_trials 20
+python scripts/optimization/optimize_e2_hyperparameters.py --quick --n_trials 20
 
 # Reducir max_epochs temporalmente en base.yaml
 # strategies.e2_moderate.model.max_epochs: 150 → 50
@@ -527,7 +527,7 @@ El DAG guarda el comando CLI exacto en XCom:
 # En Airflow UI → XCom
 {
   "key": "cli_command",
-  "value": "python scripts/optimize_e2_hyperparameters.py --config ..."
+  "value": "python scripts/optimization/optimize_e2_hyperparameters.py --config ..."
 }
 ```
 
@@ -572,7 +572,7 @@ El DAG guarda el comando CLI exacto en XCom:
 
 ## 🔗 Archivos Relacionados
 
-- Script: [scripts/optimize_e2_hyperparameters.py](scripts/optimize_e2_hyperparameters.py)
+- Script: [scripts/optimization/optimize_e2_hyperparameters.py](scripts/optimization/optimize_e2_hyperparameters.py)
 - Pipeline: [src/train_e2_pipeline.py](src/train_e2_pipeline.py)
 - Config: [src/config/base.yaml](src/config/base.yaml)
 - DAG Training: [dockerfiles/airflow/dags/e2_moderate_pipeline.py](dockerfiles/airflow/dags/e2_moderate_pipeline.py)

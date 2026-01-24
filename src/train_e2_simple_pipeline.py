@@ -30,20 +30,36 @@ import pandas as pd
 from .features.build_features_e2 import compute_e2_features, make_target_e2
 from .features.build_sequences import make_sequences, time_split
 from .models.e2_lstm import LSTMRegressor
-from .backtest.daily import backtest_daily_signals, summarize_backtest
+from .backtest.backtest_daily import backtest_daily_signals, summarize_backtest
 from .utils import ensure_dir, load_yaml, project_root
 
 
 def load_ohlcv_csv(path: Path) -> pd.DataFrame:
-    """Carga CSV OHLCV y lo prepara."""
+    """Carga CSV OHLCV y lo prepara.
+    
+    - Lee datos OHLCV desde un archivo CSV
+    - Convierte la columna 'timestamp' a datetime con timezone UTC
+    - Ordena datos cronológicamente y los indexa por timestamp
+    - Valida que todas las columnas requeridas (OHLCV) estén presentes
+    - Retorna DataFrame indexado por timestamp (timezone-aware)
+    """
+    # Cargar datos desde CSV
     df = pd.read_csv(path)
+    
+    # Validar que existe la columna timestamp
     if "timestamp" not in df.columns:
         raise ValueError(f"Missing 'timestamp' column in {path}")
 
+    # Convertir timestamp a datetime con timezone UTC
     df["timestamp"] = pd.to_datetime(df["timestamp"], format='ISO8601', utc=True)
+    
+    # Ordenar por timestamp (cronológicamente ascendente)
     df = df.sort_values("timestamp")
+    
+    # Usar timestamp como índice (más eficiente para acceso temporal)
     df = df.set_index("timestamp")
 
+    # Validar que todas las columnas OHLCV estén presentes
     required = {"open", "high", "low", "close", "volume"}
     missing = required.difference(df.columns)
     if missing:
@@ -53,18 +69,29 @@ def load_ohlcv_csv(path: Path) -> pd.DataFrame:
 
 
 def compute_information_coefficient(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    """Calcula el Information Coefficient (correlación de Spearman)."""
+    """Calcula el Information Coefficient (correlación de Spearman).
+    
+    El IC mide qué tan bien las predicciones están correlacionadas con valores reales:
+    - IC > 0.05 se considera significativo en finanzas
+    - IC < 0 indica overfitting o falta de capacidad predictiva
+    - IC ≈ 0 indica predicciones aleatorias
+    """
+    # Si hay menos de 2 muestras, no se puede calcular correlación
     if len(y_true) <= 1:
         return float("nan")
 
+    # Si alguno de los valores es constante (sin variación), la correlación es indefinida
     if np.std(y_true) == 0 or np.std(y_pred) == 0:
         return float("nan")
 
     try:
+        # Usar Spearman (correlación de rangos) que es más robusta a outliers
         from scipy.stats import spearmanr
         ic, _ = spearmanr(y_true, y_pred)
+        # Asegurar que devolvemos un número finito
         return float(ic) if np.isfinite(ic) else 0.0
     except Exception:
+        # Fallback a correlación de Pearson si scipy no está disponible
         return float(np.corrcoef(y_true, y_pred)[0, 1])
 
 
@@ -81,7 +108,7 @@ def compute_simple_decision_score(
     """
     Calcula decision score simplificado con solo 5 métricas.
     
-    Métricas:
+    Métricas (en escala normalizada 0-1.5):
     - IC: higher is better (target: ic_min)
     - Directional Accuracy: higher is better (target: directional_accuracy_min)
     - Sharpe: higher is better (target: sharpe_min)
@@ -89,11 +116,16 @@ def compute_simple_decision_score(
     - RMSE: lower is better (target: rmse_max)
     
     Returns:
-        (decision_score, components_dict)
+        (decision_score, components_dict): Score ponderado y componentes individuales
     """
     
     def safe_ratio(value: float, target: float, higher_is_better: bool) -> float:
-        """Calcula ratio normalizado [0, 1.5]."""
+        """Calcula ratio normalizado [0, 1.5].
+        
+        - Si métrica debe ser alta (IC, Sharpe, Accuracy): ratio = value / target
+        - Si métrica debe ser baja (MAE, RMSE): ratio = target / value
+        - Limita resultado a rango [0, 1.5] para evitar dominancias
+        """
         if not np.isfinite(value) or not np.isfinite(target) or target <= 0:
             return 0.0
         
@@ -104,9 +136,10 @@ def compute_simple_decision_score(
                 return 1.5
             ratio = target / value
         
+        # Clipping a [0, 1.5] previene métricas outlier
         return float(np.clip(ratio, 0.0, 1.5))
     
-    # Calcular componentes
+    # Calcular componentes normalizados
     components = {
         'ic': safe_ratio(ic, targets.get('ic_min', 0.05), higher_is_better=True),
         'directional_accuracy': safe_ratio(
@@ -119,14 +152,14 @@ def compute_simple_decision_score(
         'rmse': safe_ratio(rmse, targets.get('rmse_max', 0.05), higher_is_better=False),
     }
     
-    # Normalizar pesos
+    # Normalizar pesos para que sumen a 1
     total_weight = sum(weights.values())
     if total_weight <= 0:
         total_weight = 1.0
     
     normalized_weights = {k: v / total_weight for k, v in weights.items()}
     
-    # Score ponderado
+    # Score ponderado = suma de (componente * peso normalizado)
     score = sum(components[k] * normalized_weights.get(k, 0.0) for k in components)
     
     return float(score), components

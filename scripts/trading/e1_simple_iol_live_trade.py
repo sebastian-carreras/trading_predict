@@ -29,7 +29,7 @@ import torch
 from dotenv import load_dotenv
 
 # Agregar src al path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.models.e1_gru import GRURegressor
 from src.features.build_features_e1 import compute_e1_features
@@ -39,14 +39,17 @@ from src.utils import load_yaml
 class IOLClient:
     """Cliente para interactuar con API de Invertir Online (ambiente de prueba)."""
     
-    BASE_URL_TEST = "https://api.invertironline.com"  # Ambiente de prueba
+    BASE_URL_PROD = "https://api.invertironline.com"
+    BASE_URL_TEST = "https://api.invertironline.com"  # Sandbox
     
-    def __init__(self, username: str, password: str):
+    def __init__(self, username: str, password: str, use_production: bool = False):
         self.username = username
         self.password = password
         self.access_token = None
         self.refresh_token = None
         self.token_expires_at = None
+        self.base_url = self.BASE_URL_PROD if use_production else self.BASE_URL_TEST
+        self.environment = "PRODUCCIÓN" if use_production else "PRUEBA"
     
     def authenticate(self) -> bool:
         """
@@ -60,7 +63,7 @@ class IOLClient:
         Returns:
             True si autenticación exitosa
         """
-        url = f"{self.BASE_URL_TEST}/token"
+        url = f"{self.base_url}/token"
         
         headers = {
             "Content-Type": "application/x-www-form-urlencoded"
@@ -121,7 +124,8 @@ class IOLClient:
         self,
         ticker: str,
         quantity: int,
-        side: str = "compra"  # "compra" o "venta"
+        side: str = "compra",  # "compra" o "venta"
+        market: str = "bCBA"
     ) -> dict:
         """
         Ejecuta orden a mercado en IOL.
@@ -140,20 +144,28 @@ class IOLClient:
             ticker: Símbolo del activo (ej: GGAL, YPFD)
             quantity: Cantidad de acciones
             side: "compra" o "venta"
+            market: Mercado IOL (bCBA, aNYS, etc.)
         
         Returns:
             Respuesta de la API
         """
-        # Para ambiente de prueba, usar mercado bCBA (Bolsa argentina)
-        endpoint = "Comprar" if side == "compra" else "Vender"
-        url = f"{self.BASE_URL_TEST}/api/v2/operar/{endpoint}"
+        # Convertir ticker de formato yfinance (GGAL.BA) a formato IOL (GGAL)
+        iol_ticker = ticker.replace('.BA', '')
         
+        # Endpoint según operación
+        endpoint = "Comprar" if side == "compra" else "Vender"
+        url = f"{self.base_url}/api/v2/operar/{endpoint}"
+        
+        # Payload según documentación oficial IOL
+        # https://api.invertironline.com/Help#!/Operar/Operar_Comprar
         payload = {
-            "mercado": "bCBA",
-            "simbolo": ticker,
+            "mercado": market,
+            "simbolo": iol_ticker,
             "cantidad": quantity,
-            "plazo": "t2",
-            "validez": "dia"
+            "precio": 0,  # 0 = orden a mercado
+            "plazo": "t2",  # t0, t1, t2
+            "validez": None,  # None = día, o fecha ISO
+            "tipoOrden": "precioMercado"  # precioMercado o precioLimite
         }
         
         try:
@@ -162,6 +174,11 @@ class IOLClient:
                 headers=self.get_auth_headers(),
                 json=payload
             )
+            
+            # Imprimir detalles de la solicitud para debug
+            print(f"   DEBUG - Request payload: {payload}")
+            print(f"   DEBUG - Response status: {response.status_code}")
+            
             response.raise_for_status()
             result = response.json()
             
@@ -173,7 +190,23 @@ class IOLClient:
         except requests.exceptions.RequestException as e:
             print(f"❌ Error ejecutando orden: {e}")
             if hasattr(e, 'response') and e.response is not None:
-                print(f"   Respuesta: {e.response.text}")
+                print(f"   Status code: {e.response.status_code}")
+                print(f"   Headers: {dict(e.response.headers)}")
+                try:
+                    error_json = e.response.json()
+                    print(f"   Respuesta JSON: {error_json}")
+                except:
+                    text = e.response.text
+                    print(f"   Respuesta texto ({len(text)} chars): {text[:500]}")
+            
+            # Agregar sugerencias según el error
+            if hasattr(e, 'response') and e.response is not None:
+                if e.response.status_code == 400:
+                    print(f"\n   💡 Posibles causas:")
+                    print(f"      - El símbolo '{iol_ticker}' no existe en mercado '{market}'")
+                    print(f"      - El ambiente de prueba no soporta este instrumento")
+                    print(f"      - Usa tickers argentinos válidos: GGAL, YPFD, BBAR, etc.")
+
             return {}
 
 
@@ -238,6 +271,7 @@ def predict_with_model(
     scaler_X: dict,
     scaler_y: dict,
     lookback: int,
+    feature_names: list,
     benchmark_df: pd.DataFrame = None
 ) -> tuple[float, pd.DataFrame]:
     """
@@ -249,9 +283,27 @@ def predict_with_model(
     # Calcular features
     features = compute_e1_features(ohlcv, benchmark_df)
     
+    # Verificar que tengamos las features correctas
+    if len(features.columns) != len(feature_names):
+        print(f"⚠️  Warning: Calculadas {len(features.columns)} features, modelo espera {len(feature_names)}")
+        print(f"   Features calculadas: {list(features.columns)[:5]}...")
+        print(f"   Features modelo: {feature_names[:5]}...")
+    
+    # Reordenar y filtrar solo las features del modelo
+    try:
+        features = features[feature_names]
+    except KeyError as e:
+        print(f"❌ Error: Falta feature {e}")
+        print(f"   Features disponibles: {list(features.columns)}")
+        raise
+    
     # Necesitamos al menos lookback días
     if len(features) < lookback:
         raise ValueError(f"Insuficientes datos. Necesitamos {lookback} días, tenemos {len(features)}")
+    
+    # Eliminar NaN/Inf
+    features = features.replace([np.inf, -np.inf], np.nan)
+    features = features.ffill().bfill().fillna(0)
     
     # Tomar últimos lookback días
     recent_features = features.iloc[-lookback:]
@@ -262,7 +314,17 @@ def predict_with_model(
     # Normalizar usando scaler del entrenamiento
     mean_X = np.array(scaler_X['mean'])
     std_X = np.array(scaler_X['std'])
+    
+    # Verificar dimensiones
+    if X.shape[1] != len(mean_X):
+        raise ValueError(f"Mismatch de features: datos={X.shape[1]}, scaler={len(mean_X)}")
+    
     X_scaled = (X - mean_X) / std_X
+    
+    # Verificar NaN en datos normalizados
+    if np.isnan(X_scaled).any():
+        print(f"⚠️  Warning: NaN detectados en features normalizadas, reemplazando con 0")
+        X_scaled = np.nan_to_num(X_scaled, nan=0.0, posinf=0.0, neginf=0.0)
     
     # Reshape para modelo: (1, lookback, features)
     X_input = X_scaled.reshape(1, lookback, -1)
@@ -274,6 +336,11 @@ def predict_with_model(
     
     # Desnormalizar
     pred_return = float(y_pred_scaled[0] * scaler_y['std'] + scaler_y['mean'])
+    
+    # Sanitizar predicción
+    if not np.isfinite(pred_return):
+        print(f"⚠️  Warning: Predicción no finita ({pred_return}), usando 0.0")
+        pred_return = 0.0
     
     print(f"✓ Predicción: retorno esperado = {pred_return:+.2%}")
     
@@ -344,9 +411,20 @@ def main():
         help="Path al config YAML"
     )
     parser.add_argument(
+        "--market",
+        type=str,
+        default="bCBA",
+        help="Mercado IOL (bCBA, aNYS, etc.)"
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Simular orden sin ejecutar en IOL"
+    )
+    parser.add_argument(
+        "--production",
+        action="store_true",
+        help="Usar ambiente de PRODUCCIÓN (por defecto usa sandbox/prueba)"
     )
     
     args = parser.parse_args()
@@ -364,13 +442,16 @@ def main():
         print("           IOL_PASSWORD=tu_password")
         sys.exit(1)
     
+    ambiente = "PRODUCCIÓN ⚠️" if args.production else "PRUEBA"
     print("=" * 70)
-    print("E1 Simple - Trading en vivo con API IOL (ambiente de prueba)")
+    print(f"E1 Simple - Trading en vivo con API IOL (ambiente: {ambiente})")
     print("=" * 70)
     print(f"Ticker: {args.ticker}")
     print(f"Modelo: {args.model}")
     print(f"Cantidad: {args.quantity}")
+    print(f"Mercado: {args.market}")
     print(f"Dry run: {args.dry_run}")
+    print(f"Ambiente: {ambiente}")
     print("=" * 70)
     print()
     
@@ -379,8 +460,8 @@ def main():
     config = load_yaml(root / args.config)
     
     # 2. Autenticación IOL
-    print("1️⃣  Autenticando con IOL...")
-    iol = IOLClient(iol_username, iol_password)
+    print(f"1️⃣  Autenticando con IOL (ambiente: {('PRODUCCIÓN' if args.production else 'PRUEBA')})...")
+    iol = IOLClient(iol_username, iol_password, use_production=args.production)
     
     if not iol.authenticate():
         print("❌ Autenticación fallida. Verifica credenciales en .env")
@@ -397,9 +478,14 @@ def main():
     model_path = Path(args.model)
     model, scaler_X, scaler_y = load_e1_simple_model(model_path)
     
-    # Extraer lookback del checkpoint
+    # Extraer lookback y feature_names del checkpoint
     checkpoint = torch.load(model_path, map_location='cpu')
     lookback_days = checkpoint['lookback_days']
+    feature_names = checkpoint.get('feature_names', None)
+    
+    if feature_names is None:
+        print("⚠️  Warning: Modelo no tiene feature_names guardados")
+    
     print()
     
     # 4. Descargar datos recientes
@@ -418,8 +504,31 @@ def main():
     # 5. Hacer predicción
     print("4️⃣  Calculando predicción...")
     pred_return, features = predict_with_model(
-        model, ohlcv, scaler_X, scaler_y, lookback_days, benchmark_df
+        model, ohlcv, scaler_X, scaler_y, lookback_days, feature_names, benchmark_df
     )
+    
+    # Guardar predicción en MLflow para evaluación continua
+    if not args.dry_run:
+        try:
+            import mlflow
+            
+            project_root = Path(__file__).parent.parent
+            mlflow_uri = "sqlite:///" + str(project_root / "runs" / "mlflow_local" / "mlflow.db")
+            mlflow.set_tracking_uri(mlflow_uri)
+            mlflow.set_experiment("E1_Simple_Production_Tracking")
+            
+            with mlflow.start_run(run_name=f"prediction_{args.ticker}_{datetime.now().strftime('%Y%m%d')}"):
+                mlflow.log_param("ticker", args.ticker)
+                mlflow.log_param("prediction_date", datetime.now().strftime("%Y-%m-%d"))
+                mlflow.log_param("horizon_days", 90)
+                mlflow.log_param("model_path", str(model_path))
+                mlflow.log_param("status", "pending")
+                mlflow.log_metric("predicted_return", pred_return)
+                
+                print(f"  ✓ Predicción guardada en MLflow para evaluación futura")
+        except Exception as e:
+            print(f"  ⚠️  No se pudo guardar en MLflow: {e}")
+    
     print()
     
     # 6. Calcular decision score
@@ -436,11 +545,12 @@ def main():
         if args.dry_run:
             print("   [DRY RUN] Orden simulada, no se ejecuta en IOL")
         else:
-            print("   Ejecutando orden en IOL...")
+            print(f"   Ejecutando orden en IOL (mercado: {args.market})...")
             result = iol.place_market_order(
                 ticker=args.ticker,
                 quantity=args.quantity,
-                side="compra"
+                side="compra",
+                market=args.market
             )
             
             if result:

@@ -13,8 +13,8 @@ Predicción de retornos acumulados a 20 días usando arquitectura LSTM simplific
 - **Lookback**: 60 días (ventana de entrada)
 - **Rebalanceo**: Semanal o quincenal
 - **Umbrales**: τ_buy = 0.025 (2.5%), τ_sell = 0.00
-- **Filtros**: RSI básico (35-70), sin MACD ni volume z-score
-- **Split**: Temporal simple (70/15/15), **sin walk-forward**
+- **Filtros**: RSI básico (35-70), MACD ni volume z-score
+- **Split**: Temporal simple (70/15/15),
 
 **Métricas objetivo**:
 - Information Coefficient (IC) > 0.05

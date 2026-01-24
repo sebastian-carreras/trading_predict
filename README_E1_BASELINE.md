@@ -51,10 +51,10 @@ python -m src.train_e1_pipeline --tickers AAPL
 
 ```bash
 # Comparación automática (usa últimos runs)
-python scripts/compare_e1_models.py
+python scripts/evaluation/compare_e1_models.py
 
 # Especificar runs manualmente
-python scripts/compare_e1_models.py \
+python scripts/evaluation/compare_e1_models.py \
   --baseline-run runs/e1_baseline/20260115_120000 \
   --gru-run runs/e1_conservative/20260115_130000
 ```
@@ -180,7 +180,7 @@ strategies:
 ## ✅ Próximos Pasos
 
 1. Ejecutar baseline para mismo universo que GRU
-2. Comparar resultados usando `scripts/compare_e1_models.py`
+2. Comparar resultados usando `scripts/evaluation/compare_e1_models.py`
 3. Analizar diferencias en métricas ML vs Trading
 4. Documentar conclusiones para tesis
 5. Considerar otros baselines: SMA Crossover, Buy & Hold

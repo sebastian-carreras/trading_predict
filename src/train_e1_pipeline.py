@@ -27,7 +27,7 @@ from sklearn.model_selection import TimeSeriesSplit
 from .features.build_features_e1 import compute_e1_features, make_target_e1
 from .features.build_sequences import make_sequences, time_split, temporal_train_val_split
 from .models.e1_gru import GRURegressor
-from .backtest.daily import backtest_daily_signals, summarize_backtest
+from .backtest.backtest_daily import backtest_daily_signals, summarize_backtest
 from .utils import ensure_dir, load_yaml, project_root
 
 
@@ -86,15 +86,31 @@ def _apply_tuned_overrides(*, config: dict, strategy_key: str, ticker: str) -> d
 
 
 def load_ohlcv_csv(path: Path) -> pd.DataFrame:
-    """Carga CSV OHLCV y lo prepara."""
+    """Carga CSV OHLCV y lo prepara.
+    
+    - Lee datos OHLCV desde un archivo CSV
+    - Convierte la columna 'timestamp' a datetime con timezone UTC
+    - Ordena datos cronológicamente y los indexa por timestamp
+    - Valida que todas las columnas requeridas (OHLCV) estén presentes
+    - Retorna DataFrame indexado por timestamp (timezone-aware)
+    """
+    # Cargar datos desde CSV
     df = pd.read_csv(path)
+    
+    # Validar que existe la columna timestamp
     if "timestamp" not in df.columns:
         raise ValueError(f"Missing 'timestamp' column in {path}")
 
+    # Convertir timestamp a datetime con timezone UTC
     df["timestamp"] = pd.to_datetime(df["timestamp"], format='ISO8601', utc=True)
+    
+    # Ordenar por timestamp (cronológicamente ascendente)
     df = df.sort_values("timestamp")
+    
+    # Usar timestamp como índice (más eficiente para acceso temporal)
     df = df.set_index("timestamp")
 
+    # Validar que todas las columnas OHLCV estén presentes
     required = {"open", "high", "low", "close", "volume"}
     missing = required.difference(df.columns)
     if missing:
@@ -107,21 +123,30 @@ def compute_information_coefficient(y_true: np.ndarray, y_pred: np.ndarray) -> f
     """
     Calcula el Information Coefficient (correlación de Spearman).
     
-    IC > 0.05 se considera significativo en finanzas.
-    IC < 0 indica overfitting o falta de capacidad predictiva.
+    El IC mide qué tan bien las predicciones están correlacionadas con valores reales.
+    - IC > 0.05 se considera significativo en finanzas
+    - IC < 0 indica overfitting o falta de capacidad predictiva
+    - IC ≈ 0 indica predicciones aleatorias
+    
+    Retorna:
+        float: IC (rango típico: [-1, 1], aunque puede ser NaN si no hay suficientes datos)
     """
+    # Si hay menos de 2 muestras, no se puede calcular correlación
     if len(y_true) <= 1:
         return float("nan")
 
+    # Si alguno de los valores es constante (sin variación), la correlación es indefinida
     if np.std(y_true) == 0 or np.std(y_pred) == 0:
         return float("nan")
 
     try:
+        # Usar Spearman (correlación de rangos) que es más robusta a outliers
         from scipy.stats import spearmanr
         ic, _ = spearmanr(y_true, y_pred)
+        # Asegurar que devolvemos un número finito
         return float(ic) if np.isfinite(ic) else 0.0
     except Exception:
-        # Fallback a Pearson si scipy no está disponible
+        # Fallback a correlación de Pearson si scipy no está disponible
         return float(np.corrcoef(y_true, y_pred)[0, 1])
 
 
@@ -890,60 +915,71 @@ def run_e1_for_ticker(
         )
         return summary
 
-    # Split temporal
+    # Split temporal: dividir datos en 70% train, 15% val, 15% test
+    # Se mantiene el orden temporal para evitar data leakage
     idx_train, idx_val, idx_test = time_split(len(X))
     X_train, y_train = X[idx_train], y[idx_train]
     X_val, y_val = X[idx_val], y[idx_val]
     X_test, y_test = X[idx_test], y[idx_test]
     ts_test = ts[idx_test]
 
-    # Estandarizar features X (fit solo en train)
+    # ESTANDARIZAR FEATURES X (Z-score normalization)
+    # - Usar solo datos de train para calcular media y std (prevenir data leakage)
+    # - Aplicar la misma transformación a val y test
+    # - Esto centra y escala los datos a media=0 y std=1
     Xtr2d = X_train.reshape(-1, X_train.shape[-1])
     mean_X = Xtr2d.mean(axis=0)
-    std_X = Xtr2d.std(axis=0) + 1e-12
+    std_X = Xtr2d.std(axis=0) + 1e-12  # +1e-12 evita división por cero
 
     def scale_X(Xa: np.ndarray) -> np.ndarray:
+        """Aplica estandarización Z-score a las features."""
         return ((Xa - mean_X) / std_X).astype(np.float32)
 
     X_train_s = scale_X(X_train)
     X_val_s = scale_X(X_val)
     X_test_s = scale_X(X_test)
 
-    # Estandarizar targets y (fit solo en train) para reducir bias
+    # ESTANDARIZAR TARGETS y (Z-score normalization)
+    # - Normalizamos los targets para estabilizar el entrenamiento
+    # - Mejora convergencia durante el backprop
     mean_y = float(y_train.mean())
     std_y = float(y_train.std()) + 1e-12
 
     def scale_y(ya: np.ndarray) -> np.ndarray:
+        """Aplica estandarización Z-score a los targets."""
         return ((ya - mean_y) / std_y).astype(np.float32)
 
     def unscale_y(ya_scaled: np.ndarray) -> np.ndarray:
+        """Deshace la estandarización (vuelve a escala original)."""
         return (ya_scaled * std_y + mean_y).astype(np.float32)
 
     y_train_s = scale_y(y_train)
     y_val_s = scale_y(y_val)
     y_test_s = scale_y(y_test)
 
-    # Entrenar GRU
+    # Entrenar modelo GRU (Gated Recurrent Unit)
+    # - Red recurrente para modelar secuencias temporales
+    # - Capaz de capturar dependencias a largo plazo
     model = GRURegressor(
-        input_size=X_train_s.shape[-1],
-        hidden_sizes=gru_units,
-        dropout=dropout,
-        dense_units=dense_units,
-        seed=seed,
+        input_size=X_train_s.shape[-1],  # Número de features (columnas)
+        hidden_sizes=gru_units,          # Unidades en capas recurrentes
+        dropout=dropout,                 # Regularización: desactivar unidades al azar
+        dense_units=dense_units,         # Unidades en capa densa final
+        seed=seed,                       # Para reproducibilidad
     )
 
     print(f"Entrenando GRU para {ticker}...")
     res = model.fit(
-        X_train_s,
-        y_train_s,  # Targets normalizados
-        X_val_s,
-        y_val_s,    # Targets normalizados
-        learning_rate=lr,
-        batch_size=batch_size,
-        max_epochs=max_epochs,
-        early_stopping_patience=patience,
-        loss=loss,
-        huber_delta=huber_delta,
+        X_train_s,            # Features de entrenamiento (normalizados)
+        y_train_s,            # Targets de entrenamiento (normalizados)
+        X_val_s,              # Features de validación (para early stopping)
+        y_val_s,              # Targets de validación
+        learning_rate=lr,               # Velocidad de aprendizaje del optimizador
+        batch_size=batch_size,          # Muestras por iteración
+        max_epochs=max_epochs,          # Épocas máximas de entrenamiento
+        early_stopping_patience=patience,  # Parar si no mejora en N épocas
+        loss=loss,                      # Función de pérdida: "huber" o "mse"
+        huber_delta=huber_delta,        # Parámetro delta para loss Huber
     )
 
     print(f"  Epochs: {res.epochs_ran}, Val Loss: {res.best_val_loss:.6f}")

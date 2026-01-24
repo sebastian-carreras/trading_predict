@@ -26,7 +26,7 @@ from src.models.e1_baseline_linear import (
     LinearRegressionBaseline,
     compute_baseline_metrics,
 )
-from src.backtest.daily import backtest_daily_signals, summarize_backtest
+from src.backtest.backtest_daily import backtest_daily_signals, summarize_backtest
 from src.utils import ensure_dir, load_yaml, project_root
 
 
@@ -40,7 +40,17 @@ def run_baseline_for_ticker(
     """
     Ejecuta pipeline completo de baseline para un ticker.
     
-    Retorna dict con métricas para comparación.
+    Usa Regresión Lineal en lugar de GRU para establecer punto de comparación.
+    
+    Argumentos:
+        config: Diccionario de configuración con estrategias, modelos, splits
+        ticker: Símbolo del activo (ej: "AAPL")
+        raw_dir: Directorio con datos CSV limpios
+        out_dir: Directorio para guardar outputs (predicciones, métricas, backtest)
+        benchmark_df: DataFrame opcional con benchmarks
+    
+    Retorna:
+        dict: Resumen con métricas ML y trading del modelo entrenado
     """
     ensure_dir(out_dir)
     
@@ -48,11 +58,13 @@ def run_baseline_for_ticker(
     print(f"BASELINE E1 - {ticker}")
     print(f"{'='*60}")
     
-    # 1. Cargar datos
+    # 1. CARGAR DATOS OHLCV
+    # Lee archivo CSV con datos de precios OHLC y volumen históricos
     csv_path = raw_dir / f"{ticker}_daily.csv"
     if not csv_path.exists():
         raise FileNotFoundError(f"No existe {csv_path}")
     
+    # Convertir a DataFrame, con timestamp como índice
     df = pd.read_csv(csv_path)
     df["timestamp"] = pd.to_datetime(df["timestamp"], format='ISO8601', utc=True)
     df = df.sort_values("timestamp").set_index("timestamp")
@@ -64,24 +76,28 @@ def run_baseline_for_ticker(
     # DEBUG: Imprimir columnas antes de cualquier transformación
     print(f"DEBUG - Columnas después de cargar CSV: {list(df.columns)}")
     
-    # 2. Calcular features E1
+    # 2. CALCULAR FEATURES E1
+    # Extrae indicadores técnicos (momentum, volatilidad, tendencia, etc.)
     print("Calculando features...")
     df_feat = compute_e1_features(df)
     
-    # 3. Crear target
+    # 3. CREAR TARGET
+    # Define el objetivo de predicción: retorno esperado en N días
     strats = config.get("strategies", {})
     e1_cfg = strats.get("e1_conservative", {})
     horizon_days = int(e1_cfg.get("horizon_days", 90))
     
     print(f"Creando target (horizonte={horizon_days} días)...")
-    target_series = make_target_e1(df, horizon_days=horizon_days)  # Pasar df (con 'close'), no df_feat
+    target_series = make_target_e1(df, horizon_days=horizon_days)
     
-    # 4. Crear secuencias
+    # 4. CREAR SECUENCIAS
+    # Transforma datos en ventanas de tiempo (lookback) para redes recurrentes
     lookback_days = int(e1_cfg.get("lookback_days", 180))
     
     print(f"Creando secuencias (lookback={lookback_days})...")
     
     # Combinar features y target en un solo DataFrame
+    # Necesario para sincronizar índices en make_sequences
     df_combined = df_feat.copy()
     df_combined["target"] = target_series
     
@@ -90,6 +106,8 @@ def run_baseline_for_ticker(
     features_df = df_combined[feature_cols]
     target_series_clean = df_combined["target"]
     
+    # Crear secuencias: [n_samples, lookback_days, n_features]
+    # Cada muestra contiene lookback_days de datos históricos
     X, y, timestamps, feature_names = make_sequences(
         features=features_df,
         target=target_series_clean,
@@ -98,12 +116,15 @@ def run_baseline_for_ticker(
     
     print(f"Forma de datos: X={X.shape}, y={y.shape}")
     
-    # 5. Walk-forward validation
+    # 5. VALIDACIÓN WALK-FORWARD
+    # Simula entrenamientos progresivos con ventanas de tiempo no superpuestas
+    # Previene data leakage y valida robustez del modelo
     splits_cfg = config.get("splits", {})
     n_folds = int(splits_cfg.get("folds", 5))
     test_size = max(1, len(X) // (n_folds + 1))
     gap_samples = int(splits_cfg.get("embargo_days", {}).get("e1", 0))
     
+    # TimeSeriesSplit mantiene orden temporal
     splitter = TimeSeriesSplit(n_splits=n_folds, test_size=test_size, gap=gap_samples)
     
     val_fraction = float(splits_cfg.get("internal_val_fraction", 0.15))
@@ -132,7 +153,8 @@ def run_baseline_for_ticker(
             train_idx = train_full_idx[:split_point]
             val_idx = train_full_idx[split_point:]
         
-        # Normalizar features (fit solo en train)
+        # ESTANDARIZAR FEATURES
+        # Fit scaler solo en datos de entrenamiento (prevenir data leakage)
         from sklearn.preprocessing import StandardScaler
         scaler = StandardScaler()
         
@@ -140,7 +162,7 @@ def run_baseline_for_ticker(
         X_train_2d = X[train_idx].reshape(-1, X.shape[-1])
         scaler.fit(X_train_2d)
         
-        # Aplicar a todos los sets
+        # Aplicar transformación a todos los sets
         X_train_scaled = scaler.transform(X[train_idx].reshape(-1, X.shape[-1])).reshape(X[train_idx].shape)
         X_val_scaled = scaler.transform(X[val_idx].reshape(-1, X.shape[-1])).reshape(X[val_idx].shape)
         X_test_scaled = scaler.transform(X[test_idx].reshape(-1, X.shape[-1])).reshape(X[test_idx].shape)
@@ -149,29 +171,30 @@ def run_baseline_for_ticker(
         y_val = y[val_idx]
         y_test = y[test_idx]
         
-        # Entrenar baseline
+        # ENTRENAR REGRESIÓN LINEAL
+        # Baseline simple: modela relación lineal entre features y target
         print(f"    Entrenando regresión lineal...")
         model = LinearRegressionBaseline(seed=42)
         
         train_result = model.fit(
-            X_train_scaled,
-            y_train,
-            X_val_scaled,
-            y_val,
+            X_train_scaled,  # Features de entrenamiento (normalizados)
+            y_train,         # Targets de entrenamiento
+            X_val_scaled,    # Features de validación
+            y_val,           # Targets de validación
         )
         
         print(f"    Train R²={train_result.train_score:.4f}, Val R²={train_result.val_score:.4f}")
         
-        # Predicciones en test
+        # PREDICCIONES EN TEST
         y_pred_test = model.predict(X_test_scaled)
         
-        # Métricas ML
+        # MÉTRICAS ML
         test_metrics = compute_baseline_metrics(y_test, y_pred_test)
         
         print(f"    Test: MAE={test_metrics['mae']:.4f}, RMSE={test_metrics['rmse']:.4f}, "
               f"Dir.Acc={test_metrics['directional_accuracy']:.3f}, IC={test_metrics['ic']:.3f}")
         
-        # Guardar predicciones
+        # Guardar predicciones de este fold
         test_timestamps = timestamps[test_idx]
         pred_df = pd.DataFrame({
             "timestamp": test_timestamps,
@@ -188,11 +211,11 @@ def run_baseline_for_ticker(
             **{f"test_{k}": v for k, v in test_metrics.items()},
         })
     
-    # Consolidar predicciones
+    # Consolidar predicciones de todos los folds
     df_all_preds = pd.concat(all_predictions, ignore_index=True)
     df_all_preds.to_csv(out_dir / f"{ticker}_baseline_predictions.csv", index=False)
     
-    # Métricas agregadas
+    # MÉTRICAS AGREGADAS (todos los folds)
     y_true_all = df_all_preds["y_true"].values
     y_pred_all = df_all_preds["y_pred"].values
     
