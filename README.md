@@ -129,18 +129,6 @@ python -m src.train_e3_pipeline --mode run --tickers SPY
 **Baselines para comparación**:
 - **E1 Baseline - Regresión Lineal**: Modelo simple para comparar contra GRU → [README_E1_BASELINE.md](README_E1_BASELINE.md)
 
-**Criterio compuesto de decisión (`decision_score`)**:
-- Se calcula por **perfil** y estrategia (ej: E1 → `conservative`, E2 → `moderate`, E3 → `aggressive`).
-- La estrategia elige el perfil vía `splits.strategy_profile`, y cada perfil define `threshold`, `weights` y `target_metrics` en `splits.decision_profiles`.
-- Los componentes se registran como `decision_component_<metric>` (dinámico) + `decision_profile`.
-- Se mantiene compatibilidad con el esquema legacy `splits.target_metrics` + `splits.decision_score` si no hay perfiles configurados.
-
-**Cómo conviven `tau_buy`/`tau_sell` con `decision_score`**:
-- `tau_buy` y `tau_sell` (por estrategia) definen la lógica de **señales y trading** a partir de la predicción: cuándo entrar/salir en el backtest.
-- `decision_score` es un criterio **macro de calidad (go/no-go)** del run: resume métricas ML + trading y produce `decision_signal` (BUY/HOLD) comparando contra un `threshold`.
-- En otras palabras: los *taus* gobiernan el comportamiento del backtest (trades), y el `decision_score` gobierna si “habilitamos” recomendar/operar esa estrategia para ese ticker.
-
-
 **Métricas de Trading (online)**:
 - CAGR, Sharpe, Sortino: retorno ajustado por riesgo
  - El CAGR (Compound Annual Growth Rate) mide el retorno anualizado compuesto de la estrategia/inversión.
@@ -926,7 +914,7 @@ trading_predict/
       features/
          build_features.py       # indicadores técnicos sin leakage
          build_targets.py        # y^(H) para E1/E2
-         build_sequences.py      # ventanas (lookback) para RNN
+         build_sequences_e1e2.py # ventanas (lookback) para RNN
          intraday.py             # features/target/secuencias intradía (baseline)
       models/
          e1_gru.py               # definición GRU
@@ -966,7 +954,7 @@ trading_predict/
 1. `src/data/download.py` → baja OHLCV + SPY
 2. `src/data/clean.py` → limpia y alinea
 3. `src/features/build_features.py` → features
-4. `src/features/build_targets.py` + `src/features/build_sequences.py` → datasets E1/E2
+4. `src/features/build_targets.py` + `src/features/build_sequences_e1e2.py` → datasets E1/E2
 5. `src/models/train.py` → entrena walk-forward y guarda predicciones OOS
 6. `src/pairs/select_pairs.py` + `src/pairs/build_spread.py` (+ `src/pairs/knn_confirm.py`) → pipeline E4
 7. Backtesting: `src/backtest/daily.py` (E1/E2) / `src/backtest/intraday.py` (E3)

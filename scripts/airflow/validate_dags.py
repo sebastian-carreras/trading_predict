@@ -77,17 +77,20 @@ def main():
     
     # Encontrar DAGs a validar
     if args.dag:
-        # DAG específico
-        dag_file = dags_dir / f"{args.dag}.py"
-        if not dag_file.exists():
-            print(f"❌ DAG no encontrado: {dag_file}")
+        # DAG específico (buscar en subcarpetas)
+        matches = [p for p in dags_dir.rglob(f"{args.dag}.py") if '__pycache__' not in str(p)]
+        if not matches:
+            print(f"❌ DAG no encontrado: {args.dag}.py en {dags_dir}")
             sys.exit(1)
-        dag_files = [dag_file]
+        if len(matches) > 1:
+            print(f"⚠️  Se encontraron múltiples DAGs para {args.dag}.py:")
+            for match in matches:
+                print(f"  - {match}")
+            sys.exit(1)
+        dag_files = matches
     else:
-        # Todos los DAGs
-        dag_files = list(dags_dir.glob('*.py'))
-        if '__pycache__' in str(dags_dir):
-            dag_files = [f for f in dag_files if '__pycache__' not in str(f)]
+        # Todos los DAGs (recursivo)
+        dag_files = [p for p in dags_dir.rglob('*.py') if '__pycache__' not in str(p)]
     
     if not dag_files:
         print("⚠️  No se encontraron DAGs para validar")

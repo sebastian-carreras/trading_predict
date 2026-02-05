@@ -34,7 +34,6 @@ En el **Summary Run** de MLflow, ahora se loguean los siguientes targets como **
 
 1. **`ic_target_min`**: Valor mínimo esperado de IC (0.05)
 2. **`sharpe_target_min`**: Valor mínimo esperado de Sharpe Ratio (1.0)
-3. **`decision_score_threshold`**: Threshold para señal de compra (0.7)
 
 ### Ejemplo de Uso en MLflow
 
@@ -54,25 +53,21 @@ Esto te permite saber inmediatamente que el IC promedio (0.191) está **muy por 
 
 ### Métricas Agregadas Adicionales
 
-También se agregaron métricas agregadas de **Sharpe** y **Decision Score**:
+También se agregaron métricas agregadas de **Sharpe**:
 
 **Sharpe Metrics**:
 - `sharpe_mean`, `sharpe_median`, `sharpe_min`, `sharpe_max`
 - `sharpe_above_threshold`: Cantidad de tickers con Sharpe > 1.0
 - `sharpe_target_min` (param): 1.0
 
-**Decision Score Metrics**:
-- `decision_score_mean`, `decision_score_median`, `decision_score_min`, `decision_score_max`
-- `decision_score_threshold` (param): 0.7
-
 ## Archivos Modificados
 
-1. **`dockerfiles/airflow/dags/e2_simple_pipeline.py`**:
-   - Agregado cálculo de `sharpe_values` y `decision_scores`
-   - Agregado logging de targets como params
-   - Agregadas métricas agregadas de Sharpe y Decision Score
+1. **`dockerfiles/airflow/dags/E2/e2_simple_pipeline.py`**:
+  - Agregado cálculo de `sharpe_values`
+  - Agregado logging de targets como params
+  - Agregadas métricas agregadas de Sharpe
 
-2. **`dockerfiles/airflow/dags/e2_moderate_pipeline.py`**:
+2. **`dockerfiles/airflow/dags/E2/e2_moderate_pipeline.py`**:
    - Mismos cambios que E2 Simple para mantener consistencia
 
 3. **`README_E2_SIMPLE.md`**:
@@ -82,11 +77,9 @@ También se agregaron métricas agregadas de **Sharpe** y **Decision Score**:
 
 ```bash
 # Validar sintaxis de ambos DAGs
-python -m py_compile dockerfiles/airflow/dags/e2_simple_pipeline.py
-python -m py_compile dockerfiles/airflow/dags/e2_moderate_pipeline.py
+python -m py_compile dockerfiles/airflow/dags/E2/e2_simple_pipeline.py
+python -m py_compile dockerfiles/airflow/dags/E2/e2_moderate_pipeline.py
 
-# Probar lógica de targets
-python test_e2_targets.py
 ```
 
 **Output esperado**:
@@ -99,9 +92,6 @@ python test_e2_targets.py
   sharpe_mean: 1.400
   → sharpe_target_min (param): 1.0 ⭐
 
-✓ Decision Score Metrics:
-  decision_score_mean: 0.760
-  → decision_score_threshold (param): 0.7 ⭐
 ```
 
 ## Beneficios

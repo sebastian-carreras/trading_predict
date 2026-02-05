@@ -301,7 +301,7 @@ def train_e2_with_mlflow(**context):
     successful_results = [r for r in results if r["status"] == "success" and r.get("ic") is not None]
     ic_values = [r["ic"] for r in successful_results]
     sharpe_values = [r["sharpe"] for r in successful_results if r.get("sharpe") is not None]
-    decision_scores = [r["decision_score"] for r in successful_results if r.get("decision_score") is not None]
+    
     
     # Targets/thresholds de las métricas (desde config)
     decision_cfg = config.get("decision", {})
@@ -321,10 +321,6 @@ def train_e2_with_mlflow(**context):
         mlflow.log_artifact(str(summary_path))
         mlflow.log_metric("total_tickers", len(tickers))
         mlflow.log_metric("successful_tickers", len(successful_results))
-        
-            # Contar señales de decisión
-            buy_signals = sum(1 for r in successful_results if r.get("decision_signal") == "buy")
-            mlflow.log_metric("decision_buy_signals", buy_signals)
         
         # Métricas agregadas de IC
         if ic_values:
@@ -347,15 +343,6 @@ def train_e2_with_mlflow(**context):
             # Loggear target
             mlflow.log_param("sharpe_target_min", targets['sharpe_min'])
         
-        # Métricas agregadas de Decision Score
-        if decision_scores:
-            mlflow.log_metric("decision_score_mean", float(sum(decision_scores) / len(decision_scores)))
-            mlflow.log_metric("decision_score_median", float(sorted(decision_scores)[len(decision_scores) // 2]))
-            mlflow.log_metric("decision_score_min", float(min(decision_scores)))
-            mlflow.log_metric("decision_score_max", float(max(decision_scores)))
-            # Loggear threshold
-            decision_threshold = float(decision_cfg.get("threshold", 0.70))
-            mlflow.log_param("decision_score_threshold", decision_threshold)
     
     context['task_instance'].xcom_push(key='run_dir', value=str(out_dir))
     return f"Entrenados {len(results)} modelos E2"

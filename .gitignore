@@ -220,3 +220,23 @@ reports/tables/**
 
 # Airflow logs
 dockerfiles/airflow/logs/**
+
+# Otros archivos temporales y de sistema
+*.swp
+*.swo
+*~
+
+# Configuración de Jupyter
+.jupyter/
+
+# Configuración de PyCharm
+.idea/
+
+# Archivos de logs generales
+*.log
+
+# Otros archivos temporales
+.DS_Store
+.vscode/
+mlflow.db
+optuna_studies.db

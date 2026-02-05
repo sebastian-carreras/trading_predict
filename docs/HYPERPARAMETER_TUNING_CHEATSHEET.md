@@ -161,7 +161,7 @@ reports/hyperparameter_optimization/
 
 ## Airflow
 
-- DAG: [dockerfiles/airflow/dags/e1_optuna_tuning.py](dockerfiles/airflow/dags/e1_optuna_tuning.py)
+- DAG: [dockerfiles/airflow/dags/E1/e1_optuna_tuning.py](dockerfiles/airflow/dags/E1/e1_optuna_tuning.py)
 - Configura tickers, rangos y conexión MLflow desde `Params` antes de ejecutar
 - Revisa XCom `cli_command` para copiar el comando exacto en terminal
 

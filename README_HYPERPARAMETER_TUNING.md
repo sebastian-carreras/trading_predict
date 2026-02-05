@@ -310,7 +310,7 @@ python scripts/optimization/optimize_e1_hyperparameters.py --help
 
 ## Orquestación con Airflow
 
-La DAG [dockerfiles/airflow/dags/e1_optuna_tuning.py](dockerfiles/airflow/dags/e1_optuna_tuning.py) permite lanzar la optimización desde la UI de Airflow sin tocar consola.
+La DAG [dockerfiles/airflow/dags/E1/e1_optuna_tuning.py](dockerfiles/airflow/dags/E1/e1_optuna_tuning.py) permite lanzar la optimización desde la UI de Airflow sin tocar consola.
 
 - **Activación**: copia el archivo al volumen de DAGs del scheduler (`docker compose --profile airflow up -d` ya lo incluye). El proyecto se monta en `/opt/airflow` por defecto; ajusta la variable `TRADING_PREDICT_ROOT` si usas otra ruta.
 - **Parámetros disponibles** (`Params` en la UI): config_path, n_trials, study_name, timeout_seconds, mlflow_uri, output_dir, tickers, single_ticker, quick_mode, batch_sizes y todos los overrides (`tau_*`, `dropout_*`, `learning_rate_*`, `gru_units_*`).

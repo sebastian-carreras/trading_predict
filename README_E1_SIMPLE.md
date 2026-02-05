@@ -38,11 +38,25 @@ cat runs/e1_simple/*/summary_all.csv
    - SELL si predicción ≤ tau_sell (defecto 0.00)
 4. **Ejecutar backtest** con esas señales → obtener Sharpe, CAGR, etc.
 
+
 ### 3. Métricas Calculadas
 - **IC (Information Coefficient):** correlación Spearman predicción-realidad. Mayor = mejor.
 - **Directional Accuracy:** % aciertos de signo. Mayor = mejor.
 - **Sharpe:** retorno/riesgo del backtest. Mayor = mejor.
 - **MAE/RMSE:** error de predicción. Menor = mejor.
+
+#### ¿Cómo se complementan estas métricas?
+
+Las métricas de predicción (MAE, RMSE, Directional Accuracy, IC) evalúan la calidad del modelo para anticipar retornos:
+- **MAE/RMSE**: Miden el error promedio de las predicciones. Menor error implica que el modelo predice retornos más cercanos a la realidad, pero no garantiza que esas predicciones sean útiles para ganar dinero.
+- **Directional Accuracy**: Indica qué porcentaje de veces el modelo acierta la dirección (sube/baja). Es útil, pero puede ser engañoso si el modelo acierta en movimientos pequeños y falla en los grandes.
+- **Information Coefficient (IC)**: Mide la correlación entre predicción y realidad. Un IC alto sugiere que el modelo captura bien la señal, pero no necesariamente que la estrategia sea rentable después de costos.
+
+Las métricas de trading (Sharpe, max drawdown) resumen el impacto final de todas las decisiones (aciertos, errores y costos) en el capital:
+- **Sharpe**: Mide el retorno ajustado por riesgo. Un Sharpe mínimo asegura que la estrategia no solo gana, sino que lo hace de forma eficiente y consistente.
+- **Max drawdown**: Mide la peor caída desde un pico de capital. Limitar el drawdown protege contra pérdidas grandes y prolongadas.
+
+Por eso, aunque un modelo tenga buen MAE/RMSE/IC, si el Sharpe es bajo o el drawdown es alto, la estrategia no es viable. Idealmente, todas las métricas deberían ser buenas: las de predicción aseguran que el modelo tiene sentido, y las de trading que es útil en la práctica.
 
 ### 4. Targets (Umbrales de Referencia)
 - IC ≥ 0.05
@@ -51,34 +65,20 @@ cat runs/e1_simple/*/summary_all.csv
 - MAE ≤ 0.03
 - RMSE ≤ 0.05
 
-### 5. Decision Score (Señal Final BUY/HOLD)
-**Normaliza cada métrica vs target:**
-- Mayor-es-mejor (IC, DirAcc, Sharpe): componente = valor / target
-- Menor-es-mejor (MAE, RMSE): componente = target / valor
-- Clipea a [0, 1.5] para evitar dominación
-- Pondéra: IC×0.25 + DirAcc×0.20 + Sharpe×0.30 + MAE×0.15 + RMSE×0.10
-- **Señal:** score ≥ 0.70 → BUY; < 0.70 → HOLD
 
-**¿Por qué clipping a 1.5?** Evita que un valor extremo (p.ej. IC=0.5) domine el score y esconda debilidades en otras métricas.
 
-**¿Por qué ponderado?** Combina calidad predictiva (IC, DirAcc), precisión (MAE, RMSE) y valor económico (Sharpe).
-
-### 6. Resumen Operativo
+### 5. Resumen Operativo
 ```
 Datos (180d) → GRU → Predicción retorno
                   ↓
             Backtest (tau_buy/sell)
                   ↓
             Calcular IC, DirAcc, Sharpe, MAE, RMSE
-                  ↓
-            Normalizar vs targets + ponderar
-                  ↓
-            Decision Score
-                  ↓
-            score ≥ 0.70 → BUY
+      ↓
+    Resumen de métricas
 ```
 
-Resultados guardados en `summary_all.csv` con **métricas + targets** para comparación rápida.
+Resultados guardados en `summary_all.csv` con métricas para comparación rápida.
 
 ---
 
@@ -89,7 +89,6 @@ Resultados guardados en `summary_all.csv` con **métricas + targets** para compa
 | **Tiempo/ticker** | ~1 min | ~5 min |
 | **Validación** | Time split (70/15/15) | Walk-forward (5 folds) |
 | **GRU** | 1 capa (64 units) | 2 capas (128→64) |
-| **Decision score** | 5 métricas fijas | 4-6 por perfil |
 | **Complejidad** | Baja | Media-Alta |
 | **Uso ideal** | Dev/testing/baseline | Producción |
 
@@ -112,62 +111,6 @@ Output(1) - Predicción retorno 90d
 - ✅ 2x más rápido de entrenar
 - ✅ Menos propenso a overfitting
 - ✅ Suficiente para horizonte 90 días
-
----
-
-## Decision Score (5 métricas)
-
-Combina métricas ML y trading para generar señal BUY/HOLD:
-
-```yaml
-decision:
-  targets:
-    ic_min: 0.05                    # Information Coefficient (Spearman)
-    directional_accuracy_min: 0.55  # % predicciones correctas
-    sharpe_min: 1.0                 # Sharpe ratio del backtest
-    mae_max: 0.03                   # Mean Absolute Error
-    rmse_max: 0.05                  # Root Mean Squared Error
-  
-  weights:
-    ic: 0.25                        # ML: correlación predicción-real
-    directional_accuracy: 0.20      # ML: acierto direccional
-    sharpe: 0.30                    # Trading: retorno/riesgo
-    mae: 0.15                       # ML: error absoluto
-    rmse: 0.10                      # ML: error cuadrático
-  
-  threshold: 0.70                   # Score ≥ 0.70 → BUY
-```
-
-### Cálculo
-
-Para cada métrica:
-- **"Mayor es mejor"** (IC, DA, Sharpe): componente = valor / target
-- **"Menor es mejor"** (MAE, RMSE): componente = target / valor
-- Cada componente se recorta a [0, 1.5]
-- Score final = suma ponderada de componentes
-
-**Señal:**
-- `decision_score ≥ 0.70` → **BUY**
-- `decision_score < 0.70` → **HOLD**
-
-### Ejemplo Real
-
-**Métricas obtenidas:**
-- IC = 0.273, Dir Acc = 0.508, Sharpe = 0.68
-- MAE = 0.163, RMSE = 0.186
-
-**Componentes:**
-- IC: 0.273/0.05 = 5.46 → 1.5 (clipped)
-- Dir Acc: 0.508/0.55 = 0.92
-- Sharpe: 0.68/1.0 = 0.68
-- MAE: 0.03/0.163 = 0.18
-- RMSE: 0.05/0.186 = 0.27
-
-**Score:**
-```
-0.25×1.5 + 0.20×0.92 + 0.30×0.68 + 0.15×0.18 + 0.10×0.27 = 0.86
-```
-→ **BUY** ✅ (0.86 ≥ 0.70)
 
 ---
 
@@ -219,7 +162,6 @@ Benchmark: SPY (2515 días)
   Entrenando GRU [64]...
   ✓ Epochs: 34/100 | Val Loss: 0.194798
   ✓ MAE=0.1628 RMSE=0.1862 IC=0.273 Dir=50.8% Sharpe=0.68
-  ✓ Decision score 0.818 (threshold 0.70) → BUY
   ✓ Modelo guardado: AAPL_model.pth
 
 ============================================================
@@ -254,7 +196,6 @@ runs/e1_simple/20260118_004042/
 - Datos: `ticker`, `n_samples`, `n_train`, `n_val`, `n_test`
 - ML: `ml_mae`, `ml_rmse`, `ml_ic`, `ml_directional_accuracy`
 - Backtest: `bt_sharpe`, `bt_cagr`, `bt_max_drawdown`, `bt_num_trades`
-- Decision: `decision_score`, `decision_signal` (buy/hold), `decision_threshold`
 
 **`{ticker}_predictions.csv`**:
 ```csv
@@ -296,23 +237,6 @@ strategies:
       allow_short: false
       max_position: 1.0
 
-decision:
-  targets:
-    ic_min: 0.05
-    directional_accuracy_min: 0.55
-    sharpe_min: 1.0
-    mae_max: 0.03
-    rmse_max: 0.05
-  
-  weights:
-    ic: 0.25
-    directional_accuracy: 0.20
-    sharpe: 0.30
-    mae: 0.15
-    rmse: 0.10
-  
-  threshold: 0.70
-
 costs:
   daily_round_trip_bps: 10    # 10 bps = 0.1% costos transacción
 ```
@@ -321,19 +245,7 @@ costs:
 
 ## 🔧 Personalización
 
-### 1. Ajustar targets del decision score
-
-Para ser más exigente:
-```yaml
-decision:
-  targets:
-    ic_min: 0.08              # IC más alto
-    sharpe_min: 1.5           # Sharpe más alto
-    mae_max: 0.02             # Error más bajo
-  threshold: 0.80             # Umbral más estricto
-```
-
-### 2. Modificar arquitectura GRU
+### 1. Modificar arquitectura GRU
 
 Para modelo más grande:
 ```yaml
@@ -345,17 +257,23 @@ strategies:
       dropout: 0.3            # Más regularización
 ```
 
-### 3. Cambiar pesos decision score
+### 2. Ajustar thresholds de señales
 
-Para priorizar trading sobre ML:
+Para cambiar la sensibilidad de entradas/salidas:
 ```yaml
-decision:
-  weights:
-    sharpe: 0.50              # 50% peso a Sharpe
-    ic: 0.20
-    directional_accuracy: 0.15
-    mae: 0.10
-    rmse: 0.05
+strategies:
+  e1_simple:
+    thresholds:
+      tau_buy: 0.06
+      tau_sell: 0.00
+```
+
+### 3. Ajustar costos de transacción
+
+Para escenarios más conservadores:
+```yaml
+costs:
+  daily_round_trip_bps: 20
 ```
 
 ---
@@ -423,7 +341,7 @@ docker compose exec -T airflow-scheduler airflow dags trigger \
 ### MLflow Tracking
 
 - **Experiment:** "E1_Simple_Strategy"
-- **Métricas por ticker:** mae, rmse, ic, directional_accuracy, bt_sharpe, bt_cagr, bt_max_drawdown, decision_score
+- **Métricas por ticker:** mae, rmse, ic, directional_accuracy, bt_sharpe, bt_cagr, bt_max_drawdown
 - **Parámetros:** strategy, ticker, lookback_days, horizon_days, gru_units, etc.
 - **Artifacts:** models/, predictions/, backtest/
 - **Run summary:** summary_all.csv + métricas agregadas (IC mean/median/min/max)
@@ -485,12 +403,12 @@ docker compose exec -T airflow-scheduler airflow dags trigger \
 ## 💡 Tips
 
 1. **Empieza con E1 Simple** - Itera rápido
-2. **Compara decision_scores** - Simple vs Conservative deberían ser similares
-3. **Analiza summary_all.csv** - Distribución de scores entre tickers
+2. **Compara métricas clave** - Simple vs Conservative deberían ser consistentes
+3. **Analiza summary_all.csv** - Distribución de métricas entre tickers
 4. **Revisa backtest CSV** - Equity curve y drawdowns
 5. **Skip download/clean** - Para experimentos rápidos
 
 ---
 
-**Última actualización:** Enero 18, 2026  
-**Versión:** 2.0 (actualizado con sanitización métricas + sin decision_components en MLflow)
+**Última actualización:** Febrero 2, 2026  
+**Versión:** 2.1 (removido Decision Score en E1 Simple)

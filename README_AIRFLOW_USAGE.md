@@ -6,6 +6,8 @@
 - [E1 Simple (GRU simplificado)](#e1-simple-pipeline---ejecución-selectiva) - Pipeline rápido
 - [E1 Baseline (Regresión Lineal)](#e1-baseline-linear-regression---comparación) - Baseline para comparación
 
+**Ubicación de DAGs**: [dockerfiles/airflow/dags](dockerfiles/airflow/dags) con subcarpetas [E1](dockerfiles/airflow/dags/E1), [E2](dockerfiles/airflow/dags/E2), [E3](dockerfiles/airflow/dags/E3), [E4](dockerfiles/airflow/dags/E4). Airflow escanea subcarpetas automáticamente.
+
 ---
 
 ## E1 Conservative Pipeline - Ejecución Selectiva

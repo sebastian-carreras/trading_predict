@@ -57,7 +57,7 @@ Output (1): predicción de retorno a 20 días
 | Archivo | Propósito | Estado |
 |---------|-----------|--------|
 | [src/train_e2_simple_pipeline.py](src/train_e2_simple_pipeline.py) | Pipeline simplificado (sin walk-forward) | ✅ Implementado |
-| [dockerfiles/airflow/dags/e2_simple_pipeline.py](dockerfiles/airflow/dags/e2_simple_pipeline.py) | DAG Airflow para E2 Simple | ✅ Implementado |
+| [dockerfiles/airflow/dags/E2/e2_simple_pipeline.py](dockerfiles/airflow/dags/E2/e2_simple_pipeline.py) | DAG Airflow para E2 Simple | ✅ Implementado |
 | [src/config/base.yaml](src/config/base.yaml) | Configuración E2 Simple (added) | ✅ Actualizado |
 | [src/features/build_features_e2.py](src/features/build_features_e2.py) | Features compartidas (E2 Moderate & Simple) | ✅ Existente |
 | [src/models/e2_lstm.py](src/models/e2_lstm.py) | Modelo LSTM PyTorch | ✅ Existente |
@@ -129,7 +129,7 @@ runs/e2_simple/<timestamp>/
 │   ├── NVDA_predictions.csv      # Predicciones (y_true, y_pred)
 │   ├── NVDA_backtest.csv         # Resultados del backtest
 │   ├── NVDA_scaler.csv           # Escaladores (mean, std) de features
-│   ├── NVDA_summary.csv          # Métricas por ticker (ml + bt + decision)
+│   ├── NVDA_summary.csv          # Métricas por ticker (ml + bt)
 │   └── NVDA_model.pth            # Modelo LSTM entrenado (PyTorch)
 ├── GOOGL/
 │   └── ...
@@ -145,7 +145,6 @@ runs/e2_simple/<timestamp>/
 - `epochs_ran`, `val_loss`: Entrenamiento
 - `ml_mae`, `ml_rmse`, `ml_directional_accuracy`, `ml_ic`: Métricas ML
 - `bt_sharpe`, `bt_cagr`, `bt_max_drawdown`, `bt_calmar`, `bt_profit_factor`, etc.: Métricas trading
-- `decision_score`, `decision_signal`: Scoring y señal final
 
 ## 🚀 Comandos de Uso
 
@@ -203,18 +202,16 @@ El DAG de E2 Simple loguea en MLflow:
 - Model: `lstm_units`, `lookback_days`, `horizon_days`, `dropout`, `epochs`, etc.
 - Filters: `rsi14_min`, `rsi14_max`, `macd_confirmation`, `volume_zscore_window`, `volume_zscore_min`
 - Thresholds: `tau_buy`, `tau_sell`
-- Targets: `ic_target_min`, `sharpe_target_min`, `decision_score_threshold` ⭐
+- Targets: `ic_target_min`, `sharpe_target_min` ⭐
 
 **Metrics (12+)**:
 - ML: `mae`, `rmse`, `ic`, `directional_accuracy`
 - Backtest: `sharpe`, `cagr`, `max_drawdown`, `calmar`, `profit_factor`, `win_rate`, `num_trades`
-- Decision: `decision_score`, `decision_signal`
 
 **Summary Run Metrics** (agregadas de todos los tickers):
 - `ic_mean`, `ic_median`, `ic_min`, `ic_max`, `ic_positive_count`, `ic_above_threshold`
 - `sharpe_mean`, `sharpe_median`, `sharpe_min`, `sharpe_max`, `sharpe_above_threshold`
-- `decision_score_mean`, `decision_score_median`, `decision_score_min`, `decision_score_max`
-- `decision_buy_signals`, `total_tickers`, `successful_tickers`
+- `total_tickers`, `successful_tickers`
 
 **Artifacts (3+)**:
 - `predictions.csv`: Predicciones LSTM con precios reales
@@ -225,7 +222,6 @@ El DAG de E2 Simple loguea en MLflow:
 Los valores objetivo/mínimos se loguean como **params** en el Summary Run para facilitar la comparación:
 - `ic_target_min`: 0.05 (IC mínimo esperado)
 - `sharpe_target_min`: 1.0 (Sharpe Ratio mínimo esperado)
-- `decision_score_threshold`: 0.7 (threshold para señal de compra)
 
 ```bash
 # Ver runs en MLflow UI

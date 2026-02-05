@@ -18,6 +18,18 @@ import pandas as pd
 from ..utils import ensure_dir, load_yaml, project_root
 
 
+def _is_argentino(ticker: str) -> bool:
+    return (
+        ticker.endswith(".BA") or
+        ticker.startswith("AL") or
+        ticker.startswith("GD") or
+        ticker.startswith("AE") or
+        ticker.startswith("AY") or
+        ticker.startswith("TV") or
+        ticker.startswith("T2")
+    )
+
+
 def download_daily_ohlcv(
     tickers: Iterable[str],
     out_dir: Path,
@@ -52,6 +64,13 @@ def download_daily_ohlcv(
     written: list[Path] = []
     skipped: list[str] = []
     failed: list[str] = []
+
+    try:
+        from dotenv import load_dotenv  # type: ignore
+
+        load_dotenv()  # Cargar variables desde .env
+    except Exception:
+        pass  # python-dotenv no instalado o fallo al cargar
 
     # Verificar si IOL está disponible (credenciales configuradas)
     iol_available = use_iol_fallback and os.getenv("IOL_USERNAME") and os.getenv("IOL_PASSWORD")
@@ -125,9 +144,37 @@ def download_daily_ohlcv(
                 if len(df) < 252:
                     print(f"  ⚠️  {ticker} tiene menos de 1 año de datos ({len(df)} días)")
 
-                df.to_csv(out_path, index=False)
+                chosen_df = df
+                chosen_source = "YFinance"
+
+                if _is_argentino(ticker) and iol_available:
+                    try:
+                        from .iol_api import IOLClient
+
+                        years = 10
+                        if period.endswith("y"):
+                            try:
+                                years = int(period[:-1])
+                            except ValueError:
+                                pass
+
+                        from datetime import datetime, timedelta
+
+                        end_date = datetime.now().strftime("%Y-%m-%d")
+                        start_date = (datetime.now() - timedelta(days=years * 365)).strftime("%Y-%m-%d")
+
+                        client = IOLClient()
+                        iol_df = client.get_historical_data(ticker, start_date, end_date)
+
+                        if not iol_df.empty and len(iol_df) > len(chosen_df):
+                            chosen_df = iol_df
+                            chosen_source = "IOL"
+                    except Exception as e:
+                        print(f"  ⚠️  IOL comparación falló para {ticker}: {e}")
+
+                chosen_df.to_csv(out_path, index=False)
                 written.append(out_path)
-                print(f"  ✓ YFinance: {len(df)} días guardados en {out_path.name}")
+                print(f"  ✓ {chosen_source}: {len(chosen_df)} días guardados en {out_path.name}")
                 success = True
             else:
                 print(f"  ⚠️  YFinance: Sin datos para {ticker}")
@@ -137,15 +184,7 @@ def download_daily_ohlcv(
         
         # Si Yahoo Finance falló, intentar IOL para activos argentinos
         # Incluye: .BA (acciones), bonos soberanos (AL*, GD*, AE*), etc.
-        is_argentino = (
-            ticker.endswith(".BA") or
-            ticker.startswith("AL") or
-            ticker.startswith("GD") or
-            ticker.startswith("AE") or
-            ticker.startswith("AY") or
-            ticker.startswith("TV") or
-            ticker.startswith("T2")
-        )
+        is_argentino = _is_argentino(ticker)
         
         if not success and is_argentino and iol_available:
             print(f"  🔄 Intentando fallback con IOL API...")

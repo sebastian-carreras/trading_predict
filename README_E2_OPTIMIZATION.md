@@ -575,5 +575,5 @@ El DAG guarda el comando CLI exacto en XCom:
 - Script: [scripts/optimization/optimize_e2_hyperparameters.py](scripts/optimization/optimize_e2_hyperparameters.py)
 - Pipeline: [src/train_e2_pipeline.py](src/train_e2_pipeline.py)
 - Config: [src/config/base.yaml](src/config/base.yaml)
-- DAG Training: [dockerfiles/airflow/dags/e2_moderate_pipeline.py](dockerfiles/airflow/dags/e2_moderate_pipeline.py)
-- **DAG Optuna**: [dockerfiles/airflow/dags/e2_optuna_tuning.py](dockerfiles/airflow/dags/e2_optuna_tuning.py) ← **Nuevo**
+- DAG Training: [dockerfiles/airflow/dags/E2/e2_moderate_pipeline.py](dockerfiles/airflow/dags/E2/e2_moderate_pipeline.py)
+- **DAG Optuna**: [dockerfiles/airflow/dags/E2/e2_optuna_tuning.py](dockerfiles/airflow/dags/E2/e2_optuna_tuning.py) ← **Nuevo**

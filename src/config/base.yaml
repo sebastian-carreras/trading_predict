@@ -107,6 +107,7 @@ universe:
       - "SPY"
       - "QQQ"
       - "AMD"
+      - "MSFT"
 
 costs:
   # Costos round-trip (entrada+salida). Usar en backtest neto.
@@ -122,69 +123,6 @@ splits:
     e2: 20
     e4: 0
     e3: 0
-
-  # Decision scoring
-  # Preferred (new): multi-profile configuration. Strategies pick a profile; profiles define targets/weights/threshold.
-  strategy_profile:
-    e1_conservative: conservative
-    e1_simple: conservative
-    e2_moderate: moderate
-    e2_simple: moderate
-    e3_intraday: aggressive
-
-  decision_profiles:
-    conservative:
-      threshold: 0.65
-      target_metrics:
-        sortino_min: 1.0
-        calmar_min: 1.0
-        max_drawdown_max: 0.20
-        directional_accuracy_min: 0.58
-      weights:
-        sortino: 0.35
-        calmar: 0.25
-        max_drawdown: 0.25
-        directional_accuracy: 0.15
-
-    moderate:
-      threshold: 0.60
-      target_metrics:
-        cagr_min: 0.12
-        profit_factor_min: 1.30
-        hit_rate_min: 0.55
-        sharpe_min: 0.80
-      weights:
-        cagr: 0.30
-        profit_factor: 0.30
-        hit_rate: 0.20
-        sharpe: 0.20
-
-    aggressive:
-      threshold: 0.55
-      target_metrics:
-        sharpe_min: 1.00
-        profit_factor_min: 1.40
-        hit_rate_min: 0.52
-        max_drawdown_max: 0.30
-      weights:
-        sharpe: 0.35
-        profit_factor: 0.30
-        hit_rate: 0.20
-        max_drawdown: 0.15
-
-  # Legacy fallback (old): if no profile config exists, these are used.
-  target_metrics:
-    mae_max: 0.03
-    ic_min: 0.05
-    sharpe_min: 1.0
-    directional_accuracy_min: 0.58
-  decision_score:
-    threshold: 0.75
-    weights:
-      mae: 0.35
-      ic: 0.25
-      sharpe: 0.25
-      directional_accuracy: 0.15
 
 features:
   price:
@@ -521,20 +459,3 @@ reporting:
     ml: ["mae", "rmse", "directional_accuracy"]
     trading: ["cagr", "sharpe", "sortino", "max_drawdown", "calmar", "profit_factor", "turnover", "hit_rate"]
   output_dir: "reports"
-
-# Decision score simplificado para e1_simple
-# Solo 5 métricas: IC, directional_accuracy, sharpe, MAE, RMSE
-decision:
-  targets:
-    ic_min: 0.05
-    directional_accuracy_min: 0.55
-    sharpe_min: 1.0
-    mae_max: 0.03
-    rmse_max: 0.05
-  weights:
-    ic: 0.25
-    directional_accuracy: 0.20
-    sharpe: 0.30
-    mae: 0.15
-    rmse: 0.10
-  threshold: 0.70  # Umbral para señal BUY

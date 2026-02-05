@@ -32,8 +32,8 @@
 
 ### Target Metrics Enhancement
 - **[docs/E2_TARGET_METRICS_ENHANCEMENT.md](docs/E2_TARGET_METRICS_ENHANCEMENT.md)** - Target metrics en MLflow Summary
-  - Logging de valores objetivo (ic_min, sharpe_min, decision_threshold)
-  - Métricas agregadas de Sharpe y Decision Score
+  - Logging de valores objetivo (ic_min, sharpe_min)
+  - Métricas agregadas de Sharpe
   - Comparación rápida: métricas reales vs targets
   - Trazabilidad completa de objetivos en MLflow
 
@@ -82,8 +82,8 @@
 - `src/train_e2_simple_pipeline.py` - Pipeline E2 Simple (time split)
 
 ### Airflow DAGs
-- `dockerfiles/airflow/dags/e2_moderate_pipeline.py` - DAG E2 Moderate
-- `dockerfiles/airflow/dags/e2_simple_pipeline.py` - DAG E2 Simple
+- `dockerfiles/airflow/dags/E2/e2_moderate_pipeline.py` - DAG E2 Moderate
+- `dockerfiles/airflow/dags/E2/e2_simple_pipeline.py` - DAG E2 Simple
 
 ### Features & Model
 - `src/features/build_features_e2.py` - Features E2 (compartidas por Moderate & Simple)

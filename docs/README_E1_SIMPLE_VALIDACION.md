@@ -48,7 +48,6 @@ Outputs en `runs/e1_simple/<timestamp>/`.
 ### Ejemplo de resultados (run: 20260124_175222)
 - ML: MAE=0.1632, RMSE=0.1866, IC=0.270, DirAcc=50.8%.
 - Backtest: total_return=15.19%, CAGR=12.31%, Sharpe=0.68, Sortino=0.68, max_drawdown=18.96%, Calmar=0.65, profit_factor=1.18, hit_rate=53.99%, trades=3, avg_turnover=0.0098, costs=0.0015, time_in_market=53.4%.
-- Decision score=0.818 (threshold 0.70) -> BUY.
 
 ## Paso 4: Repetir para reproducibilidad
 Ejecuta el mismo comando del paso 3 una segunda vez. Debes obtener metricas identicas o casi identicas. Para comparar los dos `summary_all.csv`:
@@ -76,10 +75,62 @@ PY
 - `AAPL/AAPL_scaler.csv`: medias y desvios de features.
 
 ## Paso 6: Checks rapidos de calidad
-- Sharpe y CAGR positivos y consistentes con los targets del decision score.
+- Sharpe y CAGR positivos y consistentes con los umbrales de referencia.
 - max_drawdown razonable (<~20% en este ejemplo).
 - hit_rate y profit_factor > 1 en el backtest.
 - Sin NaNs en predicciones ni en backtest.
+
+---
+
+# Proceso sugerido (baseline locking + validacion)
+
+## 1) Baseline locking
+- Fijar dataset (snapshot en `data/snapshots/`) y semilla `project.seed`.
+- Fijar costos en `src/config/base.yaml` (`costs.daily_round_trip_bps`).
+- Fijar split temporal (E1 Simple ya usa 70/15/15 time split).
+- Definir umbrales objetivo (Sharpe mínimo, Max DD máximo, etc.).
+
+## 2) Backtest completo y artefactos
+- Ejecutar el pipeline y guardar `summary_all.csv`, backtests y preds (Paso 3 y 5).
+- Guardar run completo en `runs/e1_simple/<timestamp>/`.
+
+## 3) Guardrails automatizados (rápidos)
+Ejecuta el validador sobre el último run:
+```bash
+python scripts/evaluation/e1_simple_guardrails.py \
+  --config src/config/base.yaml \
+  --sharpe-min 0.8 \
+  --max-drawdown-max 0.20
+```
+
+Si querés validar un run específico:
+```bash
+python scripts/evaluation/e1_simple_guardrails.py \
+  --run-dir runs/e1_simple/20260124_175222 \
+  --sharpe-min 0.8 \
+  --max-drawdown-max 0.20
+```
+
+## 4) Sensibilidad a costos (realismo)
+- Repetir el pipeline con 2-3 niveles de costos (ej. 10/20/30 bps).
+- Comparar Sharpe, CAGR y Max DD con cada supuesto.
+
+## 5) Robustez por segmento
+- Revisar `summary_all.csv` por ticker.
+- Identificar si el PnL viene de pocos activos o períodos.
+
+## 6) Tests unitarios rápidos
+- Tests incluidos en `tests/test_e1_simple_guardrails.py`.
+- Ejecutar con:
+```bash
+pytest -q tests/test_e1_simple_guardrails.py
+```
+
+## 7) Iteración controlada
+- Probar 3-5 variaciones simples (tau_buy, lookback, horizon).
+- Cambiar una cosa por vez y comparar métricas.
+
+---
 
 ## Troubleshooting
 - Si las metricas difieren entre corridas, fija determinismo adicional en PyTorch (ej. `torch.use_deterministic_algorithms(True)` y `CUBLAS_WORKSPACE_CONFIG=:16:8` antes de correr).

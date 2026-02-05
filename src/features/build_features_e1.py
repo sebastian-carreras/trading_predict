@@ -35,10 +35,11 @@ def compute_e1_features(df: pd.DataFrame, benchmark_df: pd.DataFrame | None = No
     # Estrategia: Capturar momentum y mean-reversion en diferentes horizontes temporales
     
     log_close = np.log(close)
+    # 
     # ret_1d: Retorno logarítmico diario
     # Propósito: Captura la velocidad de cambio del precio día a día
     # Estrategia: Detectar días de fuerte movimiento (posibles señales de continuación o reversión)
-    out["ret_1d"] = log_close.diff()
+    # out["ret_1d"] = log_close.diff()
 
     # Retornos rolling (momentum multi-horizonte)
     # OPTIMIZADO PARA LARGO PLAZO: Eliminamos ret_5d (ruido para horizon=90 días)
@@ -68,7 +69,7 @@ def compute_e1_features(df: pd.DataFrame, benchmark_df: pd.DataFrame | None = No
     #   - vol_4w alta → Mayor riesgo/oportunidad. Predicciones menos confiables, reducir tamaño de posición
     #   - vol_4w baja → Mercado estable. Predicciones más confiables, posible squeeze (breakout inminente)
     #   - Cambios en vol_4w indican cambios de régimen (calma → tormenta o viceversa)
-    out["vol_4w"] = out["ret_1d"].rolling(20).std()
+    out["vol_4w"] = log_close.diff().rolling(20).std()
     
     # vol_regime: Cambio de volatilidad (vol_4w actual vs vol_4w hace 4 semanas)
     # Propósito: Detectar expansión o contracción de volatilidad
@@ -83,10 +84,14 @@ def compute_e1_features(df: pd.DataFrame, benchmark_df: pd.DataFrame | None = No
     # Rango intradía y ATR (Average True Range)
     # Estrategia: Medir la amplitud real de movimiento (más robusto que solo high-low)
     
+    # ELIMINADA POR SER POCO ÚTIL PARA LARGO PLAZO:
     # range_pct: Rango intradía normalizado (high-low) / close
     # Propósito: Detectar días de alta volatilidad intradía
     # Estrategia: Días con range_pct alto → indecisión del mercado o fuerte disputa entre compradores/vendedores
-    out["range_pct"] = (high - low) / close
+    # range_pct alto (>3-5%) puede indicar reversión inminente o alta volatilidad
+    # range_pct bajo (<1%) indica mercado tranquilo
+    # range_pct es útil para ajustar stops y evaluar riesgo intradía
+    # out["range_pct"] = (high - low) / close
     
     # True Range: Máximo entre (high-low), (high-close_prev), (low-close_prev)
     # Propósito: Captura gaps y movimientos que el simple high-low no detecta
@@ -148,10 +153,11 @@ def compute_e1_features(df: pd.DataFrame, benchmark_df: pd.DataFrame | None = No
     #   - Cerca de 0 → precio en línea con tendencia de largo plazo (zona "justa")
     out["close_sma200_dist"] = (close / out["sma_200"]) - 1.0
 
+    # Eliminado por ser redundante con sma50 y sma50_sma200_ratio
     # ema_50: Exponential Moving Average de 50 días
     # Propósito: Similar a SMA(50) pero reacciona más rápido a cambios recientes
     # Estrategia: Usar junto con SMA(50) para detectar aceleración/desaceleración de tendencia
-    out["ema_50"] = close.ewm(span=50, adjust=False).mean()
+    # out["ema_50"] = close.ewm(span=50, adjust=False).mean()
 
     # MACD (Moving Average Convergence Divergence) - Indicador de momentum
     # Estrategia: Detectar cambios en fuerza, dirección, momentum y duración de tendencia
@@ -166,12 +172,14 @@ def compute_e1_features(df: pd.DataFrame, benchmark_df: pd.DataFrame | None = No
     #   - macd_line < 0 → EMA corto < EMA largo → momentum bajista
     #   - macd_line creciente → momentum acelerándose
     macd_line = ema12 - ema26
-    out["macd_line"] = macd_line
+    # Eliminado por ser redundante con macd_hist
+    # out["macd_line"] = macd_line
     
     # macd_signal: EMA(9) de la MACD line (línea de señal)
     # Propósito: Suavizar la MACD para generar señales más confiables
     macd_signal = macd_line.ewm(span=9, adjust=False).mean()
-    out["macd_signal"] = macd_signal
+    # Eliminado por ser redundante con macd_hist
+    # out["macd_signal"] = macd_signal
     
     # macd_hist: Histograma MACD (diferencia entre MACD line y signal)
     # Propósito: Medir divergencia entre momentum actual y su tendencia

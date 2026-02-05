@@ -13,6 +13,7 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 import mlflow
 import os
+import pandas as pd
 
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
@@ -33,7 +34,20 @@ dag = DAG(
     schedule_interval='0 1 * * *',  # Diario 1 AM (re-entrenar con datos frescos)
     catchup=False,
     tags=['trading', 'e3', 'intraday', 'lstm', 'ensemble'],
+    params={
+        "tickers": "",
+    },
 )
+
+
+def _parse_tickers_param(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [t.strip() for t in value.split(",") if t.strip()]
+    if isinstance(value, (list, tuple)):
+        return [str(t).strip() for t in value if str(t).strip()]
+    return []
 
 
 def download_intraday_data(**context):
@@ -48,12 +62,21 @@ def download_intraday_data(**context):
     root = Path("/opt/airflow")
     config = load_yaml(root / "src/config/base.yaml")
     
-    # Tickers E3
-    tickers = list(
-        config.get("universe", {})
-        .get("tickers_by_strategy", {})
-        .get("e3_intraday", [])
-    )
+    print("[E3][download] Iniciando descarga intraday...")
+
+    # Tickers E3 (params > dag_run.conf > base.yaml)
+    dag_run = context.get("dag_run")
+    conf = dag_run.conf if dag_run else {}
+    params = context.get("params", {})
+    tickers = _parse_tickers_param(conf.get("tickers") or params.get("tickers"))
+    if not tickers:
+        tickers = list(
+            config.get("universe", {})
+            .get("tickers_by_strategy", {})
+            .get("e3_intraday", [])
+        )
+    if not tickers:
+        raise ValueError("No se especificaron tickers para E3")
     
     out_dir = root / "data/raw/intraday"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -61,6 +84,9 @@ def download_intraday_data(**context):
     e3_cfg = config.get("strategies", {}).get("e3_intraday", {})
     period = e3_cfg.get("data", {}).get("period", "60d")
     
+    print(f"[E3][download] Tickers seleccionados: {tickers}")
+    print(f"[E3][download] Directorio raw: {out_dir}")
+
     # Download all tickers at once
     try:
         written_paths = download_ohlcv_5m(
@@ -75,12 +101,93 @@ def download_intraday_data(**context):
         print(f"⚠️ Error descargando tickers: {e}")
         downloaded = []
     
+    context['task_instance'].xcom_push(key='tickers_selected', value=tickers)
     context['task_instance'].xcom_push(key='tickers_downloaded', value=downloaded)
     return f"Descargados {len(downloaded)} tickers 5-min"
 
 
+def clean_intraday_data(**context):
+    """Task 2: Limpiar datos 5-min."""
+    import sys
+    sys.path.insert(0, '/opt/airflow')
+
+    from src.utils import load_yaml
+    from pathlib import Path
+
+    print("[E3][clean] Iniciando limpieza intraday...")
+
+    root = Path("/opt/airflow")
+    config = load_yaml(root / "src/config/base.yaml")
+
+    tickers_selected = context['task_instance'].xcom_pull(task_ids='download_intraday', key='tickers_selected')
+    tickers_downloaded = context['task_instance'].xcom_pull(task_ids='download_intraday', key='tickers_downloaded')
+    tickers = tickers_downloaded or tickers_selected
+    if not tickers:
+        return "No tickers to clean"
+
+    raw_dir = root / "data/raw/intraday"
+    clean_dir = root / "data/clean/intraday"
+    clean_dir.mkdir(parents=True, exist_ok=True)
+
+    required = {"open", "high", "low", "close", "volume"}
+    cleaned = []
+    skipped = []
+
+    print(f"[E3][clean] Tickers a limpiar: {tickers}")
+    print(f"[E3][clean] Directorio clean: {clean_dir}")
+
+    for ticker in tickers:
+        raw_path = raw_dir / f"{ticker}_5m.csv"
+        if not raw_path.exists():
+            print(f"⚠️  [E3][clean] Raw no encontrado: {raw_path.name}")
+            skipped.append(ticker)
+            continue
+
+        try:
+            df = pd.read_csv(raw_path)
+            if "timestamp" not in df.columns:
+                df = df.rename(columns={df.columns[0]: "timestamp"})
+            df["timestamp"] = pd.to_datetime(df["timestamp"], format='ISO8601', utc=True)
+            df = df.sort_values("timestamp")
+            df = df.drop_duplicates(subset=["timestamp"], keep="last")
+
+            # Normalizar columnas
+            rename_map = {
+                "Open": "open",
+                "High": "high",
+                "Low": "low",
+                "Close": "close",
+                "Adj Close": "adj_close",
+                "Volume": "volume",
+            }
+            df = df.rename(columns=rename_map)
+
+            missing = required.difference(df.columns)
+            if missing:
+                print(f"⚠️  [E3][clean] Faltan columnas {sorted(missing)} en {ticker}")
+                skipped.append(ticker)
+                continue
+
+            # Limpieza simple: forward-fill y drop NaNs residuales
+            df = df.set_index("timestamp")
+            df["volume"] = df["volume"].fillna(0)
+            df[["open", "high", "low", "close"]] = df[["open", "high", "low", "close"]].ffill()
+            df = df.dropna(subset=["open", "high", "low", "close", "volume"])
+
+            out_path = clean_dir / f"{ticker}_5m.csv"
+            df.reset_index().to_csv(out_path, index=False)
+            cleaned.append(ticker)
+            print(f"✓ [E3][clean] Limpiado {ticker}: {len(df)} filas")
+        except Exception as exc:
+            print(f"⚠️  [E3][clean] Error limpiando {ticker}: {exc}")
+            skipped.append(ticker)
+
+    context['task_instance'].xcom_push(key='tickers_cleaned', value=cleaned)
+    return f"Limpiados {len(cleaned)} tickers; skipped={len(skipped)}"
+
+
 def train_e3_with_mlflow(**context):
-    """Task 2: Entrenar ensemble E3 con MLflow."""
+    """Task 3: Entrenar ensemble E3 con MLflow."""
     import sys
     sys.path.insert(0, '/opt/airflow')
     
@@ -93,7 +200,10 @@ def train_e3_with_mlflow(**context):
     root = Path("/opt/airflow")
     config = load_yaml(root / "src/config/base.yaml")
     
-    tickers = context['task_instance'].xcom_pull(task_ids='download_intraday', key='tickers_downloaded')
+    tickers_cleaned = context['task_instance'].xcom_pull(task_ids='clean_intraday', key='tickers_cleaned')
+    tickers_downloaded = context['task_instance'].xcom_pull(task_ids='download_intraday', key='tickers_downloaded')
+    tickers_selected = context['task_instance'].xcom_pull(task_ids='download_intraday', key='tickers_selected')
+    tickers = tickers_cleaned or tickers_downloaded or tickers_selected
     if not tickers:
         return "No tickers to train"
     
@@ -106,6 +216,7 @@ def train_e3_with_mlflow(**context):
     os.environ["MLFLOW_EXPERIMENT_NAME"] = "E3_Intraday_Strategy"
     
     results = []
+    print(f"[E3][train] Tickers a entrenar: {tickers}")
     for ticker in tickers:
         ticker_out = out_base / ticker
         print(f"\n{'='*60}")
@@ -116,7 +227,7 @@ def train_e3_with_mlflow(**context):
             summary = run_for_ticker(
                 config=config,
                 ticker=ticker,
-                raw_dir=root / "data/raw/intraday",
+                raw_dir=root / "data/clean/intraday",
                 out_dir=ticker_out,
             )
             
@@ -177,6 +288,12 @@ task_download = PythonOperator(
     dag=dag,
 )
 
+task_clean = PythonOperator(
+    task_id='clean_intraday',
+    python_callable=clean_intraday_data,
+    dag=dag,
+)
+
 task_train = PythonOperator(
     task_id='train_e3_ensemble',
     python_callable=train_e3_with_mlflow,
@@ -184,4 +301,4 @@ task_train = PythonOperator(
 )
 
 # Flujo
-task_download >> task_train
+task_download >> task_clean >> task_train

@@ -286,15 +286,6 @@ def train_e1_with_mlflow(**context):
                     "bt_num_trades": sanitize_metric(result.get("bt_num_trades", 0)),
                 })
 
-                if result.get("decision_profile"):
-                    mlflow.log_param("decision_profile", result.get("decision_profile"))
-
-                if result.get("decision_score") is not None:
-                    mlflow.log_metric("decision_score", sanitize_metric(result.get("decision_score", 0)))
-                # No loguear componentes individuales del decision score
-                if result.get("decision_signal"):
-                    mlflow.log_param("decision_signal", result.get("decision_signal"))
-                
                 # Log modelo GRU como artifact
                 model_path = out_dir / ticker / f"{ticker}_model.pth"
                 if model_path.exists():
@@ -312,9 +303,6 @@ def train_e1_with_mlflow(**context):
                     "ic": result.get("ml_ic"),
                     "sharpe": result.get("bt_sharpe"),
                     "max_dd": result.get("bt_max_drawdown"),
-                    "decision_score": result.get("decision_score"),
-                    "decision_signal": result.get("decision_signal"),
-                    "decision_profile": result.get("decision_profile"),
                 })
                 
             except Exception as e:
@@ -334,8 +322,7 @@ def train_e1_with_mlflow(**context):
     successful_results = [r for r in results if r["status"] == "success" and r.get("ic") is not None]
     ic_values = [r["ic"] for r in successful_results]
     sharpe_values = [r.get("sharpe") for r in successful_results if isinstance(r.get("sharpe"), (int, float))]
-    decision_scores = [r.get("decision_score") for r in successful_results if isinstance(r.get("decision_score"), (int, float))]
-    buy_signals = sum(1 for r in successful_results if r.get("decision_signal") == "buy")
+    
     
     # Targets/thresholds desde config
     decision_cfg = config.get("decision", {})
@@ -353,7 +340,7 @@ def train_e1_with_mlflow(**context):
         mlflow.log_artifact(str(summary_path))
         mlflow.log_metric("total_tickers", len(tickers))
         mlflow.log_metric("successful_tickers", len(successful_results))
-        mlflow.log_metric("decision_buy_signals", float(buy_signals))
+        
         
         # Métricas agregadas de IC
         if ic_values:
@@ -373,11 +360,6 @@ def train_e1_with_mlflow(**context):
             mlflow.log_metric("sharpe_max", float(max(sharpe_values)))
             mlflow.log_metric("sharpe_above_threshold", sum(1 for s in sharpe_values if s > targets['sharpe_min']))
             mlflow.log_param("sharpe_target_min", targets['sharpe_min'])
-        if decision_scores:
-            mlflow.log_metric("decision_score_mean", float(sum(decision_scores) / len(decision_scores)))
-            mlflow.log_metric("decision_score_min", float(min(decision_scores)))
-            mlflow.log_metric("decision_score_max", float(max(decision_scores)))
-            mlflow.log_param("decision_score_threshold", float(decision_cfg.get("threshold", 0.70)))
     
     context['task_instance'].xcom_push(key='run_dir', value=str(out_dir))
     return f"Entrenados {len(results)} modelos"

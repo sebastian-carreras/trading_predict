@@ -20,7 +20,7 @@
   - Métricas ML + Trading
 
 ### 4. DAG de Airflow
-- **[dockerfiles/airflow/dags/e1_baseline_linear_regression.py](dockerfiles/airflow/dags/e1_baseline_linear_regression.py)**
+- **[dockerfiles/airflow/dags/E1/e1_baseline_linear_regression.py](dockerfiles/airflow/dags/E1/e1_baseline_linear_regression.py)**
   - Pipeline automatizado con MLflow tracking
   - Schedule: Lunes 3 AM
   - Comparación automática con GRU

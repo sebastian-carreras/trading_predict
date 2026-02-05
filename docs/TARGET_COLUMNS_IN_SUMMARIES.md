@@ -19,14 +19,14 @@ Added target columns to summary dicts in:
 ### DAG Files Enhanced
 
 Added target params logging to MLflow summary runs in:
-- `dockerfiles/airflow/dags/e1_simple_pipeline.py`
-- `dockerfiles/airflow/dags/e1_conservative_pipeline.py`
-- `dockerfiles/airflow/dags/e1_baseline_linear_regression.py`
-- `dockerfiles/airflow/dags/e2_simple_pipeline.py`
-- `dockerfiles/airflow/dags/e2_moderate_pipeline.py`
-- `dockerfiles/airflow/dags/e3_intraday_pipeline.py`
-- `dockerfiles/airflow/dags/e4_pairs_trading_pipeline.py`
-- `dockerfiles/airflow/dags/e4_monthly_recalibration.py`
+- `dockerfiles/airflow/dags/E1/e1_simple_pipeline.py`
+- `dockerfiles/airflow/dags/E1/e1_conservative_pipeline.py`
+- `dockerfiles/airflow/dags/E1/e1_baseline_linear_regression.py`
+- `dockerfiles/airflow/dags/E2/e2_simple_pipeline.py`
+- `dockerfiles/airflow/dags/E2/e2_moderate_pipeline.py`
+- `dockerfiles/airflow/dags/E3/e3_intraday_pipeline.py`
+- `dockerfiles/airflow/dags/E4/e4_pairs_trading_pipeline.py`
+- `dockerfiles/airflow/dags/E4/e4_monthly_recalibration.py`
 
 ## Target Columns Added
 
@@ -71,9 +71,9 @@ cointegration_pvalue_max,half_life_days_max
 
 ### Individual Ticker Summary (E1 Simple)
 ```csv
-ticker,ml_mae,ml_ic,bt_sharpe,decision_score,ic_target_min,sharpe_target_min,mae_target_max
-NVDA,0.0245,0.283,1.58,0.92,0.05,1.0,0.03
-AAPL,0.0312,0.156,0.87,0.65,0.05,1.0,0.03
+ticker,ml_mae,ml_ic,bt_sharpe
+NVDA,0.0245,0.283,1.58
+AAPL,0.0312,0.156,0.87
 ```
 
 ### MLflow Summary Run Params
@@ -81,7 +81,6 @@ AAPL,0.0312,0.156,0.87,0.65,0.05,1.0,0.03
 Params:
   ic_target_min: 0.05
   sharpe_target_min: 1.0
-  decision_score_threshold: 0.7
 
 Metrics:
   ic_mean: 0.191
@@ -115,14 +114,14 @@ Target values used for each run are preserved, even if config changes later.
 All syntax validated:
 ```bash
 python -m py_compile \
-  dockerfiles/airflow/dags/e1_simple_pipeline.py \
-  dockerfiles/airflow/dags/e1_conservative_pipeline.py \
-  dockerfiles/airflow/dags/e1_baseline_linear_regression.py \
-  dockerfiles/airflow/dags/e2_simple_pipeline.py \
-  dockerfiles/airflow/dags/e2_moderate_pipeline.py \
-  dockerfiles/airflow/dags/e3_intraday_pipeline.py \
-  dockerfiles/airflow/dags/e4_pairs_trading_pipeline.py \
-  dockerfiles/airflow/dags/e4_monthly_recalibration.py
+  dockerfiles/airflow/dags/E1/e1_simple_pipeline.py \
+  dockerfiles/airflow/dags/E1/e1_conservative_pipeline.py \
+  dockerfiles/airflow/dags/E1/e1_baseline_linear_regression.py \
+  dockerfiles/airflow/dags/E2/e2_simple_pipeline.py \
+  dockerfiles/airflow/dags/E2/e2_moderate_pipeline.py \
+  dockerfiles/airflow/dags/E3/e3_intraday_pipeline.py \
+  dockerfiles/airflow/dags/E4/e4_pairs_trading_pipeline.py \
+  dockerfiles/airflow/dags/E4/e4_monthly_recalibration.py
 ```
 ✓ All pass
 
@@ -138,11 +137,11 @@ python -m src.train_e1_simple_pipeline --tickers NVDA,AAPL
 cat runs/e1_simple/*/summary_all.csv | column -t -s,
 ```
 
-Output shows actual metrics alongside targets:
+Output shows actual metrics:
 ```
-ticker  ml_ic   ic_target_min  bt_sharpe  sharpe_target_min  decision_score
-NVDA    0.283   0.05          1.58       1.0                0.92
-AAPL    0.156   0.05          0.87       1.0                0.65
+ticker  ml_ic  bt_sharpe
+NVDA    0.283  1.58
+AAPL    0.156  0.87
 ```
 
 ### Pandas Analysis
@@ -154,8 +153,6 @@ df = pd.read_csv('runs/e1_simple/20260119_143022/summary_all.csv')
 # Compare metrics vs targets
 print("IC Performance:")
 print(f"  Mean IC: {df['ml_ic'].mean():.3f}")
-print(f"  Target IC: {df['ic_target_min'].iloc[0]}")
-print(f"  Tickers above target: {(df['ml_ic'] > df['ic_target_min']).sum()}/{len(df)}")
 
 print("\nSharpe Performance:")
 print(f"  Mean Sharpe: {df['bt_sharpe'].mean():.2f}")
@@ -194,13 +191,13 @@ Each pipeline merges these with its own defaults.
 - src/train_e2_pipeline.py
 
 **DAG Files** (8 files):
-- dockerfiles/airflow/dags/e1_simple_pipeline.py
-- dockerfiles/airflow/dags/e1_conservative_pipeline.py
-- dockerfiles/airflow/dags/e1_baseline_linear_regression.py
-- dockerfiles/airflow/dags/e2_simple_pipeline.py
-- dockerfiles/airflow/dags/e2_moderate_pipeline.py
-- dockerfiles/airflow/dags/e3_intraday_pipeline.py
-- dockerfiles/airflow/dags/e4_pairs_trading_pipeline.py
-- dockerfiles/airflow/dags/e4_monthly_recalibration.py
+- dockerfiles/airflow/dags/E1/e1_simple_pipeline.py
+- dockerfiles/airflow/dags/E1/e1_conservative_pipeline.py
+- dockerfiles/airflow/dags/E1/e1_baseline_linear_regression.py
+- dockerfiles/airflow/dags/E2/e2_simple_pipeline.py
+- dockerfiles/airflow/dags/E2/e2_moderate_pipeline.py
+- dockerfiles/airflow/dags/E3/e3_intraday_pipeline.py
+- dockerfiles/airflow/dags/E4/e4_pairs_trading_pipeline.py
+- dockerfiles/airflow/dags/E4/e4_monthly_recalibration.py
 
 **Total**: 12 files updated

@@ -30,7 +30,7 @@ def validate_e2_optimization():
         "scripts/optimize_e2_hyperparameters.py",
         "src/train_e2_pipeline.py",
         "src/config/base.yaml",
-        "dockerfiles/airflow/dags/e2_optuna_tuning.py",
+        "dockerfiles/airflow/dags/E2/e2_optuna_tuning.py",
     ]
     
     missing_files = []

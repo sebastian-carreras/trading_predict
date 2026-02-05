@@ -245,7 +245,7 @@ El archivo `data/clean/data_quality_report.json` contiene diagnóstico detallado
 
 ### **Cambiar estrategia en el DAG:**
 
-Edita `dockerfiles/airflow/dags/e1_conservative_pipeline.py`:
+Edita `dockerfiles/airflow/dags/E1/e1_conservative_pipeline.py`:
 
 ```python
 def clean_daily_data(**context):
@@ -352,5 +352,5 @@ print(features.isna().sum())  # Ver cuántos NaN por feature
 
 - **Código fuente**: `src/data/clean_daily.py`
 - **Script manual**: `scripts/data/run_data_cleaning.py`
-- **DAG integration**: `dockerfiles/airflow/dags/e1_conservative_pipeline.py`
+- **DAG integration**: `dockerfiles/airflow/dags/E1/e1_conservative_pipeline.py`
 - **Pipeline E1**: `src/train_e1_pipeline.py`

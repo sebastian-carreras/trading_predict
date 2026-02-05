@@ -194,6 +194,7 @@ def process_daily_data_with_cleaning(
     min_days: int = 252,
     remove_zero_volume: bool = True,
     verbose: bool = True,
+    tickers: Iterable[str] | None = None,
 ) -> dict[str, dict]:
     """Procesa todos los archivos CSV del directorio raw aplicando limpieza.
 
@@ -213,8 +214,18 @@ def process_daily_data_with_cleaning(
     ensure_dir(clean_dir)
     csv_files = list(raw_dir.glob("*_daily.csv"))
 
+    if tickers:
+        ticker_set = {t.strip() for t in tickers if t and t.strip()}
+        csv_files = [
+            path for path in csv_files
+            if path.stem.replace("_daily", "") in ticker_set
+        ]
+
     if not csv_files:
-        print(f"⚠️  No se encontraron archivos CSV en {raw_dir}")
+        if tickers:
+            print(f"⚠️  No se encontraron CSV para los tickers solicitados en {raw_dir}")
+        else:
+            print(f"⚠️  No se encontraron archivos CSV en {raw_dir}")
         return {}
 
     reports = {}

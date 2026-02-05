@@ -7,7 +7,7 @@ Flujo:
 2. Cargar modelo E1 Simple entrenado
 3. Descargar datos recientes del ticker
 4. Calcular features y hacer predicción
-5. Si decision_score ≥ 0.70 (BUY) → ejecutar orden en IOL
+5. Si pred_return ≥ tau_buy → ejecutar orden en IOL
 
 Uso:
     python scripts/e1_simple_iol_live_trade.py --ticker AAPL --model runs/e1_simple/20260119_120000/AAPL/AAPL_model.pth
@@ -347,43 +347,6 @@ def predict_with_model(
     return pred_return, features
 
 
-def compute_simple_decision_score(
-    pred_return: float,
-    config: dict
-) -> tuple[float, str]:
-    """
-    Calcula decision score basado solo en la predicción.
-    
-    Nota: En producción, deberías calcular IC, Sharpe, etc. con datos out-of-sample.
-    Aquí usamos solo el retorno predicho vs tau_buy como proxy.
-    
-    Returns:
-        (decision_score, signal)
-    """
-    e1_simple = config.get("strategies", {}).get("e1_simple", {})
-    tau_buy = float(e1_simple.get("thresholds", {}).get("tau_buy", 0.06))
-    
-    decision_cfg = config.get("decision", {})
-    threshold = float(decision_cfg.get("threshold", 0.70))
-    
-    # Score simplificado: si pred_return > tau_buy, asumimos que el modelo
-    # tiene confianza suficiente (esto es una aproximación)
-    # En un sistema real, necesitarías métricas recientes de performance
-    
-    if pred_return >= tau_buy:
-        # Mapear pred_return a [0, 1] de forma heurística
-        # Si pred = tau_buy → 0.7, si pred > 2*tau_buy → 1.0
-        score = min(0.70 + (pred_return - tau_buy) / tau_buy * 0.30, 1.0)
-        signal = "buy" if score >= threshold else "hold"
-    else:
-        score = max(0.0, 0.70 * (pred_return / tau_buy))
-        signal = "hold"
-    
-    print(f"✓ Decision score: {score:.3f} (threshold: {threshold:.2f}) → {signal.upper()}")
-    
-    return score, signal
-
-
 def main():
     parser = argparse.ArgumentParser(description="Trading en vivo con E1 Simple + IOL")
     parser.add_argument(
@@ -531,9 +494,11 @@ def main():
     
     print()
     
-    # 6. Calcular decision score
+    # 6. Evaluar señal por umbral
     print("5️⃣  Evaluando decisión...")
-    decision_score, signal = compute_simple_decision_score(pred_return, config)
+    e1_simple = config.get("strategies", {}).get("e1_simple", {})
+    tau_buy = float(e1_simple.get("thresholds", {}).get("tau_buy", 0.06))
+    signal = "buy" if pred_return >= tau_buy else "hold"
     print()
     
     # 7. Ejecutar orden si BUY
@@ -559,7 +524,7 @@ def main():
                 print("❌ Error al ejecutar orden")
     else:
         print(f"🔴 Señal: HOLD (no se ejecuta orden)")
-        print(f"   Razón: decision_score ({decision_score:.3f}) < threshold (0.70)")
+        print(f"   Razón: pred_return ({pred_return:+.2%}) < tau_buy ({tau_buy:.2%})")
     
     print()
     print("=" * 70)

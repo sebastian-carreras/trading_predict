@@ -67,27 +67,7 @@ docker compose exec -T airflow-scheduler airflow dags trigger \
 - **Rebalanceo**: Mensual o trimestral
 - **Umbrales**: τ_buy = 0.06 (6%), τ_sell = 0.00
 - **Filtros**: RSI < 60, Close > SMA(200), Bollinger %B < 0.9
-- **Perfil de scoring**: `conservative` (configurable por estrategia)
-- **Criterio de decisión**: `decision_score` ≥ 0.65 (perfil conservative)
-- **Directional Accuracy mínima** (en el perfil): 58% como piso para aprobar señales
-
-**Métricas objetivo (para `decision_score`, perfil conservative)**:
-- Sortino ≥ 1.0
-- Calmar ≥ 1.0
-- Max Drawdown ≤ 20%
-- Directional Accuracy ≥ 0.58
-- `decision_score` ≥ 0.65 para emitir señal BUY
-
-**Nota:** Los `decision_component_*` se calculan internamente pero **ya no se loguean a MLflow** para simplificar el análisis de métricas. Solo se loguea `decision_score` final y `decision_signal`.
-
-## 🧮 Decision Score Compuesto
-
-- El pipeline calcula un `decision_score` por **perfil** (conservative/moderate/aggressive).
-- Para E1 Conservative se usa por defecto el perfil `conservative` (ver `splits.strategy_profile`).
-- Los objetivos y pesos se configuran en `splits.decision_profiles.<profile>.{target_metrics,weights}` y el umbral BUY/HOLD en `splits.decision_profiles.<profile>.threshold`.
-- Se imprime en consola al final del walk-forward/time split, se persiste en `*_summary.csv` y se loguea en MLflow/Airflow.
-- **Simplificación reciente:** Los componentes individuales (`decision_component_*`) ya no se loguean a MLflow para reducir ruido. Solo se loguean `decision_score` y `decision_signal`.
-- También se registra `decision_profile` para poder comparar runs entre perfiles.
+-- **Directional Accuracy mínima** (referencia): 58% como piso para aprobar señales
 
 **Métricas sanitizadas:** Todos los valores NaN e Inf se convierten a valores válidos:
 - NaN → 0.0
@@ -131,13 +111,13 @@ Output (1): predicción de retorno a 90 días
 | `src/data/download_daily.py` | Descarga OHLCV diario + benchmark SPY | ✅ |
 | `src/data/clean_daily.py` | Limpieza y validación de datos | ✅ |
 | `src/features/build_features_e1.py` | Cálculo de 27 features técnicos | ✅ |
-| `src/features/build_sequences.py` | Conversión a secuencias RNN | ✅ |
+| `src/features/build_sequences_e1e2.py` | Conversión a secuencias RNN | ✅ |
 | `src/models/e1_gru.py` | Arquitectura GRU PyTorch | ✅ |
 | `src/train_e1_pipeline.py` | Pipeline E1 Conservative (walk-forward) | ✅ |
 | `src/train_e1_simple_pipeline.py` | Pipeline E1 Simple (time split) | ✅ |
 | `src/backtest/daily.py` | Backtesting con costos + métricas sanitizadas | ✅ |
-| `dockerfiles/airflow/dags/e1_conservative_pipeline.py` | Airflow DAG E1 Conservative | ✅ |
-| `dockerfiles/airflow/dags/e1_simple_pipeline.py` | Airflow DAG E1 Simple | ✅ |
+| `dockerfiles/airflow/dags/E1/e1_conservative_pipeline.py` | Airflow DAG E1 Conservative | ✅ |
+| `dockerfiles/airflow/dags/E1/e1_simple_pipeline.py` | Airflow DAG E1 Simple | ✅ |
 
 ## Cómo Usar
 
@@ -196,7 +176,7 @@ runs/e1_conservative/20260118_153022/
 │   ├── AAPL_walkforward_predictions.csv  # Predicciones por fold
 │   ├── AAPL_walkforward_metrics.png      # Visualización de métricas
 │   ├── AAPL_model.pth                    # Modelo del último fold
-│   └── AAPL_summary.csv                  # Métricas ML + trading + decision_score
+│   └── AAPL_summary.csv                  # Métricas ML + trading
 ├── MSFT/
 │   └── ...
 └── GGAL.BA/
@@ -204,11 +184,9 @@ runs/e1_conservative/20260118_153022/
 ```
 
 **MLflow:** Si `MLFLOW_TRACKING_URI` está configurado, cada ticker registra:
-- Métricas: mae, rmse, ic, directional_accuracy, bt_sharpe, bt_cagr, bt_max_drawdown, decision_score
-- Parámetros: strategy, ticker, lookback_days, gru_units, decision_profile, decision_signal
+- Métricas: mae, rmse, ic, directional_accuracy, bt_sharpe, bt_cagr, bt_max_drawdown
+- Parámetros: strategy, ticker, lookback_days, gru_units
 - Artifacts: models/, predictions/, backtest/
-
-**Nota:** Ya no se loguean `decision_component_*` individuales a MLflow (simplificación reciente).
 
 ## Parámetros (desde base.yaml)
 
@@ -216,37 +194,9 @@ runs/e1_conservative/20260118_153022/
 splits:
   method: "walk_forward"
   folds: 5
-  strategy_profile:
-    e1_conservative: conservative
-
-  decision_profiles:
-    conservative:
-      threshold: 0.65
-      target_metrics:
-        sortino_min: 1.0
-        calmar_min: 1.0
-        max_drawdown_max: 0.20
-        directional_accuracy_min: 0.58
-      weights:
         sortino: 0.35
         calmar: 0.25
         max_drawdown: 0.25
-        directional_accuracy: 0.15
-
-  # (fallback legacy)
-  target_metrics:
-    mae_max: 0.03
-    ic_min: 0.05
-    sharpe_min: 1.0
-    directional_accuracy_min: 0.58
-  decision_score:
-    threshold: 0.75
-    weights:
-      mae: 0.35
-      ic: 0.25
-      sharpe: 0.25
-      directional_accuracy: 0.15
-
 strategies:
   e1_conservative:
     lookback_days: 180        # Ventana de entrada
@@ -324,14 +274,14 @@ Cada ejecución genera outputs en `runs/e1_conservative/<timestamp>/`:
 ```
 runs/e1_conservative/20260105_153022/
 ├── config_used.yaml              # Configuración exacta usada
-├── summary_all.csv                # Resumen de todos los tickers (incluye decision_score promedio)
+├── summary_all.csv                # Resumen de todos los tickers
 ├── AAPL/
 │   ├── AAPL_predictions.csv      # (timestamp, y_true, y_pred)
 │   ├── AAPL_scaler.csv            # Parámetros de normalización
 │   ├── AAPL_walkforward_folds.csv # Métricas por fold (walk-forward)
 │   ├── AAPL_walkforward_backtest.csv # Serie PnL agregada walk-forward
 │   ├── AAPL_walkforward_predictions.csv # Predicciones agregadas walk-forward
-│   └── AAPL_summary.csv           # Métricas ML + trading + decision_score
+│   └── AAPL_summary.csv           # Métricas ML + trading
 ├── MSFT/
 │   └── ...
 └── YPF/
@@ -449,29 +399,6 @@ decision:
     mae: 0.15                       # 15% peso - error absoluto
     rmse: 0.10                      # 10% peso - error cuadrático
   
-  threshold: 0.70  # Score ≥ 0.70 → COMPRAR, < 0.70 → HOLD
-```
-
-**Cálculo del score:**
-```python
-# Para cada métrica se calcula un ratio normalizado [0, 1.5]
-component_ic = ic / ic_min                    # Higher is better
-component_dir = dir_acc / dir_acc_min         # Higher is better  
-component_sharpe = sharpe / sharpe_min        # Higher is better
-component_mae = mae_max / mae                 # Lower is better
-component_rmse = rmse_max / rmse              # Lower is better
-
-# Score ponderado
-decision_score = (
-    0.25 * component_ic +
-    0.20 * component_dir +
-    0.30 * component_sharpe +
-    0.15 * component_mae +
-    0.10 * component_rmse
-)
-
-# Decisión
-signal = "BUY" if decision_score >= 0.70 else "HOLD"
 ```
 
 ### Arquitectura GRU Simplificada

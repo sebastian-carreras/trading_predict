@@ -252,7 +252,11 @@ docker volumes:
 ├── db_data/              # PostgreSQL data
 ├── minio_data/           # MinIO buckets
 └── airflow/
-    ├── dags/             # DAGs de Airflow
+    ├── dags/             # DAGs de Airflow (subcarpetas por estrategia)
+    │   ├── E1/
+    │   ├── E2/
+    │   ├── E3/
+    │   └── E4/
     ├── logs/             # Logs de ejecución
     ├── plugins/          # Plugins custom
     └── config/           # Airflow config
