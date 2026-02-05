@@ -1093,3 +1093,4 @@ timestamp, ticker, open, high, low, close, volume, [indicadores técnicos calcul
 [9](https://www.youtube.com/watch?v=bPlk9oqkbmw)
 [10](https://www.sciencedirect.com/science/article/abs/pii/S0957417425021153)
 [11](https://www.sciencedirect.com/science/article/pii/S2667305324001236)
+
