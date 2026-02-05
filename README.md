@@ -1060,7 +1060,9 @@ Según la planificación del proyecto y la literatura especializada en predicci�
 
 ### Estructura general de datos para descarga
 
-**Formato recomendado:**```
+**Formato recomendado:**
+
+```
 timestamp, ticker, open, high, low, close, volume, [indicadores técnicos calculados]
 ```
 
