@@ -69,10 +69,6 @@ def download_daily_data(**context):
     tickers_param = context['params'].get('tickers', '').strip()
     if tickers_param:
         tickers = [t.strip() for t in tickers_param.split(',') if t.strip()]
-        # Agregar benchmark si no está en la lista
-        benchmark = config.get("universe", {}).get("benchmark", "SPY")
-        if benchmark not in tickers:
-            tickers.append(benchmark)
     else:
         # Usar tickers E2 del config
         tickers = list(
@@ -170,16 +166,8 @@ def train_e2_with_mlflow(**context):
             .get("e2_moderate", [])
         )
     
-    # Benchmark
-    benchmark = config.get("universe", {}).get("benchmark", "SPY")
-    raw_dir = root / "data/raw/daily"
-    
-    benchmark_path = raw_dir / f"{benchmark}_daily.csv"
-    if benchmark_path.exists():
-        from src.train_e2_pipeline import load_ohlcv_csv
-        benchmark_df = load_ohlcv_csv(benchmark_path)
-    else:
-        benchmark_df = None
+    # Benchmark deshabilitado
+    benchmark_df = None
     
     # Directorio de salida con timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

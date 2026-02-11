@@ -227,7 +227,7 @@ Esto aplica automáticamente los mejores parámetros para cada ticker.
 # Local
 mlflow ui --backend-store-uri sqlite:///runs/mlflow_local/mlflow.db
 
-# Navegar a http://localhost:5000
+# Navegar a http://localhost:5050
 # Experimento: "E2_Hyperparameter_Optimization"
 ```
 
@@ -501,7 +501,7 @@ Todos los parámetros del espacio de búsqueda son configurables:
 ### 5. Monitorear Progreso
 
 - **Logs**: Click en task `run_optuna_tuning` → Logs
-- **MLflow**: `http://localhost:5000` (si usas mlflow ui local)
+- **MLflow**: `http://localhost:5050` (si usas mlflow ui local)
 - **Outputs**: `reports/hyperparameter_optimization/`
 
 ### 6. Acceder a Resultados

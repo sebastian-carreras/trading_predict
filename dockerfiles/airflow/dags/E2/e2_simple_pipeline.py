@@ -84,10 +84,6 @@ def download_daily_data(**context):
     tickers_param = context['params'].get('tickers', '').strip()
     if tickers_param:
         tickers = [t.strip() for t in tickers_param.split(',') if t.strip()]
-        # Agregar benchmark si no está en la lista
-        benchmark = config.get("universe", {}).get("benchmark", "SPY")
-        if benchmark not in tickers:
-            tickers.append(benchmark)
     else:
         # Usar todos los tickers del config para E2 Simple
         tickers = list(
@@ -222,25 +218,8 @@ def train_e2_simple_with_mlflow(**context):
     if not tickers:
         return "No tickers to train for E2 Simple strategy"
     
-    # Cargar benchmark
-    def load_ohlcv_csv(path: Path) -> pd.DataFrame:
-        """Cargar OHLCV desde CSV."""
-        df = pd.read_csv(path, index_col=0, parse_dates=True)
-        df.index = pd.to_datetime(df.index)
-        return df
-    
-    benchmark = config.get("universe", {}).get("benchmark", "SPY")
-    clean_dir = root / "data/clean"
-    raw_dir = root / "data/raw/daily"
-    
-    benchmark_path = clean_dir / f"{benchmark}_daily.csv"
-    if not benchmark_path.exists():
-        benchmark_path = raw_dir / f"{benchmark}_daily.csv"
-    
-    if benchmark_path.exists():
-        benchmark_df = load_ohlcv_csv(benchmark_path)
-    else:
-        benchmark_df = None
+    # Benchmark deshabilitado
+    benchmark_df = None
     
     # Directorio de salida con timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

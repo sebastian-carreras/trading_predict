@@ -83,7 +83,7 @@ reports/
 ## 🧮 Arquitectura del Baseline
 
 ### Regresión Lineal Simple
-- **Input**: Secuencias 3D (n_samples, 180 días, ~27 features) → aplanadas a 2D
+- **Input**: Secuencias 3D (n_samples, 360 días, ~27 features) → aplanadas a 2D
 - **Modelo**: `sklearn.LinearRegression` estándar
 - **Features**: Mismas que GRU (indicadores técnicos, retornos, volatilidad, etc.)
 - **Target**: Retorno acumulado a 90 días
@@ -150,7 +150,7 @@ El baseline usa la misma configuración que E1 del archivo `src/config/base.yaml
 ```yaml
 strategies:
   e1_conservative:
-    lookback_days: 180
+    lookback_days: 360
     horizon_days: 90
     thresholds:
       tau_buy: 0.06
@@ -174,7 +174,7 @@ strategies:
 
 - **No captura dependencias temporales**: Aplana secuencias, pierde orden
 - **Asume linealidad**: No modela interacciones complejas
-- **Overfitting potencial**: Muchas features (180 días × 27 features = 4860 variables)
+- **Overfitting potencial**: Muchas features (360 días × 27 features = 9720 variables)
 - **No usa memoria**: Cada predicción es independiente
 
 ## ✅ Próximos Pasos

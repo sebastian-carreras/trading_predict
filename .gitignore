@@ -240,3 +240,4 @@ dockerfiles/airflow/logs/**
 .vscode/
 mlflow.db
 optuna_studies.db
+AGREGAR DESPUES.MD

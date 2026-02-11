@@ -153,7 +153,7 @@ model:
 
 #### B) Modelo lineal (baseline fuerte)
 ```python
-Input (180 días, 11 features) → Flatten (1980)
+Input (360 días, 11 features) → Flatten (3960)
   ↓
 Dense(128, relu)
   ↓

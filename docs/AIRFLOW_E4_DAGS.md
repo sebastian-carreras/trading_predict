@@ -223,7 +223,7 @@ El archivo `pairs_status_current.json` contiene:
 
 **MLflow UI**:
 ```bash
-# Acceder a http://localhost:5000
+# Acceder a http://localhost:5050
 # Navegar a experiment "E4_Pairs_Trading_Strategy"
 # Filtrar por métricas (e.g., sharpe_ratio > 1.0)
 ```

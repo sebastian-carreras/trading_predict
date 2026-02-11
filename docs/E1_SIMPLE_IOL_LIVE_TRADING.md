@@ -99,7 +99,7 @@ Dry run: False
 2️⃣  Cargando modelo E1 Simple...
 Cargando modelo: GGAL_model.pth
 ✓ Modelo cargado: GGAL - e1_simple
-  Lookback: 180d | Horizon: 90d
+  Lookback: 360d | Horizon: 90d
   Features: 27
 
 3️⃣  Descargando datos recientes...
@@ -201,7 +201,7 @@ python scripts/e1_simple_iol_live_trade.py \
 - Entrenar modelo si no existe: `python -m src.train_e1_simple_pipeline --tickers GGAL`
 
 ### Error: "Insuficientes datos"
-- El modelo requiere al menos 180 días de historia
+- El modelo requiere al menos 360 días de historia
 - Verificar que el ticker tenga datos suficientes en yfinance
 
 ### Error al ejecutar orden

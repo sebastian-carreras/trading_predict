@@ -2,36 +2,63 @@
 """
 Optimización de Hiperparámetros para Estrategia E1 usando Optuna + MLflow
 
-Este script busca automáticamente los mejores hiperparámetros para:
-- Thresholds de trading (tau_buy, tau_sell)
-- Arquitectura del modelo (gru_units, dropout)
-- Hiperparámetros de entrenamiento (learning_rate, batch_size)
+Este script busca automáticamente los mejores hiperparámetros para la
+estrategia E1 Conservative. Entrena el modelo GRU con walk-forward validation
+para cada combinación de parámetros y optimiza una métrica objetivo que combina
+IC (Information Coefficient) y Sharpe ratio.
+
+Parámetros optimizados y rangos de búsqueda:
+  Trading thresholds:
+    - tau_buy:  [0.02, 0.10] step=0.01  — Umbral de predicción para señal de compra
+    - tau_sell: [-0.02, 0.02] step=0.01 — Umbral de predicción para señal de venta
+
+  Arquitectura GRU (2 capas):
+    - gru_units_1: [32, 128] step=16   — Unidades primera capa GRU
+    - gru_units_2: [16, 64]  step=16   — Unidades segunda capa GRU
+    - dropout:     [0.20, 0.50] step=0.05
+
+  Entrenamiento:
+    - learning_rate: [1e-4, 1e-2] log scale
+    - batch_size:    {32, 64, 128} categórico
+
+  Walk-forward validation:
+    - n_folds:                [3, 7]          — Número de folds temporales
+    - internal_val_fraction:  [0.10, 0.25] step=0.05 — Fracción de validación interna
+
+Métrica objetivo:
+  0.5 * IC_mean + 0.5 * Sharpe_mean + trade_penalty
+  (trade_penalty = -5 si <50% de tickers generan trades)
 
 Uso:
-    # Optimización local (por defecto, sin Docker)
-    python scripts/optimize_e1_hyperparameters.py --n_trials 10
-    
-    # Optimización rápida (3 tickers, 10 trials)
-    python scripts/optimize_e1_hyperparameters.py --n_trials 10 --quick
-    
-    # Optimizar solo un ticker
-    python scripts/optimize_e1_hyperparameters.py --ticker AAPL --n_trials 30
-    
+    # Optimización con defaults (usa MLFLOW_TRACKING_URI de .env)
+    python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 10
+
+    # Optimizar un ticker específico
+    python scripts/optimization/optimize_e1_hyperparameters.py --ticker GGAL.BA --n_trials 30
+
+    # Optimización per-ticker (genera YAML de overrides por ticker)
+    python scripts/optimization/optimize_e1_hyperparameters.py --per_ticker --n_trials 30
+
     # Usar servidor MLflow remoto (Docker)
-    python scripts/optimize_e1_hyperparameters.py --n_trials 50 --mlflow_uri http://localhost:5050
-    
+    python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 50 --mlflow_uri http://localhost:5050
+
     # Continuar estudio existente
-    python scripts/optimize_e1_hyperparameters.py --study_name e1_optimization --n_trials 20
+    python scripts/optimization/optimize_e1_hyperparameters.py --study_name e1_optimization --n_trials 20
 
 Outputs:
-- MLflow tracking: runs/mlflow_local/mlflow.db (SQLite local) o servidor remoto
-- Optuna database: optuna_studies.db (persistencia)
-- Mejores parámetros: reports/best_params_e1.yaml
-- Visualizaciones: reports/figures/optuna_*.png
+- MLflow tracking: MLFLOW_TRACKING_URI (.env) o runs/mlflow_local/mlflow.db (SQLite local)
+- Optuna database: optuna_studies.db (persistencia entre corridas)
+- Mejores parámetros: reports/hyperparameter_optimization/best_params_e1.yaml
+- Per-ticker overrides: reports/hyperparameter_optimization/e1_tuned_params_by_ticker.yaml
+- Visualizaciones: reports/hyperparameter_optimization/by_ticker/<TICKER>/figures/
 """
 
 import argparse
+import os
+import shutil
 import sys
+import tempfile
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 import warnings
@@ -39,6 +66,12 @@ import warnings
 import numpy as np
 import pandas as pd
 import yaml
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 # Optuna
 import optuna
@@ -95,8 +128,9 @@ class E1HyperparameterOptimizer:
             )
         
         # MLflow - Configurar tracking URI
+        self.mlflow_enabled = True
         if mlflow_tracking_uri == "local":
-            # Modo local: usar SQLite backend (recomendado por MLflow)
+            # Modo local: usar SQLite backend
             mlflow_dir = self.root / "runs/mlflow_local"
             mlflow_dir.mkdir(parents=True, exist_ok=True)
             mlflow_db = mlflow_dir / "mlflow.db"
@@ -106,45 +140,45 @@ class E1HyperparameterOptimizer:
             # Modo remoto: usar servidor MLflow (ej: Docker)
             tracking_uri = mlflow_tracking_uri
             print(f"✓ Conectando a MLflow server: {tracking_uri}")
-        
+
         mlflow.set_tracking_uri(tracking_uri)
-        
+
         # Configurar experimento
         experiment_name = "E1_Hyperparameter_Optimization"
-        
+
         # Forzar artifact location local para evitar conflictos con Docker
         artifact_location = str(self.root / "mlruns")
-        
+
         try:
-            # Intentar establecer experimento (crearlo si no existe)
             mlflow.set_experiment(experiment_name)
-            print(f"✓ Usando experimento '{experiment_name}'")
+            # Validar conexión con un test run
+            _test_run = mlflow.start_run(run_name="_init_test")
+            mlflow.end_run()
+            print(f"✓ MLflow habilitado: {tracking_uri} (experiment={experiment_name})")
         except Exception as e:
             error_msg = str(e)
-            print(f"⚠️  Error configurando experimento: {e}")
-            
+            print(f"⚠️  Error configurando MLflow: {e}")
+
             # Si es un error de revisión de Alembic, recrear la base de datos
             if "Can't locate revision" in error_msg or "alembic" in error_msg.lower():
                 if mlflow_tracking_uri == "local":
                     print(f"⚠️  Base de datos MLflow corrupta. Recreando...")
-                    # Eliminar base de datos corrupta
                     if mlflow_db.exists():
                         mlflow_db.unlink()
-                        print(f"✓ Base de datos antigua eliminada: {mlflow_db}")
-                    
-                    # Reconectar con base de datos nueva
                     mlflow.set_tracking_uri(tracking_uri)
-                    print(f"✓ Nueva base de datos MLflow creada")
-            
-            # Crear experimento manualmente con artifact location local
+
+            # Crear experimento manualmente
             try:
                 mlflow.create_experiment(experiment_name, artifact_location=artifact_location)
                 mlflow.set_experiment(experiment_name)
                 print(f"✓ Experimento '{experiment_name}' creado")
-            except Exception as create_error:
-                # Si el experimento ya existe, solo establecerlo
-                mlflow.set_experiment(experiment_name)
-                print(f"✓ Experimento '{experiment_name}' configurado")
+            except Exception:
+                try:
+                    mlflow.set_experiment(experiment_name)
+                    print(f"✓ Experimento '{experiment_name}' configurado")
+                except Exception as final_exc:
+                    print(f"⚠️  MLflow no disponible, continuando sin tracking: {final_exc}")
+                    self.mlflow_enabled = False
         
         # Optuna
         self.optuna_db_path = optuna_db_path
@@ -204,11 +238,8 @@ class E1HyperparameterOptimizer:
         validate_bounds(self.dropout_bounds, "dropout")
         validate_bounds(self.learning_rate_bounds, "learning_rate")
         
-        # Benchmark
-        benchmark = self.config.get("universe", {}).get("benchmark", "SPY")
-        raw_dir = self.root / "data/raw/daily"
-        benchmark_path = raw_dir / f"{benchmark}_daily.csv"
-        self.benchmark_df = load_ohlcv_csv(benchmark_path) if benchmark_path.exists() else None
+        # Benchmark deshabilitado
+        self.benchmark_df = None
         
         print(f"✓ Inicializado optimizador para {len(self.tickers)} tickers")
         print(f"  Tickers: {', '.join(self.tickers[:5])}{'...' if len(self.tickers) > 5 else ''}")
@@ -256,8 +287,10 @@ class E1HyperparameterOptimizer:
             Métrica objetivo (Sharpe ratio promedio o IC promedio)
         """
         
-        # Iniciar run de MLflow para este trial
-        with mlflow.start_run(run_name=f"trial_{trial.number}"):
+        # Iniciar run de MLflow para este trial (si está habilitado)
+        from contextlib import nullcontext
+        ctx = mlflow.start_run(run_name=f"trial_{trial.number}") if self.mlflow_enabled else nullcontext()
+        with ctx:
             
             # 1. SUGERIR HIPERPARÁMETROS
             
@@ -368,39 +401,42 @@ class E1HyperparameterOptimizer:
             avg_num_trades = df_results["num_trades"].mean()
             
             # 5. REGISTRAR EN MLFLOW (dentro del trial)
-            
-            # Registrar parámetros
-            mlflow.log_params({
-                "tau_buy": tau_buy,
-                "tau_sell": tau_sell,
-                "gru_units_1": gru_units_1,
-                "gru_units_2": gru_units_2,
-                "dropout": dropout,
-                "learning_rate": learning_rate,
-                "batch_size": batch_size,
-                "n_folds": n_folds,
-                "internal_val_fraction": internal_val_fraction,
-                "trial_number": trial.number,
-            })
-            
-            # Registrar métricas
-            mlflow.log_metrics({
-                "ic_mean": ic_mean,
-                "ic_median": ic_median,
-                "ic_std": ic_std,
-                "sharpe_mean": sharpe_mean,
-                "sharpe_median": sharpe_median,
-                "sharpe_std": sharpe_std,
-                "ic_positive_pct": ic_positive_pct,
-                "sharpe_positive_pct": sharpe_positive_pct,
-                "tickers_with_trades": tickers_with_trades,
-                "avg_num_trades": avg_num_trades,
-            })
-            
+
+            if self.mlflow_enabled:
+                mlflow.log_params({
+                    "tau_buy": tau_buy,
+                    "tau_sell": tau_sell,
+                    "gru_units_1": gru_units_1,
+                    "gru_units_2": gru_units_2,
+                    "dropout": dropout,
+                    "learning_rate": learning_rate,
+                    "batch_size": batch_size,
+                    "n_folds": n_folds,
+                    "internal_val_fraction": internal_val_fraction,
+                    "trial_number": trial.number,
+                })
+
+                mlflow.log_metrics({
+                    "ic_mean": ic_mean,
+                    "ic_median": ic_median,
+                    "ic_std": ic_std,
+                    "sharpe_mean": sharpe_mean,
+                    "sharpe_median": sharpe_median,
+                    "sharpe_std": sharpe_std,
+                    "ic_positive_pct": ic_positive_pct,
+                    "sharpe_positive_pct": sharpe_positive_pct,
+                    "tickers_with_trades": tickers_with_trades,
+                    "avg_num_trades": avg_num_trades,
+                })
+
             # Guardar tabla de resultados como artifact
             results_path = out_dir / "trial_results.csv"
             df_results.to_csv(results_path, index=False)
-            mlflow.log_artifact(str(results_path))
+            if self.mlflow_enabled:
+                try:
+                    mlflow.log_artifact(str(results_path))
+                except Exception as art_exc:
+                    print(f"  ⚠️  MLflow artifact no guardado: {art_exc}")
             
             # 6. DEFINIR MÉTRICA OBJETIVO
             
@@ -415,8 +451,8 @@ class E1HyperparameterOptimizer:
             trade_penalty = 0 if tickers_with_trades >= len(self.tickers) * 0.5 else -5
             objective_value = 0.5 * ic_mean + 0.5 * sharpe_mean + trade_penalty
             
-            # Registrar métrica objetivo
-            mlflow.log_metric("objective_value", objective_value)
+            if self.mlflow_enabled:
+                mlflow.log_metric("objective_value", objective_value)
             
             print(f"\nTrial {trial.number}:")
             print(f"  tau_buy={tau_buy:.3f}, tau_sell={tau_sell:.3f}")
@@ -472,6 +508,35 @@ class E1HyperparameterOptimizer:
         
         return study
     
+    @staticmethod
+    def _safe_write_file(path: Path, write_fn, *, retries: int = 3, delay: float = 2.0) -> None:
+        """Write a file with retry logic to handle iCloud/file-provider timeouts.
+
+        Writes to a temp file first, then renames to avoid partial writes.
+        """
+        for attempt in range(1, retries + 1):
+            try:
+                tmp_fd, tmp_path = tempfile.mkstemp(
+                    dir=str(path.parent), suffix=path.suffix,
+                )
+                with os.fdopen(tmp_fd, "w") as f:
+                    write_fn(f)
+                shutil.move(tmp_path, str(path))
+                return
+            except (TimeoutError, OSError) as exc:
+                # Clean up temp file on failure
+                try:
+                    Path(tmp_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+                if attempt < retries:
+                    print(f"  ⚠️  Timeout escribiendo {path.name}, reintentando ({attempt}/{retries})...")
+                    time.sleep(delay)
+                else:
+                    raise RuntimeError(
+                        f"No se pudo escribir {path} después de {retries} intentos: {exc}"
+                    ) from exc
+
     def save_results(
         self,
         study: optuna.Study,
@@ -479,23 +544,23 @@ class E1HyperparameterOptimizer:
     ) -> None:
         """
         Guarda resultados de optimización.
-        
+
         Args:
             study: Estudio de Optuna
             output_dir: Directorio de salida
         """
         
         output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         print(f"\n{'='*80}")
         print("GUARDANDO RESULTADOS")
         print(f"{'='*80}\n")
-        
+
         # 1. Mejores parámetros en YAML
-        
+
         best_params = study.best_params
         best_value = study.best_value
-        
+
         best_params_yaml = {
             "optimization": {
                 "study_name": study.study_name,
@@ -503,29 +568,28 @@ class E1HyperparameterOptimizer:
                 "best_value": float(best_value),
                 "best_trial": study.best_trial.number,
             },
-            "best_params": {k: float(v) if isinstance(v, (int, float)) else v 
+            "best_params": {k: float(v) if isinstance(v, (int, float)) else v
                            for k, v in best_params.items()},
         }
-        
+
         yaml_path = output_dir / "best_params_e1.yaml"
-        with open(yaml_path, "w") as f:
-            yaml.dump(best_params_yaml, f, default_flow_style=False, sort_keys=False)
-        
+        self._safe_write_file(yaml_path, lambda f: yaml.dump(best_params_yaml, f, default_flow_style=False, sort_keys=False))
+
         print(f"✓ Mejores parámetros guardados: {yaml_path}")
-        
+
         # 2. Todos los trials en CSV
-        
+
         df_trials = study.trials_dataframe()
         csv_path = output_dir / "e1_all_trials.csv"
-        df_trials.to_csv(csv_path, index=False)
-        
+        self._safe_write_file(csv_path, lambda f: df_trials.to_csv(f, index=False))
+
         print(f"✓ Todos los trials guardados: {csv_path}")
-        
+
         # 3. Visualizaciones
-        
+
         figures_dir = output_dir / "figures"
         figures_dir.mkdir(exist_ok=True)
-        
+
         # Optimization history
         try:
             fig = plot_optimization_history(study)
@@ -533,7 +597,7 @@ class E1HyperparameterOptimizer:
             print(f"✓ Gráfico: optimization_history.png")
         except Exception as e:
             print(f"⚠️  Error generando optimization_history: {e}")
-        
+
         # Parameter importances
         try:
             fig = plot_param_importances(study)
@@ -541,7 +605,7 @@ class E1HyperparameterOptimizer:
             print(f"✓ Gráfico: param_importances.png")
         except Exception as e:
             print(f"⚠️  Error generando param_importances: {e}")
-        
+
         # Parallel coordinate
         try:
             fig = plot_parallel_coordinate(study)
@@ -549,31 +613,30 @@ class E1HyperparameterOptimizer:
             print(f"✓ Gráfico: parallel_coordinate.png")
         except Exception as e:
             print(f"⚠️  Error generando parallel_coordinate: {e}")
-        
+
         # 4. Resumen en texto
-        
+
         summary_path = output_dir / "e1_optimization_summary.txt"
-        with open(summary_path, "w") as f:
+
+        def _write_summary(f):
             f.write("="*80 + "\n")
             f.write("OPTIMIZACIÓN DE HIPERPARÁMETROS E1 - RESUMEN\n")
             f.write("="*80 + "\n\n")
-            
             f.write(f"Study name: {study.study_name}\n")
             f.write(f"Total trials: {len(study.trials)}\n")
             f.write(f"Best trial: #{study.best_trial.number}\n")
             f.write(f"Best value: {best_value:.6f}\n\n")
-            
             f.write("Mejores parámetros:\n")
             f.write("-" * 40 + "\n")
             for key, value in best_params.items():
                 f.write(f"  {key}: {value}\n")
-            
             f.write("\n" + "="*80 + "\n")
             f.write("TOP 10 TRIALS\n")
             f.write("="*80 + "\n\n")
-            
             df_top = df_trials.nlargest(10, "value")
             f.write(df_top.to_string(index=False))
+
+        self._safe_write_file(summary_path, _write_summary)
         
         print(f"✓ Resumen guardado: {summary_path}")
         
@@ -635,8 +698,8 @@ def main():
     parser.add_argument(
         "--mlflow_uri",
         type=str,
-        default="local",
-        help="URI de MLflow tracking server (default: 'local' para tracking local, use 'http://localhost:5050' para servidor Docker)",
+        default=os.getenv("MLFLOW_TRACKING_URI", "local").strip(),
+        help="URI de MLflow tracking server (default: MLFLOW_TRACKING_URI env var o 'local' para SQLite)",
     )
     parser.add_argument(
         "--output_dir",
@@ -854,27 +917,22 @@ def main():
 
         output_dir.mkdir(parents=True, exist_ok=True)
         tuned_path = output_dir / "e1_tuned_params_by_ticker.meta.yaml"
-        with open(tuned_path, "w") as f:
-            yaml.dump(
-                {
-                    "strategy": "e1_conservative",
-                    "generated_at": pd.Timestamp.utcnow().isoformat(),
-                    "meta": meta_by_ticker,
-                    "tickers": overrides_by_ticker,
-                },
-                f,
-                default_flow_style=False,
-                sort_keys=False,
-            )
+        meta_payload = {
+            "strategy": "e1_conservative",
+            "generated_at": pd.Timestamp.utcnow().isoformat(),
+            "meta": meta_by_ticker,
+            "tickers": overrides_by_ticker,
+        }
+        E1HyperparameterOptimizer._safe_write_file(
+            tuned_path,
+            lambda f: yaml.dump(meta_payload, f, default_flow_style=False, sort_keys=False),
+        )
 
         tuned_compact_path = output_dir / "e1_tuned_params_by_ticker.yaml"
-        with open(tuned_compact_path, "w") as f:
-            yaml.dump(
-                overrides_by_ticker,
-                f,
-                default_flow_style=False,
-                sort_keys=False,
-            )
+        E1HyperparameterOptimizer._safe_write_file(
+            tuned_compact_path,
+            lambda f: yaml.dump(overrides_by_ticker, f, default_flow_style=False, sort_keys=False),
+        )
 
         print(f"\n✓ YAML de tuned params por ticker (con meta): {tuned_path}")
         print(f"✓ YAML consumible por training: {tuned_compact_path}")
@@ -922,8 +980,10 @@ def main():
 
             # best_params_e1.yaml por ticker
             per_ticker_path = per_ticker_dir / "best_params_e1.yaml"
-            with open(per_ticker_path, "w") as f:
-                yaml.dump(converted, f, default_flow_style=False, sort_keys=False)
+            E1HyperparameterOptimizer._safe_write_file(
+                per_ticker_path,
+                lambda f: yaml.dump(converted, f, default_flow_style=False, sort_keys=False),
+            )
 
             # Actualizar agregados compactos
             agg_compact_path = output_dir / "e1_tuned_params_by_ticker.yaml"
@@ -933,8 +993,10 @@ def main():
             except FileNotFoundError:
                 agg_compact = {}
             agg_compact[t] = converted
-            with open(agg_compact_path, "w") as f:
-                yaml.dump(agg_compact, f, default_flow_style=False, sort_keys=False)
+            E1HyperparameterOptimizer._safe_write_file(
+                agg_compact_path,
+                lambda f: yaml.dump(agg_compact, f, default_flow_style=False, sort_keys=False),
+            )
 
             # Actualizar meta
             agg_meta_path = output_dir / "e1_tuned_params_by_ticker.meta.yaml"
@@ -953,8 +1015,10 @@ def main():
             }
             agg_meta.setdefault("tickers", {})[t] = converted
             agg_meta["generated_at"] = pd.Timestamp.utcnow().isoformat()
-            with open(agg_meta_path, "w") as f:
-                yaml.dump(agg_meta, f, default_flow_style=False, sort_keys=False)
+            E1HyperparameterOptimizer._safe_write_file(
+                agg_meta_path,
+                lambda f: yaml.dump(agg_meta, f, default_flow_style=False, sort_keys=False),
+            )
 
             print(f"\n✓ Parámetros por ticker guardados en: {per_ticker_path}")
             print(f"✓ YAML agregados actualizados: {agg_compact_path} y {agg_meta_path}")

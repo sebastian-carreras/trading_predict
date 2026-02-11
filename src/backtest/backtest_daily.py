@@ -189,7 +189,7 @@ def compute_max_drawdown(equity: np.ndarray) -> float:
 
 def compute_calmar_ratio(returns: np.ndarray, equity: np.ndarray, periods_per_year: int = 252) -> float:
     """
-    Calmar ratio: retorno anualizado / max drawdown.
+    Calmar ratio: retorno anualizado (CAGR) / max drawdown.
     
     Parámetros
     ----------
@@ -283,7 +283,7 @@ def compute_sortino_ratio(
 
 def compute_win_rate(returns: np.ndarray) -> float:
     """
-    Win rate: porcentaje de días con retorno positivo.
+    Win rate: porcentaje de días con retorno positivo sobre el total de días.
     
     Parámetros
     ----------

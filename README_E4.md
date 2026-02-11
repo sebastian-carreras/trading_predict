@@ -202,7 +202,7 @@ airflow dags trigger e4_monthly_recalibration
 
 **UI de Airflow**: http://localhost:8080 → DAG `e4_pairs_trading_pipeline`
 
-**MLflow**: http://localhost:5000 → Experiment "E4_Pairs_Trading_Strategy"
+**MLflow**: http://localhost:5050 → Experiment "E4_Pairs_Trading_Strategy"
 
 📖 **Documentación completa de DAGs**: [docs/AIRFLOW_E4_DAGS.md](docs/AIRFLOW_E4_DAGS.md)
 

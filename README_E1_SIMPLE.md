@@ -1,10 +1,10 @@
 # E1 Simple - Pipeline Simplificado
 
-**Versión simplificada de E1** diseñada para desarrollo rápido y experimentación. 80% más rápido que E1 Conservative.
+**Versión simplificada de E1** para desarrollo rápido y experimentación. ~80% más rápido que E1 Conservative.
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ```bash
 # Instalar dependencias
@@ -17,104 +17,151 @@ python -m src.train_e1_simple_pipeline --tickers AAPL
 cat runs/e1_simple/*/summary_all.csv
 ```
 
-⏱️ **Tiempo:** ~1 minuto por ticker  
-📊 **Output:** Predicciones, backtest, modelo, métricas
+**Output:** Predicciones, backtest, modelo, métricas
 
 ---
 
-## � TL;DR - Cómo Funciona E1 Simple
+## TL;DR - Cómo Funciona E1 Simple
 
 ### 1. Modelo
-- **Arquitectura:** GRU 1 capa (64 unidades) + Dropout + Dense(16)
-- **Entrada:** 180 días de datos (27 features: tendencia, momentum, volumen)
-- **Salida:** Predicción de retorno a 90 días
+- **Arquitectura:** GRU 1 capa (64 unidades) + Dropout(0.2) + Dense(16)
+- **Entrada:** 360 días de datos (~15 features optimizadas para largo plazo)
+- **Salida:** Predicción de retorno logarítmico a 90 días
 - **Validación:** Time split simple 70/15/15 (train/val/test)
 
-### 2. Predicciones y Backtest
-1. **Entrenar GRU** en 70% de datos
-2. **Predecir retornos** en 15% test
-3. **Generar señales de trading** usando predicciones:
-   - BUY si predicción ≥ tau_buy (defecto 0.06 = +6%)
-   - SELL si predicción ≤ tau_sell (defecto 0.00)
-4. **Ejecutar backtest** con esas señales → obtener Sharpe, CAGR, etc.
+### 2. Pipeline de Entrenamiento
+1. **Cargar datos** - CSV de `data/clean/` (o `data/raw/daily/`)
+2. **Calcular features** - 15 indicadores técnicos optimizados
+3. **Crear secuencias** - Ventanas de 360 días para RNN
+4. **Crear target** - Retorno logarítmico forward a 90 días
+5. **Split temporal** - 70% train, 15% val, 15% test
+6. **Estandarizar** - Z-score (fit solo en train, aplicar a val/test)
+7. **Entrenar GRU** - Con early stopping en validación
+8. **Evaluar** - Métricas ML + backtest con costos
 
-
-### 3. Métricas Calculadas
-- **IC (Information Coefficient):** correlación Spearman predicción-realidad. Mayor = mejor.
-- **Directional Accuracy:** % aciertos de signo. Mayor = mejor.
-- **Sharpe:** retorno/riesgo del backtest. Mayor = mejor.
-- **MAE/RMSE:** error de predicción. Menor = mejor.
-
-#### ¿Cómo se complementan estas métricas?
-
-Las métricas de predicción (MAE, RMSE, Directional Accuracy, IC) evalúan la calidad del modelo para anticipar retornos:
-- **MAE/RMSE**: Miden el error promedio de las predicciones. Menor error implica que el modelo predice retornos más cercanos a la realidad, pero no garantiza que esas predicciones sean útiles para ganar dinero.
-- **Directional Accuracy**: Indica qué porcentaje de veces el modelo acierta la dirección (sube/baja). Es útil, pero puede ser engañoso si el modelo acierta en movimientos pequeños y falla en los grandes.
-- **Information Coefficient (IC)**: Mide la correlación entre predicción y realidad. Un IC alto sugiere que el modelo captura bien la señal, pero no necesariamente que la estrategia sea rentable después de costos.
-
-Las métricas de trading (Sharpe, max drawdown) resumen el impacto final de todas las decisiones (aciertos, errores y costos) en el capital:
-- **Sharpe**: Mide el retorno ajustado por riesgo. Un Sharpe mínimo asegura que la estrategia no solo gana, sino que lo hace de forma eficiente y consistente.
-- **Max drawdown**: Mide la peor caída desde un pico de capital. Limitar el drawdown protege contra pérdidas grandes y prolongadas.
-
-Por eso, aunque un modelo tenga buen MAE/RMSE/IC, si el Sharpe es bajo o el drawdown es alto, la estrategia no es viable. Idealmente, todas las métricas deberían ser buenas: las de predicción aseguran que el modelo tiene sentido, y las de trading que es útil en la práctica.
-
-### 4. Targets (Umbrales de Referencia)
-- IC ≥ 0.05
-- Directional Accuracy ≥ 0.55
-- Sharpe ≥ 1.0
-- MAE ≤ 0.03
-- RMSE ≤ 0.05
-
-
-
-### 5. Resumen Operativo
+### 3. Generación de Señales
 ```
-Datos (180d) → GRU → Predicción retorno
-                  ↓
-            Backtest (tau_buy/sell)
-                  ↓
-            Calcular IC, DirAcc, Sharpe, MAE, RMSE
-      ↓
-    Resumen de métricas
+Predicción → Comparar con umbrales → Señal de trading
+
+Si predicción ≥ tau_buy (0.06 = +6%)  → BUY
+Si predicción ≤ tau_sell (0.00)       → SELL/HOLD
 ```
 
-Resultados guardados en `summary_all.csv` con métricas para comparación rápida.
+### 4. Métricas Calculadas
+
+**Métricas ML (calidad de predicción):**
+- **MAE:** Error absoluto promedio (menor = mejor)
+- **RMSE:** Error cuadrático medio (menor = mejor)
+- **IC:** Information Coefficient - correlación Spearman (mayor = mejor, >0.05 significativo)
+- **Directional Accuracy:** % aciertos de dirección (mayor = mejor, >55% útil)
+
+**Métricas de Trading (backtest):**
+- **Sharpe:** Retorno ajustado por riesgo (>1.0 bueno, >1.5 excelente)
+- **CAGR:** Retorno anualizado compuesto
+- **Max Drawdown:** Máxima caída desde pico (menor = mejor, <20% ideal)
+
+### 5. Targets de Referencia
+| Métrica | Umbral |
+|---------|--------|
+| IC | ≥ 0.05 |
+| Directional Accuracy | ≥ 55% |
+| Sharpe | ≥ 1.0 |
+| MAE | ≤ 0.03 |
+| RMSE | ≤ 0.05 |
+
+### 6. Flujo Resumido
+```
+Datos OHLCV (10 años)
+    ↓
+Features (15 indicadores)
+    ↓
+Secuencias (360 días × 15 features)
+    ↓
+GRU [64] → Dense [16] → Output [1]
+    ↓
+Predicción retorno 90d
+    ↓
+Señal (BUY/HOLD/SELL)
+    ↓
+Backtest → Métricas
+```
 
 ---
 
-## �📊 Simplificaciones vs E1 Conservative
+## Comparación: E1 Simple vs E1 Conservative
 
 | Aspecto | E1 Simple | E1 Conservative |
 |---------|-----------|-----------------|
 | **Tiempo/ticker** | ~1 min | ~5 min |
 | **Validación** | Time split (70/15/15) | Walk-forward (5 folds) |
-| **GRU** | 1 capa (64 units) | 2 capas (128→64) |
-| **Complejidad** | Baja | Media-Alta |
-| **Uso ideal** | Dev/testing/baseline | Producción |
+| **Arquitectura GRU** | 1 capa (64 units) | 2 capas (128→64) |
+| **Parámetros modelo** | ~8K | ~16K |
+| **Uso ideal** | Desarrollo, experimentación | Producción, validación robusta |
 
-### Arquitectura Simplificada
+### Arquitectura GRU
 
 ```
-Input (180 días, 27 features)
+Input (360 días, ~15 features)
   ↓
 GRU(64 units)
   ↓
 Dropout(0.2)
   ↓
-Dense(16)
+Dense(16, relu)
   ↓
 Output(1) - Predicción retorno 90d
 ```
 
-**Beneficios:**
-- ✅ 50% menos parámetros que E1 Conservative
-- ✅ 2x más rápido de entrenar
-- ✅ Menos propenso a overfitting
-- ✅ Suficiente para horizonte 90 días
+---
+
+## Features (15 indicadores optimizados)
+
+Las features están optimizadas para predicción a largo plazo (horizon=90 días):
+
+### Precio/Retorno (5 features)
+| Feature | Descripción | Uso estratégico |
+|---------|-------------|-----------------|
+| `ret_1w` | Retorno semanal (5 días) | Momentum semanal sin ruido diario |
+| `ret_4w` | Retorno mensual (20 días) | Momentum persistente, crítico para horizon=90d |
+| `ret_13w` | Retorno trimestral (60 días) | Alineado con horizon, detecta tendencias largo plazo |
+| `vol_4w` | Volatilidad mensual | Riesgo mensual, más estable que diaria |
+| `vol_regime` | Cambio de volatilidad | Expansión/contracción de vol, predice reversiones |
+
+### Volatilidad/ATR (2 features)
+| Feature | Descripción | Uso estratégico |
+|---------|-------------|-----------------|
+| `atr_14` | Average True Range (14d) normalizado | Volatilidad "real" considerando gaps |
+| `vol_zscore_60` | Z-score de volumen (60d) | Detecta volumen anormal (confirmación) |
+
+### Tendencia (4 features)
+| Feature | Descripción | Uso estratégico |
+|---------|-------------|-----------------|
+| `sma_50` | SMA de 50 días | Tendencia medio plazo |
+| `sma_200` | SMA de 200 días | Tendencia largo plazo (filtro fundamental) |
+| `sma50_sma200_ratio` | SMA50/SMA200 - 1 | Golden/Death Cross, fuerza de tendencia |
+| `close_sma200_dist` | Close/SMA200 - 1 | Sobrecompra/sobreventa vs tendencia |
+
+### Momentum (1 feature)
+| Feature | Descripción | Uso estratégico |
+|---------|-------------|-----------------|
+| `macd_hist` | Histograma MACD | Divergencia momentum vs tendencia |
+
+### Bandas de Bollinger (2 features)
+| Feature | Descripción | Uso estratégico |
+|---------|-------------|-----------------|
+| `bb_pct_b` | %B Bollinger | Posición relativa en bandas (sobrecompra/venta) |
+| `bb_bandwidth` | Ancho de bandas | Volatilidad, detecta "squeeze" |
+
+### Fuerza de Tendencia (1 feature)
+| Feature | Descripción | Uso estratégico |
+|---------|-------------|-----------------|
+| `adx_14` | Average Directional Index | Fuerza de tendencia (no dirección) |
+
+**Nota:** Features de benchmark fueron removidas para evitar leakage temporal.
 
 ---
 
-## 💻 Uso
+## Uso
 
 ### CLI Options
 
@@ -128,10 +175,10 @@ python -m src.train_e1_simple_pipeline
 # Skip download (usar datos existentes)
 python -m src.train_e1_simple_pipeline --tickers AAPL --skip-download
 
-# Skip cleaning (usar raw data)
+# Skip cleaning (usar datos limpios existentes)
 python -m src.train_e1_simple_pipeline --tickers AAPL --skip-cleaning
 
-# Solo entrenar (reutilizar datos descargados)
+# Solo entrenar (reutilizar datos)
 python -m src.train_e1_simple_pipeline --tickers AAPL --skip-download --skip-cleaning
 ```
 
@@ -140,7 +187,7 @@ python -m src.train_e1_simple_pipeline --tickers AAPL --skip-download --skip-cle
 ```
 ============================================================
 Pipeline E1 Simple - 1 tickers
-Output: runs/e1_simple/20260118_004042
+Output: runs/e1_simple/20260205_120000
 ============================================================
 
 Paso 1/3: Descargando datos...
@@ -153,31 +200,28 @@ Paso 2/3: Limpiando datos...
 
 Paso 3/3: Entrenando modelos...
 ------------------------------------------------------------
-Benchmark: SPY (2515 días)
-
 [1/1] AAPL
   ✓ Usando datos limpios: AAPL_daily.csv
-  Samples: 2046 | Features: 20 | Lookback: 180d
+  Samples: 2046 | Features: 15 | Lookback: 360d
   Split: train=1432 val=307 test=307
   Entrenando GRU [64]...
-  ✓ Epochs: 34/100 | Val Loss: 0.194798
+  ✓ Epochs: 34/100 | Val Loss: 0.1948
   ✓ MAE=0.1628 RMSE=0.1862 IC=0.273 Dir=50.8% Sharpe=0.68
-  ✓ Modelo guardado: AAPL_model.pth
 
 ============================================================
 ✓ Completado: 1/1 tickers
-  Resultados en: runs/e1_simple/20260118_004042/
+  Resultados en: runs/e1_simple/20260205_120000/
 ============================================================
 ```
 
 ---
 
-## 📁 Estructura de Resultados
+## Estructura de Resultados
 
 ```
-runs/e1_simple/20260118_004042/
+runs/e1_simple/20260205_120000/
 ├── config_used.yaml           # Config reproducible
-├── summary_all.csv             # Resumen de todos los tickers
+├── summary_all.csv            # Resumen de todos los tickers
 │
 ├── AAPL/
 │   ├── AAPL_predictions.csv   # (timestamp, y_true, y_pred)
@@ -192,46 +236,64 @@ runs/e1_simple/20260118_004042/
 
 ### Archivos Clave
 
-**`summary_all.csv`** - Métricas agregadas:
-- Datos: `ticker`, `n_samples`, `n_train`, `n_val`, `n_test`
-- ML: `ml_mae`, `ml_rmse`, `ml_ic`, `ml_directional_accuracy`
-- Backtest: `bt_sharpe`, `bt_cagr`, `bt_max_drawdown`, `bt_num_trades`
+**`summary_all.csv`** - Métricas agregadas por ticker:
+```csv
+ticker,n_samples,n_train,n_val,n_test,lookback_days,horizon_days,ml_mae,ml_rmse,ml_ic,ml_directional_accuracy,bt_sharpe,bt_cagr,bt_max_drawdown
+AAPL,2046,1432,307,307,360,90,0.1628,0.1862,0.273,0.508,0.68,0.12,-0.18
+```
 
-**`{ticker}_predictions.csv`**:
+**`{ticker}_predictions.csv`** - Predicciones vs realidad:
 ```csv
 timestamp,y_true,y_pred
 2024-01-15,-0.0234,0.0156
 2024-01-16,0.0421,0.0389
 ```
 
-**`{ticker}_backtest.csv`** - Serie temporal:
-- Columnas: `pos`, `signal`, `gross_ret`, `costs`, `net_ret`, `equity`, `turnover`
+**`{ticker}_model.pth`** - Modelo serializado con:
+- Pesos del modelo (state_dict)
+- Arquitectura (hidden_sizes, dropout, dense_units)
+- Scalers (mean/std de features y target)
+- Metadata (lookback_days, horizon_days, feature_names)
 
 ---
 
-## ⚙️ Configuración (base.yaml)
+## Configuración (base.yaml)
 
 ```yaml
 strategies:
   e1_simple:
-    lookback_days: 180        # Ventana entrada (6 meses)
+    enabled: true
+    frequency: "1D"
+    lookback_days: 360        # 1 año de datos de entrada
     horizon_days: 90          # Target: retorno a 90 días
-    
+    rebalance: "monthly"
+
     thresholds:
       tau_buy: 0.06           # +6% predicho → señal compra
       tau_sell: 0.00          # 0% o menos → cerrar posición
-    
+
+    filters:
+      regime:
+        type: "sma200"
+        sma200_required: true  # Solo operar si close > SMA200
+
+    risk:
+      stop_loss_pct: 0.10     # Stop loss del 10%
+
     model:
+      type: "GRU"
       gru_units: [64]         # 1 capa GRU
       dropout: 0.2
       dense_units: 16
+      loss: "huber"
+      huber_delta: 1.0
+      optimizer: "adamw"
       learning_rate: 0.001
       batch_size: 64
       max_epochs: 100
       early_stopping_patience: 10
-      loss: "huber"
-      huber_delta: 1.0
-    
+      clipnorm: 1.0
+
     backtest:
       holding_period_days: 90   # Holding period = horizon
       allow_short: false
@@ -243,75 +305,15 @@ costs:
 
 ---
 
-## 🔧 Personalización
-
-### 1. Modificar arquitectura GRU
-
-Para modelo más grande:
-```yaml
-strategies:
-  e1_simple:
-    model:
-      gru_units: [128]        # GRU más grande
-      dense_units: 32
-      dropout: 0.3            # Más regularización
-```
-
-### 2. Ajustar thresholds de señales
-
-Para cambiar la sensibilidad de entradas/salidas:
-```yaml
-strategies:
-  e1_simple:
-    thresholds:
-      tau_buy: 0.06
-      tau_sell: 0.00
-```
-
-### 3. Ajustar costos de transacción
-
-Para escenarios más conservadores:
-```yaml
-costs:
-  daily_round_trip_bps: 20
-```
-
----
-
-## 📊 Features (27 indicadores)
-
-**Precio y retorno (9):**
-- `ret_1d`, `ret_5d`, `ret_20d`, `ret_60d` - Retornos multihorizonte
-- `vol_20d`, `vol_60d` - Volatilidad realizada
-- `range_pct`, `atr_14`, `vol_zscore_60`
-
-**Tendencia (14):**
-- `sma_50`, `sma_200`, `ema_50` - Medias móviles
-- `close_sma200_dist` - Distancia a SMA(200)
-- `macd_line`, `macd_signal`, `macd_hist` - MACD
-- `bb_pct_b`, `bb_bandwidth` - Bollinger Bands
-- `adx_14` - Fuerza de tendencia
-- `rsi_14` - Momentum
-- `stoch_k`, `stoch_d` - Stochastic
-
-**Contexto benchmark (2):**
-- `bench_ret_1d`, `bench_ret_20d` - Retornos SPY
-
-**Volumen (2):**
-- `volume`, `volume_sma20_ratio`
-
----
-
-## 🔬 Airflow DAG
+## Airflow DAG
 
 El DAG `e1_simple_pipeline` ejecuta el pipeline completo:
 
 ### Tareas
-
-1. **download_daily_data** - Descarga OHLCV diario
+1. **download_daily_data** - Descarga OHLCV diario (yfinance)
 2. **clean_daily_data** - Limpia y valida datos
 3. **train_e1_simple_models** - Entrena modelos + MLflow logging
-4. **notify_api** - Notifica a FastAPI
+4. **notify_api** - Notifica a FastAPI (opcional)
 
 ### Trigger desde CLI
 
@@ -321,62 +323,44 @@ docker compose exec -T airflow-scheduler airflow dags trigger \
   e1_simple_pipeline \
   --conf '{"tickers": "AAPL", "skip_download": "False", "skip_cleaning": "False"}'
 
-# Reutilizando datos de E1 Conservative
+# Reutilizando datos existentes
 docker compose exec -T airflow-scheduler airflow dags trigger \
   e1_simple_pipeline \
   --conf '{"tickers": "AAPL,MSFT", "skip_download": "True", "skip_cleaning": "True"}'
-
-# Todos los tickers
-docker compose exec -T airflow-scheduler airflow dags trigger \
-  e1_simple_pipeline \
-  --conf '{"tickers": ""}'
 ```
-
-### Parámetros DAG
-
-- `tickers`: Lista separada por comas (vacío = todos del config)
-- `skip_download`: "True" = no descarga, reutiliza data/raw/daily
-- `skip_cleaning`: "True" = no limpia, reutiliza data/clean
 
 ### MLflow Tracking
 
-- **Experiment:** "E1_Simple_Strategy"
-- **Métricas por ticker:** mae, rmse, ic, directional_accuracy, bt_sharpe, bt_cagr, bt_max_drawdown
-- **Parámetros:** strategy, ticker, lookback_days, horizon_days, gru_units, etc.
-- **Artifacts:** models/, predictions/, backtest/
-- **Run summary:** summary_all.csv + métricas agregadas (IC mean/median/min/max)
-
-**Ver en UI:**
-- MLflow: http://localhost:5000 → Experiment "E1_Simple_Strategy"
-- Airflow: http://localhost:8080 → DAG "e1_simple_pipeline"
+- **Experiment:** "E1_Simple"
+- **Métricas:** mae, rmse, ic, directional_accuracy, bt_sharpe, bt_cagr, bt_max_drawdown
+- **Parámetros:** strategy, ticker, lookback_days, gru_units, learning_rate, etc.
+- **Artifacts:** models/, predictions/, backtest/, scalers/
 
 ---
 
-## 🎯 Casos de Uso
+## Casos de Uso
 
-### ✅ Cuándo usar E1 Simple
-
-1. **Desarrollo inicial** - Probar features rápidamente
+### Cuándo usar E1 Simple
+1. **Desarrollo inicial** - Probar features y arquitectura rápidamente
 2. **Experimentación** - Iterar hiperparámetros
-3. **Baseline** - Punto de comparación
-4. **Debugging** - Verificar pipeline funciona
-5. **Aprendizaje** - Entender flujo sin complejidad
+3. **Baseline** - Punto de comparación para modelos más complejos
+4. **Debugging** - Verificar que el pipeline funciona
+5. **Aprendizaje** - Entender el flujo sin complejidad de walk-forward
 
-### ❌ Cuándo usar E1 Conservative
-
+### Cuándo usar E1 Conservative
 1. **Producción** - Validación robusta con walk-forward
 2. **Paper académico** - Métricas rigurosas
-3. **Trading real** - Decisiones con dinero
-4. **Portafolio final** - Versión optimizada
+3. **Trading real** - Decisiones con dinero real
+4. **Validación final** - Antes de deploy
 
 ---
 
-## 🔄 Workflow Recomendado
+## Workflow Recomendado
 
 ```
 1. Desarrollo con E1 Simple
    ↓
-   Itera rápido (arquitectura, features, targets)
+   Iterar rápido (arquitectura, features)
    ↓
 2. Validación con E1 Conservative
    ↓
@@ -386,29 +370,31 @@ docker compose exec -T airflow-scheduler airflow dags trigger \
    ↓
    Tune hyperparams por ticker
    ↓
-4. Producción con E1 Conservative + tuned params
+4. Producción con modelo optimizado
 ```
 
 ---
 
-## 📚 Referencias
+## Referencias
 
 - [README_E1.md](README_E1.md) - E1 Conservative completo
+- [COMPARISON_E1.md](COMPARISON_E1.md) - Comparación detallada Simple vs Conservative
 - [README_AIRFLOW_USAGE.md](README_AIRFLOW_USAGE.md) - Uso de DAGs
 - [src/train_e1_simple_pipeline.py](src/train_e1_simple_pipeline.py) - Código fuente
+- [src/features/build_features_e1.py](src/features/build_features_e1.py) - Cálculo de features
 - [src/config/base.yaml](src/config/base.yaml) - Configuración
 
 ---
 
-## 💡 Tips
+## Tips
 
-1. **Empieza con E1 Simple** - Itera rápido
-2. **Compara métricas clave** - Simple vs Conservative deberían ser consistentes
-3. **Analiza summary_all.csv** - Distribución de métricas entre tickers
-4. **Revisa backtest CSV** - Equity curve y drawdowns
-5. **Skip download/clean** - Para experimentos rápidos
+1. **Empieza con E1 Simple** - Itera rápido antes de validar con Conservative
+2. **Revisa summary_all.csv** - Distribución de métricas entre tickers
+3. **Analiza backtest CSV** - Equity curve y drawdowns
+4. **Skip download/clean** - Para experimentos rápidos con datos existentes
+5. **Compara IC vs Sharpe** - Un buen IC no garantiza buen Sharpe (y viceversa)
 
 ---
 
-**Última actualización:** Febrero 2, 2026  
-**Versión:** 2.1 (removido Decision Score en E1 Simple)
+**Última actualización:** Febrero 5, 2026
+**Versión:** 3.0 (features optimizadas, lookback 360d)

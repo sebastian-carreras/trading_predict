@@ -66,7 +66,7 @@
   - **Features**: E2 = momentum (RSI, MACD), E1 = tendencia (SMA, ADX)
   - **Modelo**: E2 = LSTM, E1 = GRU
   - **Rebalanceo**: E2 = semanal, E1 = mensual
-  - **Lookback**: E2 = 60d, E1 = 180d
+  - **Lookback**: E2 = 60d, E1 = 360d
 
 - **Ver también**:
   - [README_E1.md](README_E1.md) - E1 Conservative

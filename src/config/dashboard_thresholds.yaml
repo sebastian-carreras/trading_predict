@@ -1,0 +1,355 @@
+# ============================================================
+# Dashboard Alert Thresholds — Per Strategy
+# ============================================================
+# Defines alert levels (green/yellow/red) for each metric
+# per strategy. Used by the dashboard checker and MLflow views.
+#
+# Convention:
+#   green  = metric meets target (good)
+#   yellow = metric is borderline (warning)
+#   red    = metric fails threshold (action needed)
+#
+# For "lower is better" metrics (MAE, RMSE, max_drawdown):
+#   green  = value ≤ green_max
+#   yellow = green_max < value ≤ red_min
+#   red    = value > red_min
+#
+# For "higher is better" metrics (IC, dir_acc, sharpe, cagr):
+#   green  = value ≥ green_min
+#   yellow = red_max ≤ value < green_min
+#   red    = value < red_max
+# ============================================================
+
+strategies:
+  # ----------------------------------------------------------
+  # E1 Simple — Desarrollo rápido, experimentación
+  # ----------------------------------------------------------
+  e1_simple:
+    display_name: "E1 Simple"
+    experiment_name: "E1_Simple"
+    description: "GRU 1 capa, time split, horizon 90d"
+
+    metrics:
+      # --- ML Metrics ---
+      ml_mae:
+        direction: "lower_is_better"
+        green_max: 0.03
+        red_min: 0.06
+        unit: ""
+
+      ml_rmse:
+        direction: "lower_is_better"
+        green_max: 0.05
+        red_min: 0.08
+        unit: ""
+
+      ml_ic:
+        direction: "higher_is_better"
+        green_min: 0.05
+        red_max: 0.02
+        unit: ""
+
+      ml_directional_accuracy:
+        direction: "higher_is_better"
+        green_min: 0.55
+        red_max: 0.50
+        unit: "%"
+
+      # --- Trading Metrics ---
+      bt_sharpe:
+        direction: "higher_is_better"
+        green_min: 1.0
+        red_max: 0.5
+        unit: ""
+
+      bt_cagr:
+        direction: "higher_is_better"
+        green_min: 0.08
+        red_max: 0.0
+        unit: "%"
+
+      bt_max_drawdown:
+        direction: "lower_is_better"   # abs value: 0.20 means -20%
+        green_max: 0.15
+        red_min: 0.25
+        unit: "%"
+
+    timing:
+      train_seconds:
+        warn_above: 120    # >2 min per ticker = warning
+        critical_above: 300  # >5 min = critical
+      predict_seconds:
+        warn_above: 5
+        critical_above: 15
+
+  # ----------------------------------------------------------
+  # E1 Conservative — Producción, walk-forward
+  # ----------------------------------------------------------
+  e1_conservative:
+    display_name: "E1 Conservative"
+    experiment_name: "E1_Conservative_Strategy"
+    description: "GRU 2 capas, walk-forward 5 folds, horizon 90d"
+
+    metrics:
+      ml_mae:
+        direction: "lower_is_better"
+        green_max: 0.03
+        red_min: 0.06
+        unit: ""
+
+      ml_rmse:
+        direction: "lower_is_better"
+        green_max: 0.05
+        red_min: 0.08
+        unit: ""
+
+      ml_ic:
+        direction: "higher_is_better"
+        green_min: 0.05
+        red_max: 0.02
+        unit: ""
+
+      ml_directional_accuracy:
+        direction: "higher_is_better"
+        green_min: 0.55
+        red_max: 0.50
+        unit: "%"
+
+      bt_sharpe:
+        direction: "higher_is_better"
+        green_min: 0.6
+        red_max: 0.3
+        unit: ""
+
+      bt_cagr:
+        direction: "higher_is_better"
+        green_min: 0.05
+        red_max: 0.0
+        unit: "%"
+
+      bt_max_drawdown:
+        direction: "lower_is_better"
+        green_max: 0.15
+        red_min: 0.25
+        unit: "%"
+
+    timing:
+      train_seconds:
+        warn_above: 600    # ~5 min per ticker (walk-forward)
+        critical_above: 1200
+      predict_seconds:
+        warn_above: 10
+        critical_above: 30
+
+  # ----------------------------------------------------------
+  # E2 Simple — Swing trading simplificado
+  # ----------------------------------------------------------
+  e2_simple:
+    display_name: "E2 Simple"
+    experiment_name: "E2_Simple"
+    description: "LSTM 2 capas, time split, horizon 20d"
+
+    metrics:
+      ml_mae:
+        direction: "lower_is_better"
+        green_max: 0.02
+        red_min: 0.04
+        unit: ""
+
+      ml_rmse:
+        direction: "lower_is_better"
+        green_max: 0.03
+        red_min: 0.06
+        unit: ""
+
+      ml_ic:
+        direction: "higher_is_better"
+        green_min: 0.05
+        red_max: 0.02
+        unit: ""
+
+      ml_directional_accuracy:
+        direction: "higher_is_better"
+        green_min: 0.55
+        red_max: 0.50
+        unit: "%"
+
+      bt_sharpe:
+        direction: "higher_is_better"
+        green_min: 0.8
+        red_max: 0.4
+        unit: ""
+
+      bt_cagr:
+        direction: "higher_is_better"
+        green_min: 0.10
+        red_max: 0.0
+        unit: "%"
+
+      bt_max_drawdown:
+        direction: "lower_is_better"
+        green_max: 0.15
+        red_min: 0.20
+        unit: "%"
+
+    timing:
+      train_seconds:
+        warn_above: 180
+        critical_above: 600
+      predict_seconds:
+        warn_above: 5
+        critical_above: 15
+
+  # ----------------------------------------------------------
+  # E2 Moderate — Swing trading robusto
+  # ----------------------------------------------------------
+  e2_moderate:
+    display_name: "E2 Moderate"
+    experiment_name: "E2_Moderate"
+    description: "LSTM 2 capas, walk-forward, horizon 20d"
+
+    metrics:
+      ml_mae:
+        direction: "lower_is_better"
+        green_max: 0.02
+        red_min: 0.04
+        unit: ""
+
+      ml_rmse:
+        direction: "lower_is_better"
+        green_max: 0.03
+        red_min: 0.06
+        unit: ""
+
+      ml_ic:
+        direction: "higher_is_better"
+        green_min: 0.05
+        red_max: 0.02
+        unit: ""
+
+      ml_directional_accuracy:
+        direction: "higher_is_better"
+        green_min: 0.55
+        red_max: 0.50
+        unit: "%"
+
+      bt_sharpe:
+        direction: "higher_is_better"
+        green_min: 0.8
+        red_max: 0.4
+        unit: ""
+
+      bt_cagr:
+        direction: "higher_is_better"
+        green_min: 0.10
+        red_max: 0.0
+        unit: "%"
+
+      bt_max_drawdown:
+        direction: "lower_is_better"
+        green_max: 0.15
+        red_min: 0.20
+        unit: "%"
+
+    timing:
+      train_seconds:
+        warn_above: 600
+        critical_above: 1200
+      predict_seconds:
+        warn_above: 10
+        critical_above: 30
+
+  # ----------------------------------------------------------
+  # E3 Intraday — Intraday 5-min bars
+  # ----------------------------------------------------------
+  e3_intraday:
+    display_name: "E3 Intraday"
+    experiment_name: "E3_Intraday"
+    description: "LSTM Ensemble (3 members), 5-min bars, horizon 6 bars"
+
+    metrics:
+      ml_mae:
+        direction: "lower_is_better"
+        green_max: 0.001
+        red_min: 0.003
+        unit: ""
+
+      ml_rmse:
+        direction: "lower_is_better"
+        green_max: 0.002
+        red_min: 0.005
+        unit: ""
+
+      ml_ic:
+        direction: "higher_is_better"
+        green_min: 0.03
+        red_max: 0.01
+        unit: ""
+
+      ml_directional_accuracy:
+        direction: "higher_is_better"
+        green_min: 0.52
+        red_max: 0.48
+        unit: "%"
+
+      # E3 uses tr_ prefix for trading metrics
+      tr_profit_factor:
+        direction: "higher_is_better"
+        green_min: 1.4
+        red_max: 1.0
+        unit: ""
+
+      tr_max_drawdown:
+        direction: "lower_is_better"
+        green_max: 0.03
+        red_min: 0.05
+        unit: "%"
+
+    timing:
+      train_seconds:
+        warn_above: 300
+        critical_above: 900
+      predict_seconds:
+        warn_above: 10
+        critical_above: 30
+
+  # ----------------------------------------------------------
+  # E4 Pairs — Pairs trading (cointegración)
+  # ----------------------------------------------------------
+  e4_pairs:
+    display_name: "E4 Pairs"
+    experiment_name: "E4_Pairs"
+    description: "Pairs trading, KNN signals, cointegración"
+
+    metrics:
+      sharpe:
+        direction: "higher_is_better"
+        green_min: 1.0
+        red_max: 0.5
+        unit: ""
+
+      max_drawdown:
+        direction: "lower_is_better"
+        green_max: 0.10
+        red_min: 0.20
+        unit: "%"
+
+      win_rate:
+        direction: "higher_is_better"
+        green_min: 0.55
+        red_max: 0.45
+        unit: "%"
+
+      total_return:
+        direction: "higher_is_better"
+        green_min: 0.05
+        red_max: 0.0
+        unit: "%"
+
+    timing:
+      train_seconds:
+        warn_above: 300
+        critical_above: 900
+      predict_seconds:
+        warn_above: 10
+        critical_above: 30

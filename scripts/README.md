@@ -91,7 +91,7 @@ Validación out-of-time con modelo GRU (E1 Simple).
 ```bash
 python scripts/evaluation/e1_retrospective_validation.py \
     --ticker AAPL \
-    --train-days-ago 180 \
+    --train-days-ago 360 \
     --horizon 90
 ```
 
@@ -107,7 +107,7 @@ Validación out-of-time con LinearRegression (baseline).
 ```bash
 python scripts/evaluation/e1_baseline_retrospective_validation.py \
     --ticker AAPL \
-    --train-days-ago 180 \
+    --train-days-ago 360 \
     --horizon 90
 ```
 

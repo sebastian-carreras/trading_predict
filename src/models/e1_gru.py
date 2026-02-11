@@ -2,7 +2,7 @@
 Modelo GRU para E1 (Estrategia Conservadora).
 
 Arquitectura según especificación:
-- Input: (sequence_length=180, features=F)
+- Input: (sequence_length=360, features=F)
 - GRU 1: 128 units, return_sequences=True, recurrent_dropout=0.1
 - Dropout: 0.2
 - GRU 2: 64 units, return_sequences=False, recurrent_dropout=0.1

@@ -72,10 +72,6 @@ def download_daily_data(**context):
     tickers_param = context['params'].get('tickers', '').strip()
     if tickers_param:
         tickers = [t.strip() for t in tickers_param.split(',') if t.strip()]
-        # Agregar benchmark si no está en la lista
-        benchmark = config.get("universe", {}).get("benchmark", "SPY")
-        if benchmark not in tickers:
-            tickers.append(benchmark)
     else:
         # Usar todos los tickers E1 del config
         e1_tickers = list(
@@ -83,8 +79,7 @@ def download_daily_data(**context):
             .get("tickers_by_strategy", {})
             .get("e1_conservative", [])
         )
-        benchmark = config.get("universe", {}).get("benchmark", "SPY")
-        tickers = e1_tickers + [benchmark] if benchmark not in e1_tickers else e1_tickers
+        tickers = e1_tickers
     
     out_dir = root / "data/raw/daily"
     
@@ -172,8 +167,6 @@ def train_baseline_with_mlflow(**context):
     if not tickers:
         return "No tickers to train for E1 baseline"
     
-    # Benchmark
-    benchmark = config.get("universe", {}).get("benchmark", "SPY")
     raw_dir = root / "data/clean"  # Baseline usa datos limpios
     
     # Output dir con timestamp

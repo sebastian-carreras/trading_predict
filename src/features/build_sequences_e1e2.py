@@ -20,7 +20,7 @@ def make_sequences(
     Args:
         features: DataFrame con features (index temporal)
         target: Series con target (mismo índice)
-        lookback: Ventana de lookback (ej. 180 días para E1)
+        lookback: Ventana de lookback (ej. 360 días para E1)
 
     Returns:
         X: (n_samples, lookback, n_features)

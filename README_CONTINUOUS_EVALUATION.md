@@ -18,7 +18,7 @@ Día 0: Predicción          Día 90: Evaluación        Día 120: Métricas Rol
 
 ### Experimentos
 
-1. **E1_Simple_Strategy** (original)
+1. **E1_Simple** (original)
    - Runs de entrenamiento
    - Métricas: IC, MAE, Sharpe, etc.
    - Artifacts: modelos, backtests
@@ -136,7 +136,7 @@ mlflow ui --backend-store-uri sqlite:///runs/mlflow_local/mlflow.db
 
 ```python
 # En MLflow UI
-# 1. Buscar run original: Experiment "E1_Simple_Strategy", ticker="AAPL"
+# 1. Buscar run original: Experiment "E1_Simple", ticker="AAPL"
 # 2. Buscar evaluación: Experiment "E1_Simple_Production_Tracking"
 # 3. Comparar métricas:
 #    - Training IC: 0.12
@@ -318,16 +318,16 @@ filter_string = """
 
 **Modelo GRU (E1 Simple completo):**
 ```bash
-# Entrenar con datos hasta hace 180 días, evaluar con datos de hoy
+# Entrenar con datos hasta hace 360 días, evaluar con datos de hoy
 python scripts/evaluation/e1_retrospective_validation.py \
     --ticker AAPL \
-    --train-days-ago 180 \
+    --train-days-ago 360 \
     --horizon 90
 
 # Usar MLflow en Docker
 python scripts/evaluation/e1_retrospective_validation.py \
     --ticker GGAL.BA \
-    --train-days-ago 180 \
+    --train-days-ago 360 \
     --mlflow-docker
 ```
 
@@ -336,7 +336,7 @@ python scripts/evaluation/e1_retrospective_validation.py \
 # Entrenar modelo baseline (Ridge Regression)
 python scripts/evaluation/e1_baseline_retrospective_validation.py \
     --ticker AAPL \
-    --train-days-ago 180 \
+    --train-days-ago 360 \
     --horizon 90
 ```
 

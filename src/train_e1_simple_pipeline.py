@@ -22,15 +22,27 @@ import copy
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+import time
 
 import numpy as np
 import pandas as pd
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # Cargar .env (MLflow, MinIO, etc.)
+except ImportError:
+    pass
 
 from .features.build_features_e1 import compute_e1_features, make_target_e1
 from .features.build_sequences_e1e2 import make_sequences, time_split
 from .models.e1_gru import GRURegressor
 from .backtest.backtest_daily import backtest_daily_signals, summarize_backtest
-from .utils import ensure_dir, load_yaml, project_root
+from .utils import ensure_dir, load_yaml, project_root, log_timing_event
+from .dashboard import (
+    log_dashboard_tags,
+    log_dashboard_timing,
+    log_metric_alerts,
+)
 
 
 def load_ohlcv_csv(path: Path) -> pd.DataFrame:
@@ -88,7 +100,7 @@ def run_e1_simple_for_ticker(
     ensure_dir(out_dir)
 
     e1_simple = config.get("strategies", {}).get("e1_simple", {})
-    lookback_days = int(e1_simple.get("lookback_days", 180))
+    lookback_days = int(e1_simple.get("lookback_days", 360))
     horizon_days = int(e1_simple.get("horizon_days", 90))
 
     model_cfg = e1_simple.get("model", {})
@@ -202,6 +214,8 @@ def run_e1_simple_for_ticker(
     )
     
     # AJUSTAR MODELO
+    train_started_at = datetime.now(timezone.utc).isoformat()
+    train_start = time.perf_counter()
     res = model.fit(
         X_train_s,                         # Features de train (normalizados)
         y_train_s,                         # Targets de train (normalizados)
@@ -214,10 +228,43 @@ def run_e1_simple_for_ticker(
         loss=loss,                         # Función de pérdida (huber o mse)
         huber_delta=huber_delta,           # Parámetro delta para Huber
     )
+    train_end = time.perf_counter()
+    train_ended_at = datetime.now(timezone.utc).isoformat()
+    log_timing_event(
+        strategy="e1_simple",
+        phase="train",
+        duration_seconds=train_end - train_start,
+        started_at=train_started_at,
+        ended_at=train_ended_at,
+        ticker=ticker,
+        run_dir=out_dir,
+        extra={
+            "split": "time_split",
+            "n_train": int(len(X_train)),
+            "n_val": int(len(X_val)),
+        },
+    )
     
     # REALIZAR PREDICCIONES EN TEST
     # Predicciones en escala normalizada
+    pred_started_at = datetime.now(timezone.utc).isoformat()
+    pred_start = time.perf_counter()
     y_pred_s = model.predict(X_test_s)  # Output normalizado del modelo
+    pred_end = time.perf_counter()
+    pred_ended_at = datetime.now(timezone.utc).isoformat()
+    log_timing_event(
+        strategy="e1_simple",
+        phase="predict",
+        duration_seconds=pred_end - pred_start,
+        started_at=pred_started_at,
+        ended_at=pred_ended_at,
+        ticker=ticker,
+        run_dir=out_dir,
+        extra={
+            "split": "time_split",
+            "n_test": int(len(X_test)),
+        },
+    )
     # Desnormalizar predicciones: volver a escala original
     y_pred = unscale_y(y_pred_s)        # Predicciones en escala real
     
@@ -374,6 +421,8 @@ def run_e1_simple_for_ticker(
         "ml_directional_accuracy": dir_acc,
         "ml_ic": ic,
         **{f"bt_{k}": float(v) for k, v in trading_metrics.items()},
+        "timing_train_seconds": round(train_end - train_start, 2),
+        "timing_predict_seconds": round(pred_end - pred_start, 4),
         "predictions_file": as_relative(out_dir / f"{ticker}_predictions.csv"),
         "backtest_file": as_relative(out_dir / f"{ticker}_backtest.csv"),
         "scaler_file": as_relative(out_dir / f"{ticker}_scaler.csv"),
@@ -464,6 +513,9 @@ def main():
         if tracking_uri:
             _mlflow.set_tracking_uri(tracking_uri)
         _mlflow.set_experiment(experiment_name)
+        # Validar que el backend funciona (start_run puede fallar si faltan deps como boto3)
+        _test_run = _mlflow.start_run(run_name="_init_test")
+        _mlflow.end_run()
         mlflow = _mlflow
         mlflow_enabled = True
         if tracking_uri:
@@ -545,9 +597,16 @@ def main():
                     mlflow.log_param("ticker", ticker)
                     mlflow.log_param("timestamp", timestamp)
 
+                    # Dashboard tags for filtering in MLflow UI
+                    log_dashboard_tags(
+                        strategy="e1_simple",
+                        ticker=ticker,
+                        run_type="train",
+                    )
+
                     mlflow.log_params(
                         {
-                            "lookback_days": int(e1_simple_cfg.get("lookback_days", 180)),
+                            "lookback_days": int(e1_simple_cfg.get("lookback_days", 360)),
                             "horizon_days": int(e1_simple_cfg.get("horizon_days", 90)),
                             "gru_units": str(model_cfg.get("gru_units", [64])),
                             "dropout": float(model_cfg.get("dropout", 0.2)),
@@ -584,27 +643,39 @@ def main():
                     if metrics:
                         mlflow.log_metrics(metrics)
 
-                    ticker_out = out_dir / ticker
-                    for fname in [
-                        f"{ticker}_predictions.csv",
-                        f"{ticker}_backtest.csv",
-                        f"{ticker}_summary.csv",
-                        f"{ticker}_scaler.csv",
-                        f"{ticker}_model.pth",
-                    ]:
-                        p = ticker_out / fname
-                        if p.exists():
-                            if "pred" in fname:
-                                artifact_path = "predictions"
-                            elif "backtest" in fname:
-                                artifact_path = "backtest"
-                            elif "model" in fname:
-                                artifact_path = "models"
-                            elif "scaler" in fname:
-                                artifact_path = "scalers"
-                            else:
-                                artifact_path = "artifacts"
-                            mlflow.log_artifact(str(p), artifact_path=artifact_path)
+                    # Dashboard: log timing + alert colors
+                    train_t = summary.get("timing_train_seconds")
+                    pred_t = summary.get("timing_predict_seconds")
+                    log_dashboard_timing(
+                        train_seconds=train_t,
+                        predict_seconds=pred_t,
+                    )
+                    log_metric_alerts("e1_simple", metrics)
+
+                    try:
+                        ticker_out = out_dir / ticker
+                        for fname in [
+                            f"{ticker}_predictions.csv",
+                            f"{ticker}_backtest.csv",
+                            f"{ticker}_summary.csv",
+                            f"{ticker}_scaler.csv",
+                            f"{ticker}_model.pth",
+                        ]:
+                            p = ticker_out / fname
+                            if p.exists():
+                                if "pred" in fname:
+                                    artifact_path = "predictions"
+                                elif "backtest" in fname:
+                                    artifact_path = "backtest"
+                                elif "model" in fname:
+                                    artifact_path = "models"
+                                elif "scaler" in fname:
+                                    artifact_path = "scalers"
+                                else:
+                                    artifact_path = "artifacts"
+                                mlflow.log_artifact(str(p), artifact_path=artifact_path)
+                    except Exception as art_exc:
+                        print(f"  ⚠️  MLflow artifacts no guardados: {art_exc}")
             else:
                 summary = run_e1_simple_for_ticker(
                     config=config,

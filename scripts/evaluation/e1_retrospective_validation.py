@@ -6,10 +6,10 @@ Simula entrenar modelo GRU en el pasado y evaluar con datos de hoy.
 Usa datos locales de data/clean/ si existen.
 
 Ejemplo:
-    # Entrenar con datos hasta hace 180 días, evaluar con datos de hoy
+    # Entrenar con datos hasta hace 360 días, evaluar con datos de hoy
     python scripts/e1_retrospective_validation.py \
         --ticker AAPL \
-        --train-days-ago 180 \
+        --train-days-ago 360 \
         --horizon 90
 
 Diferencias con baseline:
@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.utils import load_yaml, project_root
 from src.features.build_features_e1 import compute_e1_features
-from src.features.build_sequences import make_sequences
+from src.features.build_sequences_e1e2 import make_sequences
 from src.models.e1_gru import GRURegressor
 from src.backtest.backtest_daily import backtest_daily_signals, summarize_backtest
 
@@ -120,29 +120,38 @@ def train_retrospective_model_gru(
     features = compute_e1_features(ohlcv, benchmark_df)
     
     # Configuración
-    lookback_days = config.get("lookback_days", 180)
-    horizon_days = config.get("horizon_days", 90)
-    
-    # Crear targets (retorno forward)
-    close = ohlcv["close"].values
-    target = np.full(len(close), np.nan)
-    
-    for i in range(len(close) - horizon_days):
-        ret = (close[i + horizon_days] - close[i]) / close[i]
-        target[i] = ret
-    
-    # Alinear features con targets - crear Series con target
-    target_series = pd.Series(target, index=ohlcv.index, name='target')
-    
+    lookback_days = config.get("lookback_days", 360)  # días calendario
+    horizon_days = config.get("horizon_days", 90)     # días calendario
+
+    # Convertir lookback de días calendario a días hábiles (~252/365 ≈ 0.69)
+    # Usar floor y restar 1 para margen de seguridad
+    lookback_trading_days = int(lookback_days * 252 / 365) - 1
+
+    # Crear targets (retorno forward) - usar días CALENDARIO para horizon
+    close = ohlcv["close"]
+    target = pd.Series(index=ohlcv.index, dtype=float)
+
+    for i, current_date in enumerate(ohlcv.index):
+        # Buscar fecha horizon_days CALENDARIO hacia adelante
+        future_date = current_date + timedelta(days=horizon_days)
+        # Encontrar el índice más cercano (siguiente día hábil)
+        future_idx = ohlcv.index.searchsorted(future_date)
+        if future_idx < len(ohlcv):
+            ret = (close.iloc[future_idx] - close.iloc[i]) / close.iloc[i]
+            target.iloc[i] = ret
+
+    # Alinear features con targets
+    target_series = target.rename('target')
+
     print(f"✓ Features calculadas: {features.shape[1]} features, {len(features)} samples")
-    
-    # Crear secuencias 3D para GRU
-    print(f"🔄 Creando secuencias (lookback={lookback_days})...")
-    
+
+    # Crear secuencias 3D para GRU (usar días hábiles para lookback)
+    print(f"🔄 Creando secuencias (lookback={lookback_days} días cal. = {lookback_trading_days} días háb.)...")
+
     X_seq, y_seq, seq_timestamps, feature_names_seq = make_sequences(
         features=features,
         target=target_series,
-        lookback=lookback_days
+        lookback=lookback_trading_days
     )
     
     print(f"✓ Secuencias creadas: {X_seq.shape} (samples, lookback, features)")
@@ -278,8 +287,16 @@ def evaluate_out_of_time_gru(
             df = df.set_index("timestamp")
         else:
             df.index = pd.to_datetime(df.index)
-        
-        data = df[(df.index >= buffer_start) & (df.index <= eval_date)]
+
+        # Convertir buffer_start y eval_date a timezone-aware si el índice lo es
+        buffer_start_tz = buffer_start
+        eval_date_tz = eval_date
+        if df.index.tz is not None:
+            import pytz
+            buffer_start_tz = buffer_start.replace(tzinfo=pytz.UTC)
+            eval_date_tz = eval_date.replace(tzinfo=pytz.UTC)
+
+        data = df[(df.index >= buffer_start_tz) & (df.index <= eval_date_tz)]
         
         if len(data) == 0:
             print(f"⚠️  Archivo no tiene datos recientes, descargando...")
@@ -301,38 +318,52 @@ def evaluate_out_of_time_gru(
     # Calcular features
     features = compute_e1_features(data, benchmark_df)
     
-    # Crear targets
-    lookback_days = config.get("lookback_days", 180)
+    # Crear targets (retorno forward) - usar días CALENDARIO para horizon
+    lookback_days = config.get("lookback_days", 360)
     horizon_days = config.get("horizon_days", 90)
-    
-    close = data["close"].values
-    target = np.full(len(close), np.nan)
-    
-    for i in range(len(close) - horizon_days):
-        ret = (close[i + horizon_days] - close[i]) / close[i]
-        target[i] = ret
-    
-    # Filtrar período de evaluación - crear Series con target
-    target_series = pd.Series(target, index=data.index, name='target')
+
+    close = data["close"]
+    target = pd.Series(index=data.index, dtype=float)
+
+    for i, current_date in enumerate(data.index):
+        # Buscar fecha horizon_days CALENDARIO hacia adelante
+        future_date = current_date + timedelta(days=horizon_days)
+        # Encontrar el índice más cercano (siguiente día hábil)
+        future_idx = data.index.searchsorted(future_date)
+        if future_idx < len(data):
+            ret = (close.iloc[future_idx] - close.iloc[i]) / close.iloc[i]
+            target.iloc[i] = ret
+
+    # Alinear con target
+    target_series = target.rename('target')
     
     # Filtrar solo las features que necesitamos
     features_eval = features[feature_names]
     
-    # Filtrar por fechas
+    # Filtrar por fechas - manejar timezone
     eval_start = train_cutoff
-    mask = (features_eval.index >= eval_start) & (features_eval.index <= eval_date)
+    eval_end = eval_date
+    if features_eval.index.tz is not None:
+        import pytz
+        eval_start = train_cutoff.replace(tzinfo=pytz.UTC)
+        eval_end = eval_date.replace(tzinfo=pytz.UTC)
+    mask = (features_eval.index >= eval_start) & (features_eval.index <= eval_end)
     features_eval = features_eval[mask]
     target_eval = target_series[mask]
     
-    if len(features_eval) < lookback_days:
-        print(f"⚠️  No hay datos suficientes para evaluar (necesita {lookback_days} días, tiene {len(features_eval)})")
+    # Convertir lookback de días calendario a días hábiles (~252/365 ≈ 0.69)
+    # Usar floor y restar 1 para margen de seguridad
+    lookback_trading_days = int(lookback_days * 252 / 365) - 1
+
+    if len(features_eval) < lookback_trading_days:
+        print(f"⚠️  No hay datos suficientes para evaluar (necesita {lookback_trading_days} días hábiles, tiene {len(features_eval)})")
         return {}
     
-    # Crear secuencias
+    # Crear secuencias (usar días hábiles para lookback)
     X_seq, y_seq, seq_timestamps, _ = make_sequences(
         features=features_eval,
         target=target_eval,
-        lookback=lookback_days
+        lookback=lookback_trading_days
     )
     
     print(f"✓ Período evaluación: {len(X_seq)} secuencias ({seq_timestamps[0].date()} → {seq_timestamps[-1].date()})")
@@ -397,7 +428,7 @@ def evaluate_out_of_time_gru(
 def main():
     parser = argparse.ArgumentParser(description="Validación Retrospectiva E1 Simple (GRU)")
     parser.add_argument("--ticker", type=str, required=True, help="Ticker a evaluar")
-    parser.add_argument("--train-days-ago", type=int, default=180, help="Días atrás para entrenar")
+    parser.add_argument("--train-days-ago", type=int, default=360, help="Días atrás para entrenar")
     parser.add_argument("--horizon", type=int, default=90, help="Horizonte de predicción")
     parser.add_argument("--config", type=str, default="src/config/base.yaml", help="Path a config YAML")
     parser.add_argument("--mlflow-docker", action="store_true", help="Usar MLflow en Docker")
@@ -432,7 +463,7 @@ def main():
     else:
         # Fallback
         model_config = {
-            'lookback_days': 180,
+            'lookback_days': 360,
             'horizon_days': args.horizon,
             'thresholds': {'tau_buy': 0.05, 'tau_sell': 0.0},
             'costs': {'round_trip_bps': 10},
@@ -442,13 +473,8 @@ def main():
     # 1. Cargar/descargar datos hasta train_cutoff
     ohlcv = load_or_download_data(args.ticker, train_cutoff, data_dir)
     
-    # Benchmark
-    benchmark_ticker = config.get("universe", {}).get("benchmark", "SPY")
-    try:
-        benchmark_df = load_or_download_data(benchmark_ticker, train_cutoff, data_dir)
-    except:
-        print(f"⚠️  No se pudo cargar benchmark {benchmark_ticker}")
-        benchmark_df = None
+    # Benchmark deshabilitado
+    benchmark_df = None
     
     # 2. Entrenar modelo GRU (simulando estar en train_cutoff)
     model, scaler, feature_names, train_end, ml_metrics_test = train_retrospective_model_gru(

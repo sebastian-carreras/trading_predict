@@ -214,11 +214,8 @@ class E2HyperparameterOptimizer:
         validate_bounds(self.rsi14_min_bounds, "rsi14_min")
         validate_bounds(self.rsi14_max_bounds, "rsi14_max")
         
-        # Benchmark
-        benchmark = self.config.get("universe", {}).get("benchmark", "SPY")
-        raw_dir = self.root / "data/raw/daily"
-        benchmark_path = raw_dir / f"{benchmark}_daily.csv"
-        self.benchmark_df = load_ohlcv_csv(benchmark_path) if benchmark_path.exists() else None
+        # Benchmark deshabilitado
+        self.benchmark_df = None
         
         print(f"✓ Inicializado optimizador para {len(self.tickers)} tickers")
         print(f"  Tickers: {', '.join(self.tickers[:5])}{'...' if len(self.tickers) > 5 else ''}")

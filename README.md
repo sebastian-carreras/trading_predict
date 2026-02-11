@@ -21,7 +21,7 @@ docker-compose --profile all up -d
 
 # Acceder a interfaces
 # - Airflow UI: http://localhost:8080
-# - MLflow UI: http://localhost:5000
+# - MLflow UI: http://localhost:5050
 # - FastAPI Docs: http://localhost:8800/docs
 ```
 
@@ -257,7 +257,7 @@ Para poder implementar y evaluar de punta a punta sin bloquearse por disponibili
 - Intradía (E3): 20 bps round-trip (comisión + slippage), configurable como parámetro.
 
 **Targets y horizontes (cierre)**
-- E1 Conservadora: $H=90$ días, lookback = 180 días.
+- E1 Conservadora: $H=90$ días, lookback = 360 días.
 - E2 Moderada: $H=20$ días, lookback = 60 días.
 - E3 Intradía: $H=6$ barras de 5-min (30 min), lookback = 96 barras.
 - E4 Pairs: $H=10$ días para predicción (solo como confirmación), y reglas basadas en Z-score.
@@ -312,7 +312,7 @@ Para poder implementar y evaluar de punta a punta sin bloquearse por disponibili
 **Ventana temporal**
 - **Frecuencia**: diaria.
 - **Training window**: 3–5 años (mínimo 2).
-- **Sequence length (lookback)**: 120–252 días (≈ 6–12 meses). Recomendación inicial: **180 días**.
+- **Sequence length (lookback)**: 120–360 días (≈ 6–12 meses). Recomendación inicial: **360 días**.
 - **Prediction horizon**: 60 o 90 días.
 - **Rebalanceo**: mensual (o trimestral si el turnover es alto).
 
@@ -347,7 +347,7 @@ Para poder implementar y evaluar de punta a punta sin bloquearse por disponibili
    - Score agregado semanal con ventana cerrada (p. ej. lunes 00:00–domingo 23:59) y se aplica desde el lunes siguiente
 
 **Arquitectura de red (GRU)**```
-Input: (sequence_length=180, features=F)
+Input: (sequence_length=360, features=F)
 ↓
 GRU 1 (128 units, return_sequences=True, recurrent_dropout=0.1)
 ↓
@@ -746,7 +746,7 @@ La idea de esta checklist es que cada punto se pueda “tildar” con un entrega
 
 **Objetivo**: armar datasets (X, y) por estrategia con ventanas temporales.
 
-- [ ] E1: construir $y_t^{(90)}$ y secuencias lookback=180.
+- [ ] E1: construir $y_t^{(90)}$ y secuencias lookback=360.
 - [ ] E2: construir $y_t^{(20)}$ y secuencias lookback=60.
 - [ ] E3: construir $y_t^{(H)}$ con $H=6$ barras (30 min) y secuencias lookback=96 (5-min).
 - [ ] E4: construir spread $S_t$, Z-score $Z_t$, half-life, $\beta$ rolling y dataset k-NN.

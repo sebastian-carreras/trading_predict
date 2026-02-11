@@ -63,7 +63,7 @@ docker-compose --profile all up -d
   - Usuario: `admin` (configurable en .env)
   - Password: `admin123`
 
-- **MLflow UI**: http://localhost:5000
+- **MLflow UI**: http://localhost:5050
   - Tracking de experimentos
   - Registro de modelos
 
@@ -134,7 +134,7 @@ python -m src.train_e1_pipeline --tickers AAPL
 python -m src.train_e3_pipeline --mode run --tickers SPY
 
 # Con tracking MLflow
-export MLFLOW_TRACKING_URI=http://localhost:5000
+export MLFLOW_TRACKING_URI=http://localhost:5050
 python -m src.train_e1_pipeline
 ```
 

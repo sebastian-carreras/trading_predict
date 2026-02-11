@@ -24,11 +24,12 @@ Flujo:
 from __future__ import annotations  # Forward refs
 
 import argparse  # CLI args
-from datetime import datetime  # Timestamp
+from datetime import datetime, timezone  # Timestamp
 import json  # JSON
 import logging  # Logging
 import os  # Env vars
 from pathlib import Path  # Paths
+import time
 from typing import Dict, List, Tuple  # Typing
 
 import numpy as np  # NumPy
@@ -59,7 +60,7 @@ from .backtest.backtest_rules_e4 import (  # Backtest E4
     backtest_pair_strategy,         # Simula ejecución de trades
     summarize_pair_backtest,        # Resumen de resultados
 )  # Fin import backtest
-from .utils import ensure_dir, load_yaml, project_root  # Utils
+from .utils import ensure_dir, load_yaml, project_root, log_timing_event  # Utils
 
 logging.basicConfig(  # Config logging
     level=logging.INFO,  # Nivel
@@ -247,15 +248,43 @@ def process_pair(  # Procesar par
         logger.info(f"Best k for {pair_name}: {best_k}")  # Log
         
         # Entrenar modelo final
+        knn_train_started_at = datetime.now(timezone.utc).isoformat()
+        knn_train_start = time.perf_counter()
         knn_model = train_knn_model(  # Entrenar
             state_features, target, k=int(best_k), test_size=0.2  # Args
         )  # Fin train
-        
+        knn_train_end = time.perf_counter()
+        knn_train_ended_at = datetime.now(timezone.utc).isoformat()
+        log_timing_event(
+            strategy="e4_pairs",
+            phase="train",
+            duration_seconds=knn_train_end - knn_train_start,
+            started_at=knn_train_started_at,
+            ended_at=knn_train_ended_at,
+            ticker=pair_name,
+            run_dir=pair_dir,
+            extra={"component": "knn_model"},
+        )
+
         # Generar señales k-NN
         from .pairs.knn_confirm import generate_knn_signals  # Import
+        knn_pred_started_at = datetime.now(timezone.utc).isoformat()
+        knn_pred_start = time.perf_counter()
         knn_signals = generate_knn_signals(  # Generar
             spread_features, spread, k=int(best_k), horizon_days=horizon  # Args
         )  # Fin generate
+        knn_pred_end = time.perf_counter()
+        knn_pred_ended_at = datetime.now(timezone.utc).isoformat()
+        log_timing_event(
+            strategy="e4_pairs",
+            phase="predict",
+            duration_seconds=knn_pred_end - knn_pred_start,
+            started_at=knn_pred_started_at,
+            ended_at=knn_pred_ended_at,
+            ticker=pair_name,
+            run_dir=pair_dir,
+            extra={"component": "knn_signals"},
+        )
     
     # 6. Generar señales de trading
     entry_exit_config = config.get("entry_exit", {})  # Config entry/exit
@@ -264,6 +293,8 @@ def process_pair(  # Procesar par
     stop_z = entry_exit_config.get("stop_z", 3.0)  # Stop z
     time_stop_days = entry_exit_config.get("time_stop_days", 20)  # Time stop
     
+    signals_started_at = datetime.now(timezone.utc).isoformat()
+    signals_start = time.perf_counter()
     signals = generate_pair_signals(  # Señales
         zscore,  # Zscore
         spread,  # Spread
@@ -274,6 +305,18 @@ def process_pair(  # Procesar par
         use_knn=use_knn,  # Use kNN
         knn_signals=knn_signals,  # Señales kNN
     )  # Fin señales
+    signals_end = time.perf_counter()
+    signals_ended_at = datetime.now(timezone.utc).isoformat()
+    log_timing_event(
+        strategy="e4_pairs",
+        phase="predict",
+        duration_seconds=signals_end - signals_start,
+        started_at=signals_started_at,
+        ended_at=signals_ended_at,
+        ticker=pair_name,
+        run_dir=pair_dir,
+        extra={"component": "signals"},
+    )
     
     # 7. Backtest
     round_trip_bps = 20.0  # 2 activos x 10 bps

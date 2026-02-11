@@ -134,7 +134,7 @@ Aggressive:
 
 #### E1 Simple
 ```
-Input (180, 27)
+Input (360, 27)
   ↓
 GRU(64)          # 1 sola capa
   ↓
@@ -157,7 +157,7 @@ Parámetros: ~8,000
 
 #### E1 Conservadora
 ```
-Input (180, 27)
+Input (360, 27)
   ↓
 GRU(64) + return_sequences
   ↓
@@ -190,7 +190,7 @@ Parámetros: ~16,000
 ```yaml
 strategies:
   e1_simple:
-    lookback_days: 180
+    lookback_days: 360
     horizon_days: 90
     
     thresholds:
@@ -212,7 +212,7 @@ strategies:
 ```yaml
 strategies:
   e1_conservative:
-    lookback_days: 180
+    lookback_days: 360
     horizon_days: 90
     
     thresholds:

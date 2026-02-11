@@ -48,9 +48,10 @@ def diagnose_data_quality(df: pd.DataFrame, ticker: str) -> dict:
     if "volume" in df.columns:
         report["zero_volume_days"] = int((df["volume"] == 0).sum())
 
-    # 3. Timestamps duplicados
+    # 3. Duplicados por fecha (múltiples filas para el mismo día)
     if "timestamp" in df.columns:
-        report["duplicate_timestamps"] = int(df["timestamp"].duplicated().sum())
+        dates = pd.to_datetime(df["timestamp"]).dt.date
+        report["duplicate_timestamps"] = int(dates.duplicated().sum())
 
     # 4. Gaps en serie temporal (días faltantes vs días de mercado esperados)
     if "timestamp" in df.columns and len(df) > 1:
@@ -95,17 +96,37 @@ def clean_ohlcv_data(
     df_clean = df.copy()
     initial_rows = len(df_clean)
 
-    # 1. Eliminar duplicados de timestamp
-    if "timestamp" in df_clean.columns:
-        duplicates = df_clean["timestamp"].duplicated().sum()
-        if duplicates > 0:
-            df_clean = df_clean.drop_duplicates(subset=["timestamp"], keep="first")
-            if verbose:
-                print(f"  ⚠️  Eliminados {duplicates} timestamps duplicados")
-
-    # 2. Ordenar por timestamp
+    # 1. Ordenar por timestamp
     if "timestamp" in df_clean.columns:
         df_clean = df_clean.sort_values("timestamp").reset_index(drop=True)
+
+    # 2. Eliminar duplicados: para datos diarios, mantener solo 1 fila por fecha
+    if "timestamp" in df_clean.columns:
+        df_clean["_date"] = pd.to_datetime(df_clean["timestamp"]).dt.date
+        date_dupes = df_clean["_date"].duplicated().sum()
+        if date_dupes > 0:
+            # Agregar datos intraday a barras diarias (OHLCV correcto)
+            ohlcv_cols = {"open", "high", "low", "close", "volume"}
+            has_ohlcv = ohlcv_cols.issubset(set(df_clean.columns))
+            if has_ohlcv and date_dupes > len(df_clean) * 0.1:
+                # Muchos duplicates intraday → agregar correctamente
+                agg = df_clean.groupby("_date").agg(
+                    timestamp=("timestamp", "last"),
+                    open=("open", "first"),
+                    high=("high", "max"),
+                    low=("low", "min"),
+                    close=("close", "last"),
+                    volume=("volume", "sum"),
+                ).reset_index(drop=True)
+                df_clean = agg
+            else:
+                # Pocos duplicados → mantener última fila por fecha
+                df_clean = df_clean.drop_duplicates(subset=["_date"], keep="last")
+            if verbose:
+                print(f"  ⚠️  Eliminados {date_dupes} registros intraday duplicados (agregados a barras diarias)")
+        if "_date" in df_clean.columns:
+            df_clean = df_clean.drop(columns=["_date"])
+        df_clean = df_clean.reset_index(drop=True)
 
     # 3. Eliminar días con volumen=0 (sin trading real)
     if remove_zero_volume and "volume" in df_clean.columns:

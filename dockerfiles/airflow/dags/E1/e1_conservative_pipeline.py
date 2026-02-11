@@ -3,7 +3,7 @@ DAG de Airflow para Estrategia E1 - Conservadora (GRU)
 
 Flujo:
 1. Descargar datos diarios → data/raw/daily/
-2. Calcular features E1 (27 indicadores)
+2. Calcular features E1 (15 indicadores)
 3. Entrenar modelo GRU con MLflow tracking
 4. Guardar predicciones y métricas
 5. Notificar a FastAPI (modelo disponible)
@@ -70,10 +70,6 @@ def download_daily_data(**context):
     tickers_param = context['params'].get('tickers', '').strip()
     if tickers_param:
         tickers = [t.strip() for t in tickers_param.split(',') if t.strip()]
-        # Agregar benchmark si no está en la lista
-        benchmark = config.get("universe", {}).get("benchmark", "SPY")
-        if benchmark not in tickers:
-            tickers.append(benchmark)
     else:
         # Usar todos los tickers del config
         tickers = list(config.get("universe", {}).get("tickers", []))
@@ -201,15 +197,8 @@ def train_e1_with_mlflow(**context):
     if not tickers:
         return "No tickers to train for E1 strategy"
     
-    # Benchmark
-    benchmark = config.get("universe", {}).get("benchmark", "SPY")
-    raw_dir = root / "data/raw/daily"
-    benchmark_path = raw_dir / f"{benchmark}_daily.csv"
-    
-    if benchmark_path.exists():
-        benchmark_df = load_ohlcv_csv(benchmark_path)
-    else:
-        benchmark_df = None
+    # Benchmark deshabilitado
+    benchmark_df = None
     
     # Output dir con timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

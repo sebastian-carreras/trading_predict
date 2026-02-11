@@ -184,7 +184,7 @@ docker ps | grep airflow
    - Click "Trigger"
    - ⏱ Esperar ~8-12 min
 
-4. **Ver resultados en MLflow**: http://localhost:5000
+4. **Ver resultados en MLflow**: http://localhost:5050
    - Experimento: `E1_Baseline_LinearRegression`
    - Comparar con: `E1_Conservative_Strategy`
 

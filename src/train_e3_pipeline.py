@@ -23,8 +23,9 @@ from __future__ import annotations  # Forward refs
 
 import argparse  # CLI args
 import os  # Env vars
-from datetime import datetime  # Timestamps
+from datetime import datetime, timezone  # Timestamps
 from pathlib import Path  # Paths
+import time
 
 import numpy as np  # NumPy
 import pandas as pd  # Pandas
@@ -38,7 +39,7 @@ from .data.intraday_yfinance import download_ohlcv_5m, load_ohlcv_csv  # Data in
 from .features.build_features_e3 import compute_intraday_features, make_sequences, make_target_return  # Features/target
 from .models.e3_lstm import LSTMRegressor  # Modelo LSTM
 from .reporting.intraday_metrics import directional_accuracy, information_coefficient, mae, rmse  # Métricas
-from .utils import ensure_dir, get_nested, load_yaml, project_root  # Utils
+from .utils import ensure_dir, get_nested, load_yaml, project_root, log_timing_event  # Utils
 
 
 def _time_split(n: int, train_frac: float = 0.7, val_frac: float = 0.15):  # Split temporal
@@ -189,6 +190,8 @@ def run_for_ticker(config: dict, ticker: str, raw_dir: Path, out_dir: Path) -> d
         )  # Fin init
         
         # Entrenar modelo
+        train_started_at = datetime.now(timezone.utc).isoformat()
+        train_start = time.perf_counter()
         res = model.fit(  # Entrenar
             X_train_s,  # X train
             y_train,  # y train
@@ -202,9 +205,45 @@ def run_for_ticker(config: dict, ticker: str, raw_dir: Path, out_dir: Path) -> d
             huber_delta=huber_delta,  # Delta
             verbose=True,  # Verbose
         )  # Fin fit
+        train_end = time.perf_counter()
+        train_ended_at = datetime.now(timezone.utc).isoformat()
+        log_timing_event(
+            strategy="e3_intraday",
+            phase="train",
+            duration_seconds=train_end - train_start,
+            started_at=train_started_at,
+            ended_at=train_ended_at,
+            ticker=ticker,
+            run_dir=out_dir,
+            extra={
+                "member": int(m + 1),
+                "split": "time_split",
+                "n_train": int(len(X_train)),
+                "n_val": int(len(X_val)),
+            },
+        )
         
         val_losses.append(res.best_val_loss)  # Guardar val loss
-        preds_members.append(model.predict(X_test_s))  # Guardar preds
+        pred_started_at = datetime.now(timezone.utc).isoformat()
+        pred_start = time.perf_counter()
+        member_pred = model.predict(X_test_s)  # Guardar preds
+        pred_end = time.perf_counter()
+        pred_ended_at = datetime.now(timezone.utc).isoformat()
+        log_timing_event(
+            strategy="e3_intraday",
+            phase="predict",
+            duration_seconds=pred_end - pred_start,
+            started_at=pred_started_at,
+            ended_at=pred_ended_at,
+            ticker=ticker,
+            run_dir=out_dir,
+            extra={
+                "member": int(m + 1),
+                "split": "time_split",
+                "n_test": int(len(X_test)),
+            },
+        )
+        preds_members.append(member_pred)  # Guardar preds
         print(f"  Modelo {m+1} final: val_loss={res.best_val_loss:.6f}, epochs={res.epochs_ran}")  # Log
 
     print(f"\nEnsemble completado. Promediando {len(preds_members)} predicciones...")  # Log

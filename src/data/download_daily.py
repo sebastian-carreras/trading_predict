@@ -235,12 +235,8 @@ def main() -> None:
     root = project_root()
     config = load_yaml(root / "src/config/base.yaml")
 
-    # Universo global (E1 + E2 + benchmark)
+    # Universo global (sin benchmark forzado)
     tickers = list(config.get("universe", {}).get("tickers", []))
-    benchmark = config.get("universe", {}).get("benchmark", "SPY")
-
-    if benchmark and benchmark not in tickers:
-        tickers.append(benchmark)
 
     if not tickers:
         raise ValueError("No tickers found in base.yaml universe.tickers")

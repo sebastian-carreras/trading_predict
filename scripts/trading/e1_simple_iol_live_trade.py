@@ -455,13 +455,8 @@ def main():
     print("3️⃣  Descargando datos recientes...")
     ohlcv = download_recent_data(args.ticker, days=365)
     
-    # Descargar benchmark si está disponible
-    benchmark_ticker = config.get("universe", {}).get("benchmark", "SPY")
-    try:
-        benchmark_df = download_recent_data(benchmark_ticker, days=365)
-    except:
-        print(f"⚠️  No se pudo descargar benchmark {benchmark_ticker}, continuando sin él")
-        benchmark_df = None
+    # Benchmark deshabilitado
+    benchmark_df = None
     print()
     
     # 5. Hacer predicción

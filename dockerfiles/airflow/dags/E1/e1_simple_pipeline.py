@@ -83,10 +83,6 @@ def download_daily_data(**context):
     tickers_param = context['params'].get('tickers', '').strip()
     if tickers_param:
         tickers = [t.strip() for t in tickers_param.split(',') if t.strip()]
-        # Agregar benchmark si no está en la lista
-        benchmark = config.get("universe", {}).get("benchmark", "SPY")
-        if benchmark not in tickers:
-            tickers.append(benchmark)
     else:
         # Usar todos los tickers del config para E1 Simple
         tickers = list(
@@ -236,7 +232,7 @@ def train_e1_simple_with_mlflow(**context):
             model_config = e1_simple_config.get("model", {})
 
             print(
-                f"[{i}/{len(tickers)}] Entrenando {ticker} | lookback={e1_simple_config.get('lookback_days', 180)} "
+                f"[{i}/{len(tickers)}] Entrenando {ticker} | lookback={e1_simple_config.get('lookback_days', 360)} "
                 f"horizon={e1_simple_config.get('horizon_days', 90)} | gru_units={model_config.get('gru_units', [64])} "
                 f"lr={model_config.get('learning_rate', 0.001)} batch={model_config.get('batch_size', 64)}"
             )
@@ -245,7 +241,7 @@ def train_e1_simple_with_mlflow(**context):
             mlflow.log_params({
                 "strategy": "e1_simple",
                 "ticker": ticker,
-                "lookback_days": e1_simple_config.get("lookback_days", 180),
+                "lookback_days": e1_simple_config.get("lookback_days", 360),
                 "horizon_days": e1_simple_config.get("horizon_days", 90),
                 "model_type": "GRU",
                 "walk_forward": False,

@@ -151,7 +151,7 @@ curl -X POST "http://localhost:8080/api/v1/dags/e1_baseline_linear_regression/da
 - Ver logs de cada task en Airflow UI → DAG → Task → Logs
 
 ### Métricas en MLflow
-- Navegar a: http://localhost:5000
+- Navegar a: http://localhost:5050
 - Buscar experimento: `E1_Baseline_LinearRegression`
 - Filtrar runs por fecha/ticker
 - Comparar métricas en gráficos

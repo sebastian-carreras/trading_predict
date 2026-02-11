@@ -7,10 +7,10 @@ Esto valida que el modelo funciona en condiciones de producción reales.
 Usa LinearRegression simple (mismo que e1_baseline_linear.py) sin regularización.
 
 Ejemplo:
-    # Entrenar con datos hasta hace 180 días, evaluar con datos de hoy
+    # Entrenar con datos hasta hace 360 días, evaluar con datos de hoy
     python scripts/e1_baseline_retrospective_validation.py \
         --ticker AAPL \
-        --train-days-ago 180 \
+        --train-days-ago 360 \
         --horizon 90
 
 Esto:
@@ -92,7 +92,7 @@ def train_retrospective_model(
     features = compute_e1_features(ohlcv, benchmark_df)
     
     # Configuración del modelo
-    lookback_days = config.get("lookback_days", 180)
+    lookback_days = config.get("lookback_days", 360)
     horizon_days = config.get("horizon_days", 90)
     
     # Crear targets (retorno forward)
@@ -223,7 +223,7 @@ def evaluate_out_of_time(
     features = compute_e1_features(data, benchmark_df)
     
     # Crear targets
-    lookback_days = config.get("lookback_days", 180)
+    lookback_days = config.get("lookback_days", 360)
     horizon_days = config.get("horizon_days", 90)
     
     close = data["close"].values
@@ -306,7 +306,7 @@ def evaluate_out_of_time(
 def main():
     parser = argparse.ArgumentParser(description="Validación Retrospectiva E1 Simple")
     parser.add_argument("--ticker", type=str, required=True, help="Ticker a evaluar")
-    parser.add_argument("--train-days-ago", type=int, default=90, help="Días atrás para entrenar")
+    parser.add_argument("--train-days-ago", type=int, default=360, help="Días atrás para entrenar")
     parser.add_argument("--horizon", type=int, default=90, help="Horizonte de predicción")
     parser.add_argument("--config", type=str, default="src/config/base.yaml", help="Path a config YAML")
     parser.add_argument("--mlflow-docker", action="store_true", help="Usar MLflow en Docker")
@@ -337,7 +337,7 @@ def main():
     else:
         # Fallback: crear config mínima
         model_config = {
-            'lookback_days': 180,
+            'lookback_days': 360,
             'horizon_days': args.horizon,
             'thresholds': {'tau_buy': 0.05, 'tau_sell': 0.0},
             'costs': {'round_trip_bps': 10},
@@ -348,13 +348,8 @@ def main():
     # 1. Descargar datos hasta train_cutoff
     ohlcv = download_data_with_cutoff(args.ticker, train_cutoff)
     
-    # Benchmark
-    benchmark_ticker = config.get("universe", {}).get("benchmark", "SPY")
-    try:
-        benchmark_df = download_data_with_cutoff(benchmark_ticker, train_cutoff)
-    except:
-        print(f"⚠️  No se pudo descargar benchmark {benchmark_ticker}")
-        benchmark_df = None
+    # Benchmark deshabilitado
+    benchmark_df = None
     
     # 2. Entrenar modelo (simulando estar en train_cutoff)
     model, scaler_X, scaler_y, feature_names, train_end, ml_metrics_test, test_data = train_retrospective_model(

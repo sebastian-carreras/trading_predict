@@ -133,12 +133,12 @@ strategies:
   e1_conservative:
     enabled: true
     frequency: "1D"
-    lookback_days: 180
+    lookback_days: 360
     horizon_days: 90
     rebalance: "monthly"
 
     thresholds:
-      tau_buy: 0.06
+      tau_buy: 0.02
       tau_sell: 0.00
 
     filters:
@@ -180,7 +180,7 @@ strategies:
   e1_simple:
     enabled: true
     frequency: "1D"
-    lookback_days: 180
+    lookback_days: 360
     horizon_days: 90
     rebalance: "monthly"
 

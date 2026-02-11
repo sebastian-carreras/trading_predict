@@ -15,20 +15,27 @@ from __future__ import annotations
 
 import argparse
 import copy
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 from functools import lru_cache
+import time
 
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import TimeSeriesSplit
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # Cargar .env (MLflow, MinIO, etc.)
+except ImportError:
+    pass
+
 from .features.build_features_e1 import compute_e1_features, make_target_e1
 from .features.build_sequences_e1e2 import make_sequences, time_split, temporal_train_val_split
 from .models.e1_gru import GRURegressor
 from .backtest.backtest_daily import backtest_daily_signals, summarize_backtest
-from .utils import ensure_dir, load_yaml, project_root
+from .utils import ensure_dir, load_yaml, project_root, log_timing_event
 
 
 @lru_cache(maxsize=8)
@@ -43,6 +50,14 @@ def _load_tuned_params(path_str: str) -> dict:
 
 
 def _apply_tuned_overrides(*, config: dict, strategy_key: str, ticker: str) -> dict:
+    """Aplica overrides de Optuna (por ticker) sobre el config base.
+
+    Busca un YAML con parámetros optimizados por ticker en:
+      1. E1_TUNED_PARAMS_PATH (env var, prioridad alta)
+      2. TUNED_PARAMS_PATH (env var, fallback)
+
+    Si el ticker tiene parámetros tuneados, sobreescribe thresholds, model y splits.
+    """
     tuned_path = (
         os.getenv("E1_TUNED_PARAMS_PATH", "").strip()
         or os.getenv("TUNED_PARAMS_PATH", "").strip()
@@ -50,33 +65,80 @@ def _apply_tuned_overrides(*, config: dict, strategy_key: str, ticker: str) -> d
     if not tuned_path:
         return config
 
-    all_tuned = _load_tuned_params(tuned_path)
+    # Resolver path relativo al root del proyecto
+    resolved = Path(tuned_path)
+    if not resolved.is_absolute():
+        try:
+            resolved = project_root() / resolved
+        except Exception:
+            pass
+
+    all_tuned = _load_tuned_params(str(resolved))
+    if not all_tuned:
+        print(f"  ⚠️  Optuna: archivo no encontrado o vacío: {resolved}")
+        return config
+
     per_ticker = all_tuned.get(ticker)
     if not isinstance(per_ticker, dict):
         return config
 
+    # --- Aplicar overrides y loguear ---
     strat = config.setdefault("strategies", {}).setdefault(strategy_key, {})
+    overrides_applied: list[str] = []
 
     thresholds = per_ticker.get("thresholds")
     if isinstance(thresholds, dict):
         strat.setdefault("thresholds", {}).update(thresholds)
+        parts = [f"{k}={v}" for k, v in thresholds.items()]
+        overrides_applied.append(f"thresholds({', '.join(parts)})")
 
     model = per_ticker.get("model")
     if isinstance(model, dict):
         strat.setdefault("model", {}).update(model)
+        key_params = []
+        if "gru_units" in model:
+            key_params.append(f"GRU {model['gru_units']}")
+        if "dropout" in model:
+            key_params.append(f"dropout={model['dropout']}")
+        if "learning_rate" in model:
+            key_params.append(f"lr={model['learning_rate']:.6f}")
+        if "batch_size" in model:
+            key_params.append(f"batch={model['batch_size']}")
+        if key_params:
+            overrides_applied.append(f"model({', '.join(key_params)})")
 
     if "n_folds" in per_ticker or "internal_val_fraction" in per_ticker:
         splits = config.setdefault("splits", {})
+        split_parts = []
         if "n_folds" in per_ticker:
             splits["folds"] = int(per_ticker["n_folds"])
+            split_parts.append(f"folds={per_ticker['n_folds']}")
         if "internal_val_fraction" in per_ticker:
             splits["internal_val_fraction"] = float(per_ticker["internal_val_fraction"])
+            split_parts.append(f"val_frac={per_ticker['internal_val_fraction']}")
+        overrides_applied.append(f"splits({', '.join(split_parts)})")
+
+    if overrides_applied:
+        print(f"  ✓ Optuna overrides para {ticker}: {' | '.join(overrides_applied)}")
 
     return config
 
 
 def load_ohlcv_csv(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path)
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"CSV file not found: {path}")
+    if path.is_dir():
+        raise IsADirectoryError(f"Expected CSV file but got directory: {path}")
+
+    try:
+        # EmptyDataError: file exists but has no header/rows (e.g., 0 bytes or only newlines)
+        df = pd.read_csv(path)
+    except pd.errors.EmptyDataError as exc:
+        size = path.stat().st_size
+        raise ValueError(
+            f"Empty/invalid CSV (no columns to parse): {path} (size={size} bytes)"
+        ) from exc
     if "timestamp" not in df.columns:
         raise ValueError(f"Missing 'timestamp' column in {path}")
 
@@ -221,6 +283,15 @@ def run_e1_walk_forward(  # Walk-forward completo
 
     last_model_payload: dict | None = None  # Payload del último fold (para guardar)
     last_torch = None  # Referencia a torch para serializar el modelo
+    last_mean_X = None  # Media de X del último fold
+    last_std_X = None  # Std de X del último fold
+    last_mean_y = None  # Media de y del último fold
+    last_std_y = None  # Std de y del último fold
+    total_train_seconds = 0.0  # Acumular timing de train
+    total_predict_seconds = 0.0  # Acumular timing de predict
+    total_train_samples = 0  # Acumular n_train
+    total_val_samples = 0  # Acumular n_val
+    val_losses: list[float] = []  # Val loss por fold
 
     root = project_root()  # Directorio raíz del proyecto (para paths relativos)
 
@@ -299,6 +370,8 @@ def run_e1_walk_forward(  # Walk-forward completo
             seed=seed,  # Seed para reproducibilidad
         )
 
+        train_started_at = datetime.now(timezone.utc).isoformat()
+        train_start = time.perf_counter()
         res = model.fit(
             X_train_s,  # X train
             y_train_s,  # y train
@@ -311,11 +384,55 @@ def run_e1_walk_forward(  # Walk-forward completo
             loss=loss,  # Tipo de loss
             huber_delta=huber_delta,  # Delta Huber
         )
+        train_end = time.perf_counter()
+        train_ended_at = datetime.now(timezone.utc).isoformat()
+        total_train_seconds += train_end - train_start
+        total_train_samples += int(len(train_idx))
+        total_val_samples += int(len(val_idx))
+        val_losses.append(float(res.best_val_loss))
+        log_timing_event(
+            strategy="e1_conservative",
+            phase="train",
+            duration_seconds=train_end - train_start,
+            started_at=train_started_at,
+            ended_at=train_ended_at,
+            ticker=ticker,
+            run_dir=out_dir,
+            extra={
+                "split": "walk_forward",
+                "fold": int(fold_idx),
+                "n_train": int(len(train_idx)),
+                "n_val": int(len(val_idx)),
+            },
+        )
 
+        pred_started_at = datetime.now(timezone.utc).isoformat()
+        pred_start = time.perf_counter()
         y_pred_s = model.predict(X_test_s)  # Predicciones escaladas
+        pred_end = time.perf_counter()
+        pred_ended_at = datetime.now(timezone.utc).isoformat()
+        total_predict_seconds += pred_end - pred_start
+        log_timing_event(
+            strategy="e1_conservative",
+            phase="predict",
+            duration_seconds=pred_end - pred_start,
+            started_at=pred_started_at,
+            ended_at=pred_ended_at,
+            ticker=ticker,
+            run_dir=out_dir,
+            extra={
+                "split": "walk_forward",
+                "fold": int(fold_idx),
+                "n_test": int(len(test_idx)),
+            },
+        )
         y_pred = unscale_y(y_pred_s)  # Predicciones en escala original
 
         last_torch = model.torch  # Guardamos referencia para serializar
+        last_mean_X = mean_X
+        last_std_X = std_X
+        last_mean_y = mean_y
+        last_std_y = std_y
 
         ts_test = ts[test_idx]  # Timestamps de test
         window_label = f"{ts_test[0].date()} -> {ts_test[-1].date()}"  # Etiqueta de ventana
@@ -325,7 +442,7 @@ def run_e1_walk_forward(  # Walk-forward completo
         last_model_payload = {
             "ticker": ticker,  # Ticker del activo
             "strategy": "e1_conservative",  # Nombre de estrategia
-            "created_at": datetime.utcnow().isoformat(),  # Timestamp UTC de entrenamiento
+            "created_at": datetime.now(timezone.utc).isoformat(),  # Timestamp UTC de entrenamiento
             "model_class": "GRURegressor",  # Clase del modelo
             "model_kwargs": {
                 "input_size": int(X_train.shape[-1]),  # Número de features
@@ -458,9 +575,21 @@ def run_e1_walk_forward(  # Walk-forward completo
                 "Si querés permitir continuar sin guardar, setear REQUIRE_MODEL_SAVE=0."
             )  # Error si se exige guardado
 
+    scaler_path = None
+    if last_mean_X is not None and last_std_X is not None:
+        scaler_X_df = pd.DataFrame({"mean": last_mean_X, "std": last_std_X}, index=feat_names)
+        scaler_path = out_dir / f"{ticker}_scaler.csv"
+        scaler_X_df.to_csv(scaler_path)
+
+    if last_mean_y is not None and last_std_y is not None:
+        scaler_y_df = pd.DataFrame({"mean_y": [last_mean_y], "std_y": [last_std_y]})
+        scaler_y_df.to_csv(out_dir / f"{ticker}_target_scaler.csv", index=False)
+
     summary = {
         "ticker": ticker,  # Ticker
         "n_samples": int(n_samples),  # Total de muestras
+        "n_train": int(total_train_samples),  # Total de muestras train
+        "n_val": int(total_val_samples),  # Total de muestras val
         "n_test": int(len(combined_preds)),  # Total de samples evaluadas
         "folds": int(len(fold_df)),  # Cantidad de folds
         "lookback_days": int(lookback_days),  # Lookback
@@ -468,15 +597,18 @@ def run_e1_walk_forward(  # Walk-forward completo
         "split_method": "walk_forward",  # Método de split
         "walkforward_test_size": int(test_size),  # Tamaño test por fold
         "walkforward_gap": int(gap_samples),  # Gap entre train/test
+        "val_loss": float(np.mean(val_losses)) if val_losses else None,  # Val loss promedio
         "ml_mae": mae_all,  # MAE global
         "ml_rmse": rmse_all,  # RMSE global
         "ml_directional_accuracy": dir_acc_all,  # Accuracy direccional
         "ml_ic": ic_all,  # IC global
         **{f"bt_{k}": float(v) for k, v in trading_metrics_all.items()},  # Métricas backtest
-        "folds_file": as_relative(out_dir / f"{ticker}_walkforward_folds.csv"),  # CSV folds
+        "timing_train_seconds": round(total_train_seconds, 2),  # Timing train total
+        "timing_predict_seconds": round(total_predict_seconds, 4),  # Timing predict total
         "predictions_file": as_relative(out_dir / f"{ticker}_walkforward_predictions.csv"),  # CSV preds
         "backtest_file": as_relative(out_dir / f"{ticker}_walkforward_backtest.csv"),  # CSV backtest
-        "plot_file": as_relative(plot_path),  # Gráfico
+        "scaler_file": as_relative(scaler_path) if scaler_path else "",  # CSV scaler
+        "model_file": as_relative(model_path) if last_model_payload is not None and last_torch is not None else "",  # Modelo
     }  # Fin set REQUIRE_MODEL_SAVE
 
     return summary  # Retornar resumen final del walk-forward
@@ -508,9 +640,17 @@ def run_e1_for_ticker(
         out_dir = out_dir / ticker  # Asegurar carpeta por ticker
     ensure_dir(out_dir)  # Crear carpeta si no existe
 
+    root = project_root()
+
+    def as_relative(path: Path) -> str:
+        try:
+            return str(path.relative_to(root))
+        except ValueError:
+            return str(path)
+
     # Parámetros E1 del config
     e1 = config.get("strategies", {}).get("e1_conservative", {})  # Sección E1
-    lookback_days = int(e1.get("lookback_days", 180))  # Lookback por default 180
+    lookback_days = int(e1.get("lookback_days", 360))  # Lookback por default 360
     horizon_days = int(e1.get("horizon_days", 90))  # Horizonte por default 90
 
     model_cfg = e1.get("model", {})  # Sección de modelo
@@ -650,6 +790,8 @@ def run_e1_for_ticker(
     )
 
     print(f"Entrenando GRU para {ticker}...")  # Log inicio entrenamiento
+    train_started_at = datetime.now(timezone.utc).isoformat()
+    train_start = time.perf_counter()
     res = model.fit(
         X_train_s,  # Features de entrenamiento (normalizados)
         y_train_s,  # Targets de entrenamiento (normalizados)
@@ -661,6 +803,23 @@ def run_e1_for_ticker(
         early_stopping_patience=patience,  # Parar si no mejora en N épocas
         loss=loss,  # Función de pérdida: "huber" o "mse"
         huber_delta=huber_delta,  # Parámetro delta para loss Huber
+    )
+    train_end = time.perf_counter()
+    train_ended_at = datetime.now(timezone.utc).isoformat()
+    train_seconds = train_end - train_start
+    log_timing_event(
+        strategy="e1_conservative",
+        phase="train",
+        duration_seconds=train_seconds,
+        started_at=train_started_at,
+        ended_at=train_ended_at,
+        ticker=ticker,
+        run_dir=out_dir,
+        extra={
+            "split": splits_cfg.get("method", "time_split"),
+            "n_train": int(len(X_train)),
+            "n_val": int(len(X_val)),
+        },
     )
 
     print(f"  Epochs: {res.epochs_ran}, Val Loss: {res.best_val_loss:.6f}")  # Log entrenamiento
@@ -701,7 +860,25 @@ def run_e1_for_ticker(
         )  # Error si se exige guardado
 
     # Predicciones en test (normalizadas)
+    pred_started_at = datetime.now(timezone.utc).isoformat()
+    pred_start = time.perf_counter()
     y_pred_s = model.predict(X_test_s)  # Predicciones escaladas
+    pred_end = time.perf_counter()
+    pred_ended_at = datetime.now(timezone.utc).isoformat()
+    predict_seconds = pred_end - pred_start
+    log_timing_event(
+        strategy="e1_conservative",
+        phase="predict",
+        duration_seconds=predict_seconds,
+        started_at=pred_started_at,
+        ended_at=pred_ended_at,
+        ticker=ticker,
+        run_dir=out_dir,
+        extra={
+            "split": splits_cfg.get("method", "time_split"),
+            "n_test": int(len(X_test)),
+        },
+    )
     
     # Desnormalizar predicciones para métricas y backtesting
     y_pred = unscale_y(y_pred_s)  # Predicciones en escala original
@@ -760,6 +937,8 @@ def run_e1_for_ticker(
     meta = {
         "ticker": ticker,  # Ticker
         "n_samples": int(len(X)),  # Muestras totales
+        "n_train": int(len(X_train)),  # Muestras train
+        "n_val": int(len(X_val)),  # Muestras val
         "n_test": int(len(X_test)),  # Muestras test
         "lookback_days": lookback_days,  # Lookback
         "horizon_days": horizon_days,  # Horizon
@@ -772,6 +951,12 @@ def run_e1_for_ticker(
         **meta,  # Metadata
         **{f"ml_{k}": v for k, v in ml.items()},  # Métricas ML
         **{f"bt_{k}": v for k, v in trading_metrics.items()},  # Métricas backtest
+        "timing_train_seconds": round(train_seconds, 2),  # Timing train
+        "timing_predict_seconds": round(predict_seconds, 4),  # Timing predict
+        "predictions_file": as_relative(out_dir / f"{ticker}_predictions.csv"),  # CSV preds
+        "backtest_file": as_relative(out_dir / f"{ticker}_backtest.csv"),  # CSV backtest
+        "scaler_file": as_relative(out_dir / f"{ticker}_scaler.csv"),  # CSV scaler
+        "model_file": as_relative(model_path),  # Modelo
     }
     pd.Series(summary).to_csv(out_dir / f"{ticker}_summary.csv")  # Guardar summary
 
@@ -813,16 +998,33 @@ def main() -> None:
     if not tickers:
         raise ValueError("No tickers for E1")  # Error si no hay tickers
 
-    # Benchmark
-    benchmark = config.get("universe", {}).get("benchmark", "SPY")  # Benchmark (ej: SPY)
-    raw_dir = root / "data" / "raw" / "daily"  # Directorio raw diario
+    # Informar si hay Optuna tuned params disponibles
+    tuned_path = (
+        os.getenv("E1_TUNED_PARAMS_PATH", "").strip()
+        or os.getenv("TUNED_PARAMS_PATH", "").strip()
+    )
+    if tuned_path:
+        resolved = Path(tuned_path)
+        if not resolved.is_absolute():
+            resolved = root / resolved
+        if resolved.exists():
+            tuned_data = load_yaml(resolved)
+            tuned_tickers = list(tuned_data.keys()) if isinstance(tuned_data, dict) else []
+            matching = [t for t in tickers if t in tuned_tickers]
+            print(f"✓ Optuna tuned params: {resolved.name}")
+            if matching:
+                print(f"  Tickers con overrides: {', '.join(matching)}")
+            no_match = [t for t in tickers if t not in tuned_tickers]
+            if no_match:
+                print(f"  Tickers sin overrides (usarán base.yaml): {', '.join(no_match)}")
+        else:
+            print(f"⚠️  E1_TUNED_PARAMS_PATH configurado pero archivo no existe: {resolved}")
 
-    benchmark_path = raw_dir / f"{benchmark}_daily.csv"  # CSV del benchmark
-    if benchmark_path.exists():
-        benchmark_df = load_ohlcv_csv(benchmark_path)  # Cargar benchmark
-    else:
-        print(f"⚠️  Benchmark {benchmark} no encontrado, usando valores vacíos")  # Warning
-        benchmark_df = None  # Sin benchmark
+    # Benchmark (E1): actualmente NO se usa en features (ver build_features_e1.py).
+    # Para evitar fallas por CSVs vacíos/corruptos y simplificar el pipeline, lo deshabilitamos.
+    benchmark_df: pd.DataFrame | None = None
+
+    raw_dir = root / "data" / "raw" / "daily"  # Directorio raw diario
 
     out_base = root / "runs" / "e1_conservative" / datetime.now().strftime("%Y%m%d_%H%M%S")  # Output run
     ensure_dir(out_base)  # Crear folder de salida
@@ -835,13 +1037,16 @@ def main() -> None:
     mlflow_enabled = False  # Flag MLflow
     mlflow = None  # Referencia a MLflow
     tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "").strip()  # URI de tracking
-    experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "E1_Conservative")  # Nombre de experimento
+    experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "E1_Conservative_Strategy")  # Nombre de experimento
     if tracking_uri:
         try:
             import mlflow as _mlflow  # type: ignore  # Import MLflow si está
 
             _mlflow.set_tracking_uri(tracking_uri)  # Config tracking
             _mlflow.set_experiment(experiment_name)  # Config experimento
+            # Validar que el backend funciona (start_run puede fallar si faltan deps como boto3)
+            _test_run = _mlflow.start_run(run_name="_init_test")  # Test de conexión
+            _mlflow.end_run()  # Cerrar test run
             mlflow = _mlflow  # Guardar referencia
             mlflow_enabled = True  # Habilitar tracking
             print(f"✓ MLflow habilitado: {tracking_uri} (experiment={experiment_name})")  # Log
@@ -865,7 +1070,7 @@ def main() -> None:
                     model_cfg = e1_cfg.get("model", {})  # Config modelo
                     mlflow.log_params(
                         {
-                            "lookback_days": int(e1_cfg.get("lookback_days", 180)),  # Lookback
+                            "lookback_days": int(e1_cfg.get("lookback_days", 360)),  # Lookback
                             "horizon_days": int(e1_cfg.get("horizon_days", 90)),  # Horizon
                             "gru_units": str(model_cfg.get("gru_units", [96, 32])),  # GRU units
                             "dropout": float(model_cfg.get("dropout", 0.2)),  # Dropout
@@ -892,7 +1097,7 @@ def main() -> None:
                     # Métricas
                     metrics: dict[str, float] = {}  # Dict de métricas
                     for k, v in summary.items():
-                        if not (k.startswith("ml_") or k.startswith("bt_")):
+                        if not (k.startswith("ml_") or k.startswith("bt_") or k.startswith("timing_")):
                             continue  # Solo métricas ML/BT
                         if isinstance(v, (int, float)):
                             metrics[k] = float(v)  # Convertir a float
@@ -900,38 +1105,41 @@ def main() -> None:
                         mlflow.log_metrics(metrics)  # Log métricas
 
                     # Artifacts por ticker
-                    config_used = out_base / "config_used.yaml"  # Config usado
-                    if config_used.exists():
-                        mlflow.log_artifact(str(config_used), artifact_path="config")  # Log config
+                    try:
+                        config_used = out_base / "config_used.yaml"  # Config usado
+                        if config_used.exists():
+                            mlflow.log_artifact(str(config_used), artifact_path="config")  # Log config
 
-                    for fname in [
-                        f"{ticker}_model.pth",
-                        f"{ticker}_predictions.csv",
-                        f"{ticker}_summary.csv",
-                        f"{ticker}_backtest.csv",
-                        f"{ticker}_scaler.csv",
-                        f"{ticker}_target_scaler.csv",
-                        f"{ticker}_walkforward_folds.csv",
-                        f"{ticker}_walkforward_predictions.csv",
-                        f"{ticker}_walkforward_backtest.csv",
-                        f"{ticker}_walkforward_metrics.png",
-                    ]:
-                        p = ticker_out / fname  # Path del artefacto
-                        if p.exists():
-                            # agrupamos por tipo para que sea navegable en la UI
-                            if fname.endswith(".pth"):
-                                artifact_path = "models"  # Carpeta modelos
-                            elif "pred" in fname:
-                                artifact_path = "predictions"  # Carpeta preds
-                            elif "backtest" in fname:
-                                artifact_path = "backtests"  # Carpeta backtests
-                            elif "scaler" in fname:
-                                artifact_path = "scalers"  # Carpeta scalers
-                            elif "walkforward" in fname:
-                                artifact_path = "walkforward"  # Carpeta WF
-                            else:
-                                artifact_path = "artifacts"  # Carpeta default
-                            mlflow.log_artifact(str(p), artifact_path=artifact_path)  # Log artifact
+                        for fname in [
+                            f"{ticker}_model.pth",
+                            f"{ticker}_predictions.csv",
+                            f"{ticker}_summary.csv",
+                            f"{ticker}_backtest.csv",
+                            f"{ticker}_scaler.csv",
+                            f"{ticker}_target_scaler.csv",
+                            f"{ticker}_walkforward_folds.csv",
+                            f"{ticker}_walkforward_predictions.csv",
+                            f"{ticker}_walkforward_backtest.csv",
+                            f"{ticker}_walkforward_metrics.png",
+                        ]:
+                            p = ticker_out / fname  # Path del artefacto
+                            if p.exists():
+                                # agrupamos por tipo para que sea navegable en la UI
+                                if fname.endswith(".pth"):
+                                    artifact_path = "models"  # Carpeta modelos
+                                elif "pred" in fname:
+                                    artifact_path = "predictions"  # Carpeta preds
+                                elif "backtest" in fname:
+                                    artifact_path = "backtests"  # Carpeta backtests
+                                elif "scaler" in fname:
+                                    artifact_path = "scalers"  # Carpeta scalers
+                                elif "walkforward" in fname:
+                                    artifact_path = "walkforward"  # Carpeta WF
+                                else:
+                                    artifact_path = "artifacts"  # Carpeta default
+                                mlflow.log_artifact(str(p), artifact_path=artifact_path)  # Log artifact
+                    except Exception as art_exc:
+                        print(f"  ⚠️  MLflow artifacts no guardados: {art_exc}")  # Warning artifacts
             else:
                 summary = run_e1_for_ticker(
                     config, ticker=ticker, raw_dir=raw_dir, out_dir=ticker_out, benchmark_df=benchmark_df  # Run sin MLflow

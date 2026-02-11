@@ -250,7 +250,7 @@ mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db --port 5000
 ## 📚 Diferencias vs E1 Simple
 
 - **Target**: 20d (E2) vs 90d (E1)
-- **Lookback**: 60d (E2) vs 180d (E1)
+- **Lookback**: 60d (E2) vs 360d (E1)
 - **Features**: Momentum-centric (E2) vs tendencia-centric (E1)
 - **Rebalanceo**: Semanal (E2) vs mensual (E1)
 - **Modelo**: LSTM (E2) vs GRU (E1)

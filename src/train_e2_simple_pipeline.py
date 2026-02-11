@@ -23,6 +23,7 @@ import copy  # Copias defensivas
 from datetime import datetime, timezone  # Timestamp
 import os  # Env vars
 from pathlib import Path  # Rutas
+import time
 
 import numpy as np  # NumPy
 import pandas as pd  # Pandas
@@ -31,7 +32,7 @@ from .features.build_features_e2 import compute_e2_features, make_target_e2  # F
 from .features.build_sequences_e1e2 import make_sequences, time_split  # Secuencias y split
 from .models.e2_lstm import LSTMRegressor  # Modelo LSTM
 from .backtest.backtest_daily import backtest_daily_signals, summarize_backtest  # Backtest
-from .utils import ensure_dir, load_yaml, project_root  # Utils
+from .utils import ensure_dir, load_yaml, project_root, log_timing_event  # Utils
 
 
 def load_ohlcv_csv(path: Path) -> pd.DataFrame:  # Cargar OHLCV
@@ -144,10 +145,42 @@ def run_e2_simple_for_ticker(  # Ejecutar E2 simple
         print(f"  ⚠️  Usando datos raw: {csv_path.name}")  # Log
     
     ohlcv = load_ohlcv_csv(csv_path)  # Cargar OHLCV
-    
+
     # Features y target
-        # Eliminar decision score y logging
-    y_val_s = scale_y(y_val)  # y val scaled
+    feat_df = compute_e2_features(ohlcv, benchmark_df=benchmark_df)  # Features E2
+    target = make_target_e2(ohlcv, horizon_days=horizon_days)  # Target E2
+
+    # Secuencias
+    X, y, ts, feat_names = make_sequences(feat_df, target, lookback=lookback_days)  # Secuencias
+
+    # Split temporal
+    idx_train, idx_val, idx_test = time_split(len(X))  # Split train/val/test
+    X_train, X_val, X_test = X[idx_train], X[idx_val], X[idx_test]
+    y_train, y_val, y_test = y[idx_train], y[idx_val], y[idx_test]
+    ts_test = ts[idx_test]
+
+    # Normalizar X por feature
+    mean_X = X_train.mean(axis=(0, 1))
+    std_X = X_train.std(axis=(0, 1)) + 1e-8
+
+    def scale_X(data: np.ndarray) -> np.ndarray:
+        return ((data - mean_X) / std_X).astype(np.float32)
+
+    # Normalizar y
+    mean_y = float(y_train.mean())
+    std_y = float(y_train.std()) + 1e-8
+
+    def scale_y(data: np.ndarray) -> np.ndarray:
+        return ((data - mean_y) / std_y).astype(np.float32)
+
+    def unscale_y(data: np.ndarray) -> np.ndarray:
+        return (data * std_y + mean_y).astype(np.float32)
+
+    X_train_s = scale_X(X_train)
+    X_val_s = scale_X(X_val)
+    X_test_s = scale_X(X_test)
+    y_train_s = scale_y(y_train)
+    y_val_s = scale_y(y_val)
     
     # Entrenar modelo LSTM simplificado
     print(f"  Entrenando LSTM {lstm_units}...")  # Log entrenamiento
@@ -159,6 +192,8 @@ def run_e2_simple_for_ticker(  # Ejecutar E2 simple
         seed=seed,  # Seed
     )  # Fin init
     
+    train_started_at = datetime.now(timezone.utc).isoformat()
+    train_start = time.perf_counter()
     res = model.fit(  # Entrenar
         X_train_s,  # X train
         y_train_s,  # y train
@@ -171,9 +206,42 @@ def run_e2_simple_for_ticker(  # Ejecutar E2 simple
         loss=loss,  # Loss
         huber_delta=huber_delta,  # Delta
     )  # Fin fit
+    train_end = time.perf_counter()
+    train_ended_at = datetime.now(timezone.utc).isoformat()
+    log_timing_event(
+        strategy="e2_simple",
+        phase="train",
+        duration_seconds=train_end - train_start,
+        started_at=train_started_at,
+        ended_at=train_ended_at,
+        ticker=ticker,
+        run_dir=out_dir,
+        extra={
+            "split": "time_split",
+            "n_train": int(len(X_train)),
+            "n_val": int(len(X_val)),
+        },
+    )
     
     # Predicciones
+    pred_started_at = datetime.now(timezone.utc).isoformat()
+    pred_start = time.perf_counter()
     y_pred_s = model.predict(X_test_s)  # Preds escaladas
+    pred_end = time.perf_counter()
+    pred_ended_at = datetime.now(timezone.utc).isoformat()
+    log_timing_event(
+        strategy="e2_simple",
+        phase="predict",
+        duration_seconds=pred_end - pred_start,
+        started_at=pred_started_at,
+        ended_at=pred_ended_at,
+        ticker=ticker,
+        run_dir=out_dir,
+        extra={
+            "split": "time_split",
+            "n_test": int(len(X_test)),
+        },
+    )
     y_pred = unscale_y(y_pred_s)  # Preds reales
     
     # Métricas ML
@@ -352,9 +420,8 @@ def main():  # Main
     if not tickers:  # Validar
         raise ValueError("No se especificaron tickers ni en args ni en config")  # Error
     
-    # Benchmark
-    benchmark_ticker = config.get("universe", {}).get("benchmark", "SPY")  # Benchmark
-    all_tickers = tickers + [benchmark_ticker] if benchmark_ticker not in tickers else tickers  # Universe
+    # Benchmark: deshabilitado (no descargar/limpiar/cargar benchmark)
+    all_tickers = tickers  # Universe
     
     # Directorios
     raw_dir = root / "data" / "raw" / "daily"  # Dir raw
@@ -423,7 +490,7 @@ def main():  # Main
         from .data.clean_daily import process_daily_data_with_cleaning  # Import cleaning
         
         try:  # Limpiar
-            tickers_to_clean = list(dict.fromkeys(tickers + [benchmark_ticker]))  # Tickers a limpiar
+            tickers_to_clean = list(dict.fromkeys(tickers))  # Tickers a limpiar
             reports = process_daily_data_with_cleaning(  # Ejecutar limpieza
                 raw_dir=raw_dir,  # Dir raw
                 clean_dir=clean_dir,  # Dir clean
@@ -446,17 +513,8 @@ def main():  # Main
     print("Paso 3/3: Entrenando modelos...")  # Log
     print("-" * 60)  # Separador
     
-    # Cargar benchmark
-    bench_path = clean_dir / f"{benchmark_ticker}_daily.csv"  # Path benchmark
-    if not bench_path.exists():  # Fallback raw
-        bench_path = raw_dir / f"{benchmark_ticker}_daily.csv"  # Path raw
-    
-    if bench_path.exists():  # Benchmark existe
-        benchmark_df = load_ohlcv_csv(bench_path)  # Cargar
-        print(f"Benchmark: {benchmark_ticker} ({len(benchmark_df)} días)\n")  # Log
-    else:  # Sin benchmark
-        benchmark_df = None  # None
-        print(f"⚠️  Benchmark {benchmark_ticker} no encontrado\n")  # Warning
+    # Benchmark deshabilitado
+    benchmark_df = None
     
     # Entrenar cada ticker
     summaries = []  # Resúmenes
@@ -475,7 +533,6 @@ def main():  # Main
                 with mlflow.start_run(run_name=f"E2Simple_{ticker}_{timestamp}"):
                     mlflow.log_param("strategy", "e2_simple")
                     mlflow.log_param("ticker", ticker)
-                    mlflow.log_param("benchmark_ticker", benchmark_ticker)
                     mlflow.log_param("timestamp", timestamp)
 
                     mlflow.log_params(

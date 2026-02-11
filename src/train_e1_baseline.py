@@ -92,7 +92,7 @@ def run_baseline_for_ticker(  # Ejecutar baseline por ticker
     
     # 4. CREAR SECUENCIAS
     # Transforma datos en ventanas de tiempo (lookback) para redes recurrentes
-    lookback_days = int(e1_cfg.get("lookback_days", 180))  # Lookback histórico
+    lookback_days = int(e1_cfg.get("lookback_days", 360))  # Lookback histórico
     
     print(f"Creando secuencias (lookback={lookback_days})...")  # Log secuencias
     

@@ -70,7 +70,7 @@ docker compose exec -T airflow-scheduler airflow dags trigger \
 
 ## 🔍 Ver Resultados en MLflow
 
-1. **MLflow UI**: http://localhost:5000
+1. **MLflow UI**: http://localhost:5050
 2. **Experimento**: "E1_Conservative_Strategy"
 3. **Filtrar**: `params.ticker = "AAPL"`
 4. **Comparar**: Seleccionar runs → "Compare"
@@ -142,8 +142,8 @@ docker compose exec -T airflow-scheduler airflow dags trigger \
 
 ### 🔍 Ver Resultados en MLflow
 
-1. **MLflow UI**: http://localhost:5000
-2. **Experimento**: "E1_Simple_Strategy"
+1. **MLflow UI**: http://localhost:5050
+2. **Experimento**: "E1_Simple"
 3. **Filtrar**: `params.ticker = "AAPL"`
 4. **Comparar**: Seleccionar runs → "Compare"
 
@@ -224,7 +224,7 @@ docker compose exec -T airflow-scheduler airflow dags trigger \
 
 ### Ver Resultados Baseline en MLflow
 
-1. **MLflow UI**: http://localhost:5000
+1. **MLflow UI**: http://localhost:5050
 2. **Experimento**: "E1_Baseline_LinearRegression"
 3. **Filtrar**: `params.ticker = "AAPL"`
 4. **Comparar**: Seleccionar runs → "Compare"

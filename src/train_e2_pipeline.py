@@ -13,7 +13,7 @@ Flujo:
 Diferencias vs E1:
 - Features: build_features_e2 (RSI, Stochastic, ROC, OBV)
 - Modelo: LSTM en lugar de GRU
-- Lookback: 60 días (vs 180 de E1)
+- Lookback: 60 días (vs 360 de E1)
 - Horizon: 20 días (vs 90 de E1)
 - Early stopping patience: 12 (vs 15 de E1)
 - Max epochs: 150 (vs 200 de E1)
@@ -27,6 +27,7 @@ import os  # Variables de entorno y paths
 from pathlib import Path  # Manejo de rutas
 from functools import lru_cache  # Cache para YAMLs tuning
 import copy  # Copias defensivas
+import time
 
 import numpy as np  # Cálculo numérico
 import pandas as pd  # DataFrames
@@ -36,7 +37,7 @@ from .features.build_features_e2 import compute_e2_features, make_target_e2  # F
 from .features.build_sequences_e1e2 import make_sequences, time_split, temporal_train_val_split  # Secuencias y splits
 from .models.e2_lstm import LSTMRegressor  # Modelo LSTM
 from .backtest.backtest_daily import backtest_daily_signals, summarize_backtest  # Backtesting diario
-from .utils import ensure_dir, load_yaml, project_root  # Utilidades comunes
+from .utils import ensure_dir, load_yaml, project_root, log_timing_event  # Utilidades comunes
 
 
 @lru_cache(maxsize=8)  # Cachear lectura de YAMLs
@@ -326,20 +327,57 @@ def run_e2_walk_forward(  # Walk-forward E2
             seed=seed,  # Seed
         )  # Fin init modelo
 
+        train_started_at = datetime.now(timezone.utc).isoformat()
+        train_start = time.perf_counter()
         res = model.fit(  # Entrenar
             X_train_s,  # X train
             y_train_s,  # y train
             X_val_s,  # X val
             y_val_s,  # y val
             learning_rate=learning_rate,  # LR
-            batch_size=batch_size,  # Batch size
-            max_epochs=max_epochs,  # Max epochs
+            batch_size=batch_size,  # Batch
+            max_epochs=max_epochs,  # Epochs
             early_stopping_patience=patience,  # Patience
             loss=loss,  # Loss
-            huber_delta=huber_delta,  # Huber delta
+            huber_delta=huber_delta,  # Delta
         )  # Fin fit
+        train_end = time.perf_counter()
+        train_ended_at = datetime.now(timezone.utc).isoformat()
+        log_timing_event(
+            strategy="e2_moderate",
+            phase="train",
+            duration_seconds=train_end - train_start,
+            started_at=train_started_at,
+            ended_at=train_ended_at,
+            ticker=ticker,
+            run_dir=out_dir,
+            extra={
+                "split": "walk_forward",
+                "fold": int(fold_idx),
+                "n_train": int(len(train_idx)),
+                "n_val": int(len(val_idx)),
+            },
+        )
 
+        pred_started_at = datetime.now(timezone.utc).isoformat()
+        pred_start = time.perf_counter()
         y_pred_s = model.predict(X_test_s)  # Predicciones escaladas
+        pred_end = time.perf_counter()
+        pred_ended_at = datetime.now(timezone.utc).isoformat()
+        log_timing_event(
+            strategy="e2_moderate",
+            phase="predict",
+            duration_seconds=pred_end - pred_start,
+            started_at=pred_started_at,
+            ended_at=pred_ended_at,
+            ticker=ticker,
+            run_dir=out_dir,
+            extra={
+                "split": "walk_forward",
+                "fold": int(fold_idx),
+                "n_test": int(len(test_idx)),
+            },
+        )
         y_pred = unscale_y(y_pred_s)  # Predicciones en escala original
 
         last_torch = model.torch  # Referencia torch
@@ -718,7 +756,24 @@ def run_e2_for_ticker(  # Ejecutar E2 por ticker
         )  # Fin raise
 
     # 9. Predicciones en test (desnormalizar)
+    pred_started_at = datetime.now(timezone.utc).isoformat()
+    pred_start = time.perf_counter()
     y_pred_norm = model.predict(X_test_norm)  # Predicciones norm
+    pred_end = time.perf_counter()
+    pred_ended_at = datetime.now(timezone.utc).isoformat()
+    log_timing_event(
+        strategy="e2_moderate",
+        phase="predict",
+        duration_seconds=pred_end - pred_start,
+        started_at=pred_started_at,
+        ended_at=pred_ended_at,
+        ticker=ticker,
+        run_dir=out_dir,
+        extra={
+            "split": "time_split",
+            "n_test": int(len(X_test)),
+        },
+    )
     y_pred = y_pred_norm * std_y + mean_y  # Predicciones desnorm
 
     # 10. Métricas ML
@@ -866,16 +921,11 @@ def main() -> None:  # Main entry
     if not tickers:  # Sin tickers
         raise ValueError("No tickers for E2")  # Error
 
-    # Benchmark
-    benchmark = config.get("universe", {}).get("benchmark", "SPY")  # Benchmark
-    raw_dir = root / "data" / "raw" / "daily"  # Dir raw
+    # Benchmark (E2): deshabilitado por configuración del proyecto.
+    # Nota: algunas features E2 pueden aceptar benchmark_df, pero aquí forzamos None.
+    benchmark_df: pd.DataFrame | None = None
 
-    benchmark_path = raw_dir / f"{benchmark}_daily.csv"  # Path benchmark
-    if benchmark_path.exists():  # Existe benchmark
-        benchmark_df = load_ohlcv_csv(benchmark_path)  # Cargar benchmark
-    else:  # Sin benchmark
-        print(f"⚠️  Benchmark {benchmark} no encontrado, usando valores vacíos")  # Warning
-        benchmark_df = None  # Sin benchmark
+    raw_dir = root / "data" / "raw" / "daily"  # Dir raw
 
     out_base = root / "runs" / "e2_moderate" / datetime.now().strftime("%Y%m%d_%H%M%S")  # Dir salida
     ensure_dir(out_base)  # Crear dir
