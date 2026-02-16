@@ -36,6 +36,8 @@ Para debugging y desarrollo rápido:
 conda activate ia_ceia_18co
 
 # Ejecutar pipeline manualmente
+python -m src.train_e1_all
+python -m src.train_e1_all --tickers AAPL,MSFT
 python -m src.train_e1_pipeline --tickers AAPL
 python -m src.train_e2_pipeline --tickers AAPL
 ```
@@ -89,6 +91,11 @@ Ver README específico de cada estrategia para comandos detallados:
 
 **E1 - Conservadora (GRU)**```bash
 python -m src.data.download_daily
+# Runner unificado: baseline + simple + conservador
+python -m src.train_e1_all
+python -m src.train_e1_all --tickers AAPL,MSFT
+
+# Ejecución individual (opcional)
 python -m src.train_e1_pipeline --tickers AAPL
 ```
 → Ver [README_E1.md](README_E1.md) y [README_E1_SIMPLE.md](README_E1_SIMPLE.md)

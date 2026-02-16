@@ -10,7 +10,8 @@ scripts/
 ├── optimization/           # Optimización de hiperparámetros
 ├── evaluation/             # Evaluación y validación de modelos
 ├── trading/                # Trading en vivo (IOL API)
-└── airflow/                # Validación de DAGs Airflow
+├── airflow/                # Validación de DAGs Airflow
+└── mlflow/                 # Utilidades de MLflow
 ```
 
 ---
@@ -125,6 +126,30 @@ python scripts/evaluation/compare_e1_models.py \
     --run-ids run1 run2 run3
 ```
 
+### `compare_e1_versions.py`
+Compara resultados agregados de las 3 versiones E1: baseline, simple y conservative.
+
+**Uso:**
+```bash
+# Último run de cada versión
+python scripts/evaluation/compare_e1_versions.py
+
+# Filtrado por tickers
+python scripts/evaluation/compare_e1_versions.py --tickers AAPL,MSFT
+
+# Comparación ticker-vs-ticker entre versiones
+python scripts/evaluation/compare_e1_versions.py --tickers AAPL,MSFT --per-ticker
+```
+
+**Incluye:**
+- Tiempo de entrenamiento (`train_time_seconds_avg`, `train_time_seconds_total`)
+- Métricas ML (`mae`, `rmse`, `ic`, `directional_accuracy`)
+- Métricas de trading (`bt_sharpe`, `bt_cagr`, `bt_max_drawdown`, `bt_num_trades`)
+
+**Salida:**
+- Carpeta: `reports/tables/e1_versions_comparison/`
+- Archivos con timestamp: `e1_versions_comparison_<YYYYMMDD_HHMMSS>*.csv/.md`
+
 ### `validate_e2_optimization.py`
 Valida resultados de optimización E2.
 
@@ -182,6 +207,26 @@ Valida sintaxis de DAGs de Airflow.
 **Uso:**
 ```bash
 python scripts/airflow/validate_dags.py
+```
+
+---
+
+## 🧪 mlflow/ - Utilidades MLflow
+
+### `up_transparent_mlflow.sh`
+Levanta MLflow en modo transparente offline→online:
+- Detecta tu versión local de `mlflow`
+- Reconstruye el contenedor MLflow con la misma versión
+- Inicia MLflow con backend/artifacts compartidos en `runs/mlflow_local`
+
+**Uso:**
+```bash
+bash scripts/mlflow/up_transparent_mlflow.sh
+```
+
+**Override opcional de versión:**
+```bash
+MLFLOW_VERSION=3.8.1 bash scripts/mlflow/up_transparent_mlflow.sh
 ```
 
 ---

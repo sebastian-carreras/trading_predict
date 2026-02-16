@@ -10,7 +10,15 @@
 # Instalar dependencias
 pip install -r requirements.txt
 
+# Entrenar E1 completo (baseline + simple + conservador)
+python -m src.train_e1_all
+python -m src.train_e1_all --tickers AAPL,MSFT
+
+# Al finalizar, ejecuta automáticamente la comparación de versiones E1
+# y guarda: reports/tables/e1_versions_comparison.csv y .md
+
 # Entrenar (descarga y limpia datos automáticamente)
+python -m src.train_e1_simple_pipeline 
 python -m src.train_e1_simple_pipeline --tickers AAPL
 
 # Ver resultados
@@ -166,6 +174,10 @@ Las features están optimizadas para predicción a largo plazo (horizon=90 días
 ### CLI Options
 
 ```bash
+# Runner unificado de E1 (3 versiones)
+python -m src.train_e1_all
+python -m src.train_e1_all --tickers AAPL,MSFT
+
 # Modo completo (download + clean + train)
 python -m src.train_e1_simple_pipeline --tickers AAPL,MSFT
 
@@ -332,9 +344,24 @@ docker compose exec -T airflow-scheduler airflow dags trigger \
 ### MLflow Tracking
 
 - **Experiment:** "E1_Simple"
-- **Métricas:** mae, rmse, ic, directional_accuracy, bt_sharpe, bt_cagr, bt_max_drawdown
-- **Parámetros:** strategy, ticker, lookback_days, gru_units, learning_rate, etc.
+- **Metricas:** mae, rmse, ic, directional_accuracy, bt_sharpe, bt_cagr, bt_max_drawdown
+- **Parametros:** strategy, ticker, lookback_days, gru_units, learning_rate, etc.
 - **Artifacts:** models/, predictions/, backtest/, scalers/
+- **Fallback robusto:** si `MLFLOW_TRACKING_URI` remoto no está disponible, el pipeline usa tracking local automáticamente.
+- **Store aislado automático:** si `mlruns/` tiene experimentos malformados (por ejemplo, `meta.yaml` faltante), usa `runs/e1_simple/mlflow_store` para evitar errores ruidosos de inicialización.
+- **Modo transparente offline→online:** por defecto, el fallback local prioriza SQLite en `runs/mlflow_local/mlflow.db` (artifacts en `runs/mlflow_local/artifacts`), para que luego MLflow pueda leer los mismos runs.
+
+#### Modo Transparente (CLI sin Docker + UI con Docker)
+
+Si quieres que los runs creados desde CLI (sin MLflow server activo) aparezcan luego al levantar MLflow en Docker, inicia el servicio con backend/artifacts apuntando al mismo storage local:
+
+```bash
+MLFLOW_BACKEND_STORE_URI=sqlite:////mlflow_data/mlflow_local/mlflow.db \
+MLFLOW_DEFAULT_ARTIFACT_ROOT=file:///mlflow_data/mlflow_local/artifacts \
+docker compose --profile mlflow up -d mlflow
+```
+
+`docker-compose.yaml` ya monta `./runs` en `/mlflow_data`, por lo que ese backend SQLite queda compartido entre CLI y servidor.
 
 ---
 
@@ -372,6 +399,35 @@ docker compose exec -T airflow-scheduler airflow dags trigger \
    ↓
 4. Producción con modelo optimizado
 ```
+
+---
+
+## Comparación de las 3 versiones de E1
+
+Puedes comparar automáticamente **E1 Baseline**, **E1 Simple** y **E1 Conservative** con tiempo de entrenamiento y métricas clave.
+
+```bash
+# Usa el último run de cada versión
+python scripts/evaluation/compare_e1_versions.py
+
+# Filtrar por tickers específicos
+python scripts/evaluation/compare_e1_versions.py --tickers AAPL,MSFT
+
+# Comparación ticker-vs-ticker entre versiones
+python scripts/evaluation/compare_e1_versions.py --tickers AAPL,MSFT --per-ticker
+```
+
+La comparación reporta:
+- `train_time_seconds_avg`
+- `train_time_seconds_total`
+- `mae`, `rmse`, `ic`, `directional_accuracy`
+- `bt_sharpe`, `bt_cagr`, `bt_max_drawdown`, `bt_num_trades`
+
+Archivos de salida:
+- `reports/tables/e1_versions_comparison/e1_versions_comparison_<YYYYMMDD_HHMMSS>.csv`
+- `reports/tables/e1_versions_comparison/e1_versions_comparison_<YYYYMMDD_HHMMSS>.md`
+- `reports/tables/e1_versions_comparison/e1_versions_comparison_<YYYYMMDD_HHMMSS>_per_ticker.csv`
+- `reports/tables/e1_versions_comparison/e1_versions_comparison_<YYYYMMDD_HHMMSS>_per_ticker.md`
 
 ---
 

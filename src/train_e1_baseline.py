@@ -5,7 +5,8 @@ Este script ejecuta el mismo pipeline que train_e1_pipeline.py pero usando
 Regresión Lineal en lugar de GRU, para establecer un baseline de comparación.
 
 Uso:
-    python -m src.train_e1_baseline --tickers AAPL GOOGL
+    python -m src.train_e1_baseline  # Usa tickers del config (e1_conservative)
+    python -m src.train_e1_baseline --tickers AAPL,GOOGL,MSFT
     python -m src.train_e1_baseline --tickers AAPL --compare-with-gru
 """
 
@@ -15,10 +16,19 @@ import argparse  # Parsing de argumentos CLI
 from datetime import datetime  # Timestamp de ejecución
 from pathlib import Path  # Manejo de rutas
 import os  # Variables de entorno y paths
+import socket  # Conectividad de red
+import time  # Medir duración por ticker
+from urllib.parse import urlparse  # Parseo de URLs
 
 import numpy as np  # Cálculo numérico
 import pandas as pd  # DataFrames
 from sklearn.model_selection import TimeSeriesSplit  # Split temporal sin leakage
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # Cargar .env (MLflow, MinIO, etc.)
+except ImportError:
+    pass
 
 from src.features.build_features_e1 import compute_e1_features, make_target_e1  # Features y target E1
 from src.features.build_sequences_e1e2 import make_sequences, temporal_train_val_split  # Secuencias y split train/val
@@ -36,6 +46,9 @@ def run_baseline_for_ticker(  # Ejecutar baseline por ticker
     raw_dir: Path,  # Directorio con CSVs diarios
     out_dir: Path,  # Directorio de salida por ticker
     benchmark_df: pd.DataFrame | None = None,  # Benchmark opcional
+    mlflow_enabled: bool = False,  # MLflow habilitado
+    mlflow=None,  # Módulo MLflow
+    timestamp: str | None = None,  # Timestamp de ejecución
 ) -> dict:  # Retorna resumen con métricas
     """
     Ejecuta pipeline completo de baseline para un ticker.
@@ -52,6 +65,7 @@ def run_baseline_for_ticker(  # Ejecutar baseline por ticker
     Retorna:
         dict: Resumen con métricas ML y trading del modelo entrenado
     """
+    start_time = time.perf_counter()  # Medir duración total por ticker
     ensure_dir(out_dir)  # Asegurar directorio de salida
     
     print(f"\n{'='*60}")  # Separador visual
@@ -59,10 +73,16 @@ def run_baseline_for_ticker(  # Ejecutar baseline por ticker
     print(f"{'='*60}")  # Separador visual
     
     # 1. CARGAR DATOS OHLCV
-    # Lee archivo CSV con datos de precios OHLC y volumen históricos
-    csv_path = raw_dir / f"{ticker}_daily.csv"  # Path del CSV diario
-    if not csv_path.exists():  # Validar existencia del CSV
-        raise FileNotFoundError(f"No existe {csv_path}")  # Error si no está
+    # Priorizar datos limpios si existen, fallback a raw
+    clean_csv_path = project_root() / "data" / "clean" / f"{ticker}_daily.csv"  # Path limpio
+    if clean_csv_path.exists():  # Si hay datos limpios
+        csv_path = clean_csv_path  # Usar datos limpios
+        print(f"  ✓ Usando datos limpios: {csv_path.name}")  # Log
+    else:  # Fallback a raw
+        csv_path = raw_dir / f"{ticker}_daily.csv"  # Path del CSV diario
+        if not csv_path.exists():  # Validar existencia del CSV
+            raise FileNotFoundError(f"No existe {csv_path}")  # Error si no está
+        print(f"  ⚠️  Usando datos raw (limpieza no ejecutada): {csv_path.name}")  # Warning
     
     # Convertir a DataFrame, con timestamp como índice
     df = pd.read_csv(csv_path)  # Leer CSV
@@ -72,10 +92,7 @@ def run_baseline_for_ticker(  # Ejecutar baseline por ticker
     # Guardar una copia del DataFrame original para backtesting
     # (antes de cualquier transformación o dropna)
     ohlcv = df.copy()  # Copia para backtest sin alterar
-    
-    # DEBUG: Imprimir columnas antes de cualquier transformación
-    print(f"DEBUG - Columnas después de cargar CSV: {list(df.columns)}")  # Debug columnas
-    
+
     # 2. CALCULAR FEATURES E1
     # Extrae indicadores técnicos (momentum, volatilidad, tendencia, etc.)
     print("Calculando features...")  # Log features
@@ -187,12 +204,13 @@ def run_baseline_for_ticker(  # Ejecutar baseline por ticker
         
         # PREDICCIONES EN TEST
         y_pred_test = model.predict(X_test_scaled)  # Predicciones test
-        
+
         # MÉTRICAS ML
         test_metrics = compute_baseline_metrics(y_test, y_pred_test)  # Métricas ML
-        
-          print(f"    Test: MAE={test_metrics['mae']:.4f}, RMSE={test_metrics['rmse']:.4f}, "  # Log métricas
-              f"Dir.Acc={test_metrics['directional_accuracy']:.3f}, IC={test_metrics['ic']:.3f}")  # Log métricas
+        print(
+            f"    Test: MAE={test_metrics['mae']:.4f}, RMSE={test_metrics['rmse']:.4f}, "
+            f"Dir.Acc={test_metrics['directional_accuracy']:.3f}, IC={test_metrics['ic']:.3f}"
+        )  # Log métricas
         
         # Guardar predicciones de este fold
         test_timestamps = timestamps[test_idx]  # Timestamps test
@@ -233,7 +251,7 @@ def run_baseline_for_ticker(  # Ejecutar baseline por ticker
     tau_sell = float(thresholds.get("tau_sell", 0.00))  # Umbral venta
     
     costs = config.get("costs", {})  # Config costos
-    round_trip_bps = float(costs.get("round_trip_bps_daily", 10.0))  # Costos diarios
+    round_trip_bps = float(costs.get("daily_round_trip_bps", costs.get("round_trip_bps_daily", 10.0)))  # Costos diarios
     holding_period = int(e1_cfg.get("horizon_days", 90))  # Holding period
     
     print(f"\n  Ejecutando backtest (tau_buy={tau_buy}, tau_sell={tau_sell})...")  # Log backtest
@@ -269,6 +287,8 @@ def run_baseline_for_ticker(  # Ejecutar baseline por ticker
     backtest_df.to_csv(out_dir / f"{ticker}_baseline_backtest.csv", index=False)  # Guardar backtest
     
     bt_summary = summarize_backtest(backtest_df)  # Métricas backtest
+    if "max_drawdown" not in bt_summary and "max_dd" in bt_summary:
+        bt_summary["max_drawdown"] = bt_summary["max_dd"]
     
     print(f"\n  Backtest Summary:")  # Log summary
     print(f"    CAGR: {bt_summary.get('cagr', 0):.2%}")  # CAGR
@@ -284,7 +304,10 @@ def run_baseline_for_ticker(  # Ejecutar baseline por ticker
         "n_folds": len(fold_results),  # Folds
         "lookback_days": lookback_days,  # Lookback
         "horizon_days": horizon_days,  # Horizon
+        "timing_train_seconds": round(time.perf_counter() - start_time, 2),  # Duración total
     }  # Fin resumen
+
+    print(f"  Duración total: {summary['timing_train_seconds']:.2f}s")  # Log duración
     
     # Guardar fold results
     pd.DataFrame(fold_results).to_csv(  # Guardar folds
@@ -296,26 +319,81 @@ def run_baseline_for_ticker(  # Ejecutar baseline por ticker
         out_dir / f"{ticker}_baseline_summary.csv", index=False  # Guardar summary
     )  # Fin guardado summary
     
+    # MLFLOW TRACKING
+    if mlflow_enabled and mlflow is not None:  # Si MLflow habilitado
+        try:  # Intentar logging
+            run_name = f"E1Baseline_{ticker}_{timestamp}" if timestamp else f"E1Baseline_{ticker}"  # Nombre run
+            with mlflow.start_run(run_name=run_name):  # Iniciar run
+                # Parámetros
+                mlflow.log_param("strategy", "e1_baseline")  # Estrategia
+                mlflow.log_param("ticker", ticker)  # Ticker
+                mlflow.log_param("model_type", "LinearRegression")  # Tipo modelo
+                if timestamp:  # Si hay timestamp
+                    mlflow.log_param("timestamp", timestamp)  # Timestamp
+                
+                # Parámetros de configuración
+                mlflow.log_params({  # Log params config
+                    "lookback_days": lookback_days,  # Lookback
+                    "horizon_days": horizon_days,  # Horizon
+                    "n_folds": len(fold_results),  # Folds
+                    "tau_buy": tau_buy,  # Umbral compra
+                    "tau_sell": tau_sell,  # Umbral venta
+                    "round_trip_bps": round_trip_bps,  # Costos
+                })  # Fin params config
+                
+                # Métricas
+                metrics_to_log = {  # Dict métricas
+                    k: float(v) for k, v in summary.items()  # Convertir a float
+                    if k not in ["ticker", "model"] and isinstance(v, (int, float, np.number))  # Filtrar numéricos
+                }  # Fin dict métricas
+                mlflow.log_metrics(metrics_to_log)  # Log métricas
+                
+                # Artifacts
+                artifacts_to_log = [  # Lista artifacts
+                    (out_dir / f"{ticker}_baseline_predictions.csv", "predictions"),  # Predicciones
+                    (out_dir / f"{ticker}_baseline_backtest.csv", "backtest"),  # Backtest
+                    (out_dir / f"{ticker}_baseline_folds.csv", "folds"),  # Folds
+                    (out_dir / f"{ticker}_baseline_summary.csv", "summary"),  # Summary
+                ]  # Fin lista artifacts
+                
+                for artifact_path, artifact_folder in artifacts_to_log:  # Loop artifacts
+                    if artifact_path.exists():  # Si existe
+                        mlflow.log_artifact(str(artifact_path), artifact_path=artifact_folder)  # Log artifact
+                
+            print(f"  ✓ Run guardado en MLflow: {run_name}")  # Log OK
+        except Exception as exc:  # Captura errores
+            print(f"  ⚠️  Error guardando en MLflow: {exc}")  # Log error
+    
     return summary  # Retornar resumen
 
 
 def main() -> None:  # Entry-point principal
     parser = argparse.ArgumentParser(description="E1 Baseline - Linear Regression")  # Parser CLI
     parser.add_argument(  # Argumento tickers
-        "--tickers",  # Lista de tickers
-        nargs="+",  # Múltiples valores
-        default=["AAPL"],  # Default
-        help="Lista de tickers a procesar",  # Help
+        "--tickers",  # Tickers separados por coma
+        type=str,  # String
+        default=None,  # Default None (lee del config)
+        help="Tickers separados por coma (ej: AAPL,MSFT). Si se omite, usa los del config.",  # Help
     )  # Fin argumento tickers
     parser.add_argument(  # Argumento config
         "--config",  # Path config
         default="src/config/base.yaml",  # Default config
         help="Archivo de configuración",  # Help
     )  # Fin argumento config
+    parser.add_argument(  # Argumento skip download
+        "--skip-download",  # Flag skip descarga
+        action="store_true",  # True si se pasa
+        help="Omite la descarga de datos (usa datos existentes)",  # Help
+    )  # Fin argumento skip download
+    parser.add_argument(  # Argumento skip cleaning
+        "--skip-cleaning",  # Flag skip limpieza
+        action="store_true",  # True si se pasa
+        help="Omite la limpieza de datos (usa datos raw)",  # Help
+    )  # Fin argumento skip cleaning
     parser.add_argument(  # Argumento raw dir
         "--raw-dir",  # Path raw dir
-        default="data/clean",  # Default raw dir
-        help="Directorio con datos limpios",  # Help
+        default="data/raw/daily",  # Default raw dir
+        help="Directorio con datos raw descargados",  # Help
     )  # Fin argumento raw dir
     parser.add_argument(  # Argumento output dir
         "--output-dir",  # Output dir override
@@ -335,13 +413,30 @@ def main() -> None:  # Entry-point principal
     config_path = root / args.config  # Path config
     config = load_yaml(config_path)  # Cargar YAML
     
+    # Determinar tickers
+    if args.tickers:  # Si se pasaron tickers
+        tickers = [t.strip() for t in args.tickers.split(",")]  # Separar por coma
+    else:  # Si no se pasaron, leer del config
+        tickers = config.get("universe", {}).get("tickers_by_strategy", {}).get("e1_conservative", [])  # Leer e1_conservative
+        if not tickers:  # Si no hay e1_conservative
+            # Fallback a e1_simple si no hay e1_conservative definido
+            tickers = config.get("universe", {}).get("tickers_by_strategy", {}).get("e1_simple", [])  # Leer e1_simple
+    
+    if not tickers:  # Validar que haya tickers
+        raise ValueError("No se especificaron tickers ni en args ni en config")  # Error si no hay
+    
+    print(f"Entrenando baseline para {len(tickers)} tickers: {', '.join(tickers)}")  # Log tickers
+    
     # Setup directorios
     raw_dir = root / args.raw_dir  # Directorio raw
+    clean_dir = root / "data" / "clean"  # Directorio datos limpios
+    
+    # Timestamp para runs y MLflow
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # Timestamp
     
     if args.output_dir:  # Si se especifica output
         out_base = Path(args.output_dir)  # Output custom
     else:  # Output auto con timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # Timestamp
         out_base = root / "runs" / "e1_baseline" / timestamp  # Output auto
     
     ensure_dir(out_base)  # Crear output
@@ -354,10 +449,174 @@ def main() -> None:  # Entry-point principal
     # Benchmark (opcional)
     benchmark_df = None  # Sin benchmark
     
+    # MLFLOW SETUP
+    mlflow_enabled = False  # MLflow deshabilitado por default
+    mlflow = None  # Módulo MLflow
+    
+    tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "").strip()  # URI remoto
+    remote_check_timeout_seconds = float(os.getenv("MLFLOW_REMOTE_CHECK_TIMEOUT_SECONDS", "1.5"))  # Timeout check
+    experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "E1_Baseline")  # Nombre experimento
+    local_sqlite_dir = root / "runs" / "mlflow_local"  # Directorio SQLite local
+    ensure_dir(local_sqlite_dir)  # Crear directorio
+    local_sqlite_db = local_sqlite_dir / "mlflow.db"  # DB SQLite
+    local_artifacts_dir = local_sqlite_dir / "artifacts"  # Artifacts local
+    ensure_dir(local_artifacts_dir)  # Crear directorio artifacts
+    local_sqlite_uri = f"sqlite:///{local_sqlite_db}"  # URI SQLite
+    
+    fallback_local_tracking_uri = os.getenv("MLFLOW_LOCAL_TRACKING_URI", "").strip()  # URI local override
+    if fallback_local_tracking_uri:  # Si hay override
+        local_sqlite_uri = fallback_local_tracking_uri  # Usar override
+    
+    local_mlruns = str(root / "mlruns")  # mlruns dir
+    isolated_mlruns = str(root / "runs" / "e1_baseline" / "mlflow_store")  # mlruns aislado
+    ensure_dir(Path(isolated_mlruns))  # Crear aislado
+    
+    def _activate_mlflow(
+        _mlflow_module,
+        uri: str,
+        label: str,
+        experiment_artifact_dir: Path | None = None,
+    ) -> tuple[bool, str | None]:
+        """Activa MLflow con el URI especificado."""
+        try:
+            _mlflow_module.set_tracking_uri(uri)  # Set URI
+            if experiment_artifact_dir is not None:  # Si hay artifact dir
+                exp = _mlflow_module.get_experiment_by_name(experiment_name)  # Get experimento
+                if exp is None:  # Si no existe
+                    _mlflow_module.create_experiment(  # Crear experimento
+                        experiment_name,  # Nombre
+                        artifact_location=experiment_artifact_dir.resolve().as_uri(),  # Artifact location
+                    )  # Fin create
+                _mlflow_module.set_experiment(experiment_name)  # Set experimento
+            else:  # Sin artifact dir
+                _mlflow_module.set_experiment(experiment_name)  # Set experimento
+            return True, None  # OK
+        except Exception as exc:  # Error
+            return False, str(exc)  # Error
+    
+    def _is_tracking_uri_reachable(uri: str, timeout_seconds: float) -> tuple[bool, str | None]:
+        """Verifica si el tracking URI es alcanzable vía socket."""
+        parsed = urlparse(uri)  # Parsear URI
+        if parsed.scheme not in {"http", "https"}:  # No es HTTP
+            return True, None  # OK por default
+        
+        host = parsed.hostname  # Hostname
+        if not host:  # Sin hostname
+            return True, None  # OK por default
+        
+        if parsed.port is not None:  # Puerto especificado
+            port = parsed.port  # Usar puerto
+        elif parsed.scheme == "https":  # HTTPS
+            port = 443  # Puerto HTTPS
+        else:  # HTTP
+            port = 80  # Puerto HTTP
+        
+        try:  # Intentar conexión
+            with socket.create_connection((host, port), timeout=timeout_seconds):  # Conectar
+                return True, None  # OK
+        except OSError as exc:  # Error de conexión
+            return False, str(exc)  # Error
+    
+    # Intentar activar MLflow
+    try:  # Intentar MLflow
+        import mlflow as _mlflow  # type: ignore
+        
+        if tracking_uri:  # Si hay URI remoto
+            remote_reachable, remote_reachability_err = _is_tracking_uri_reachable(  # Check remoto
+                tracking_uri,  # URI
+                remote_check_timeout_seconds,  # Timeout
+            )  # Fin check
+            if remote_reachable:  # Si alcanzable
+                ok_remote, remote_err = _activate_mlflow(_mlflow, tracking_uri, "remoto")  # Activar remoto
+                if ok_remote:  # Si OK
+                    mlflow = _mlflow  # Usar módulo
+                    mlflow_enabled = True  # Habilitar
+                    print(f"✓ MLflow habilitado: {tracking_uri} (experiment={experiment_name})")  # Log OK
+                else:  # Error remoto
+                    print(f"⚠️  MLflow servidor no disponible ({remote_err})")  # Log error
+            else:  # No alcanzable
+                print(
+                    f"⚠️  MLflow remoto no accesible "
+                    f"({tracking_uri}, timeout={remote_check_timeout_seconds}s): {remote_reachability_err}"
+                )  # Log error
+        
+        if not mlflow_enabled:  # Si no habilitado
+            # Fallback a SQLite local
+            ok_local, local_err = _activate_mlflow(  # Activar local
+                _mlflow,  # Módulo
+                local_sqlite_uri,  # URI SQLite
+                "local",  # Label
+                experiment_artifact_dir=local_artifacts_dir,  # Artifact dir
+            )  # Fin activar
+            if ok_local:  # Si OK
+                mlflow = _mlflow  # Usar módulo
+                mlflow_enabled = True  # Habilitar
+                mode = "local fallback" if tracking_uri else "tracking local"  # Modo
+                print(f"✓ MLflow habilitado ({mode}, experiment={experiment_name})")  # Log OK
+                print(f"  → Store URI: {local_sqlite_db}")  # Log store
+                print(f"  → Para visualizar: mlflow ui --backend-store-uri {local_sqlite_uri}")  # Log comando UI
+            else:  # Error local
+                print(f"⚠️  Falló MLflow local: {local_err}")  # Log error
+    except Exception as exc:  # Error general
+        print(f"⚠️  MLflow no disponible, continuando sin tracking: {exc}")  # Log error
+        mlflow_enabled = False  # Deshabilitar
+    
+    # Paso 1: Descargar datos
+    if not args.skip_download:
+        print("Paso 1/3: Descargando datos...")
+        print("-" * 60)
+        from src.data.download_daily import download_daily_ohlcv
+
+        try:
+            written = download_daily_ohlcv(
+                tickers,
+                out_dir=raw_dir,
+                period="10y",
+                skip_existing=True,
+                min_days_fresh=1,
+            )
+            print(f"✓ Descargados/actualizados {len(written)} archivos\n")
+        except Exception as exc:
+            print(f"⚠️  Error en descarga: {exc}")
+            print("Continuando con datos existentes...\n")
+    else:
+        print("Paso 1/3: Descarga omitida (usando datos existentes)\n")
+
+    # Paso 2: Limpiar datos
+    if not args.skip_cleaning:
+        print("Paso 2/3: Limpiando datos...")
+        print("-" * 60)
+        from src.data.clean_daily import process_daily_data_with_cleaning
+
+        try:
+            tickers_to_clean = list(dict.fromkeys(tickers))
+            reports = process_daily_data_with_cleaning(
+                raw_dir=raw_dir,
+                clean_dir=clean_dir,
+                strategy="forward_fill",
+                min_days=252,
+                remove_zero_volume=True,
+                verbose=False,
+                tickers=tickers_to_clean,
+            )
+            cleaned = sum(1 for r in reports.values() if r.get("status") == "cleaned")
+            rejected = sum(1 for r in reports.values() if r.get("status") == "rejected")
+            print(f"✓ Limpiados: {cleaned} | Rechazados: {rejected}\n")
+        except Exception as exc:
+            print(f"⚠️  Error en limpieza: {exc}")
+            print("Continuando con datos raw...\n")
+    else:
+        print("Paso 2/3: Limpieza omitida (usando datos existentes)\n")
+
+    # Paso 3: Entrenar modelos
+    print("Paso 3/3: Entrenando modelos baseline...")
+    print("-" * 60)
+
     # Procesar tickers
     summaries = []  # Resúmenes
     
-    for ticker in args.tickers:  # Iterar tickers
+    # Iterar sobre la lista ya resuelta de tickers (puede venir de args o config)
+    for ticker in tickers:  # Iterar tickers
         try:  # Manejo de errores por ticker
             summary = run_baseline_for_ticker(  # Ejecutar baseline
                 config=config,  # Config
@@ -365,6 +624,9 @@ def main() -> None:  # Entry-point principal
                 raw_dir=raw_dir,  # Raw dir
                 out_dir=out_base / ticker,  # Output por ticker
                 benchmark_df=benchmark_df,  # Benchmark
+                mlflow_enabled=mlflow_enabled,  # MLflow habilitado
+                mlflow=mlflow,  # Módulo MLflow
+                timestamp=timestamp,  # Timestamp
             )  # Fin ejecución ticker
             summaries.append(summary)  # Guardar resumen
             print(f"✓ {ticker} completado\n")  # Log OK
@@ -374,6 +636,7 @@ def main() -> None:  # Entry-point principal
     # Summary consolidado
     df_summary = pd.DataFrame(summaries)  # DataFrame summary
     df_summary.to_csv(out_base / "baseline_summary_all.csv", index=False)  # Guardar CSV
+    df_summary.to_csv(out_base / "summary_all.csv", index=False)  # Alias compatible con E1 simple
     
     print(f"\n{'='*60}")  # Separador
     print(f"RESULTADOS BASELINE")  # Título

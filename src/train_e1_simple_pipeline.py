@@ -22,7 +22,9 @@ import copy
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+import socket
 import time
+from urllib.parse import urlparse
 
 import numpy as np
 import pandas as pd
@@ -502,26 +504,156 @@ def main():
     print(f"Output: {out_dir.relative_to(root)}")
     print(f"{'='*60}\n")
 
-    # MLflow setup (default: local tracking if installed)
+    # MLflow setup: intenta servidor remoto; fallback local robusto
     mlflow_enabled = False
     mlflow = None
     tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "").strip()
+    remote_check_timeout_seconds = float(os.getenv("MLFLOW_REMOTE_CHECK_TIMEOUT_SECONDS", "1.5"))
     experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "E1_Simple")
+    local_sqlite_dir = root / "runs" / "mlflow_local"
+    ensure_dir(local_sqlite_dir)
+    local_sqlite_db = local_sqlite_dir / "mlflow.db"
+    local_artifacts_dir = local_sqlite_dir / "artifacts"
+    ensure_dir(local_artifacts_dir)
+    local_sqlite_uri = f"sqlite:///{local_sqlite_db}"
+
+    fallback_local_tracking_uri = os.getenv("MLFLOW_LOCAL_TRACKING_URI", "").strip()
+    if fallback_local_tracking_uri:
+        local_sqlite_uri = fallback_local_tracking_uri
+
+    local_mlruns = str(root / "mlruns")
+    isolated_mlruns = str(root / "runs" / "e1_simple" / "mlflow_store")
+    ensure_dir(Path(isolated_mlruns))
+
+    base_mlruns_path = Path(local_mlruns)
+    has_malformed_mlruns = False
+    if base_mlruns_path.exists():
+        for exp_dir in base_mlruns_path.iterdir():
+            if not exp_dir.is_dir() or not exp_dir.name.isdigit():
+                continue
+            if not (exp_dir / "meta.yaml").exists():
+                has_malformed_mlruns = True
+                break
+
+    def _activate_mlflow(
+        _mlflow_module,
+        uri: str,
+        label: str,
+        experiment_artifact_dir: Path | None = None,
+    ) -> tuple[bool, str | None]:
+        try:
+            _mlflow_module.set_tracking_uri(uri)
+            if experiment_artifact_dir is not None:
+                exp = _mlflow_module.get_experiment_by_name(experiment_name)
+                if exp is None:
+                    _mlflow_module.create_experiment(
+                        experiment_name,
+                        artifact_location=experiment_artifact_dir.resolve().as_uri(),
+                    )
+                _mlflow_module.set_experiment(experiment_name)
+            else:
+                _mlflow_module.set_experiment(experiment_name)
+            return True, None
+        except Exception as exc:
+            return False, str(exc)
+
+    def _is_tracking_uri_reachable(uri: str, timeout_seconds: float) -> tuple[bool, str | None]:
+        parsed = urlparse(uri)
+        if parsed.scheme not in {"http", "https"}:
+            return True, None
+
+        host = parsed.hostname
+        if not host:
+            return True, None
+
+        if parsed.port is not None:
+            port = parsed.port
+        elif parsed.scheme == "https":
+            port = 443
+        else:
+            port = 80
+
+        try:
+            with socket.create_connection((host, port), timeout=timeout_seconds):
+                return True, None
+        except OSError as exc:
+            return False, str(exc)
+
+    local_uris = [
+        {
+            "uri": local_sqlite_uri,
+            "store_path": str(local_sqlite_db),
+            "artifact_dir": local_artifacts_dir,
+        },
+        {
+            "uri": f"file://{isolated_mlruns}",
+            "store_path": isolated_mlruns,
+            "artifact_dir": None,
+        },
+        {
+            "uri": f"file://{local_mlruns}",
+            "store_path": local_mlruns,
+            "artifact_dir": None,
+        },
+    ] if has_malformed_mlruns else [
+        {
+            "uri": local_sqlite_uri,
+            "store_path": str(local_sqlite_db),
+            "artifact_dir": local_artifacts_dir,
+        },
+        {
+            "uri": f"file://{local_mlruns}",
+            "store_path": local_mlruns,
+            "artifact_dir": None,
+        },
+        {
+            "uri": f"file://{isolated_mlruns}",
+            "store_path": isolated_mlruns,
+            "artifact_dir": None,
+        },
+    ]
     try:
         import mlflow as _mlflow  # type: ignore
 
         if tracking_uri:
-            _mlflow.set_tracking_uri(tracking_uri)
-        _mlflow.set_experiment(experiment_name)
-        # Validar que el backend funciona (start_run puede fallar si faltan deps como boto3)
-        _test_run = _mlflow.start_run(run_name="_init_test")
-        _mlflow.end_run()
-        mlflow = _mlflow
-        mlflow_enabled = True
-        if tracking_uri:
-            print(f"✓ MLflow habilitado: {tracking_uri} (experiment={experiment_name})")
-        else:
-            print(f"✓ MLflow habilitado (tracking local, experiment={experiment_name})")
+            remote_reachable, remote_reachability_err = _is_tracking_uri_reachable(
+                tracking_uri,
+                remote_check_timeout_seconds,
+            )
+            if remote_reachable:
+                ok_remote, remote_err = _activate_mlflow(_mlflow, tracking_uri, "remoto")
+                if ok_remote:
+                    mlflow = _mlflow
+                    mlflow_enabled = True
+                    print(f"✓ MLflow habilitado: {tracking_uri} (experiment={experiment_name})")
+                else:
+                    print(f"⚠️  MLflow servidor no disponible ({remote_err})")
+            else:
+                print(
+                    "⚠️  MLflow remoto no accesible "
+                    f"({tracking_uri}, timeout={remote_check_timeout_seconds}s): {remote_reachability_err}"
+                )
+
+        if not mlflow_enabled:
+            for local_cfg in local_uris:
+                uri = local_cfg["uri"]
+                store_path = local_cfg["store_path"]
+                artifact_dir = local_cfg["artifact_dir"]
+                ok_local, local_err = _activate_mlflow(
+                    _mlflow,
+                    uri,
+                    "local",
+                    experiment_artifact_dir=artifact_dir,
+                )
+                if ok_local:
+                    mlflow = _mlflow
+                    mlflow_enabled = True
+                    mode = "local fallback" if tracking_uri else "tracking local"
+                    print(f"✓ MLflow habilitado ({mode}, experiment={experiment_name})")
+                    print(f"  → Store URI: {store_path}")
+                    print(f"  → Para visualizar: mlflow ui --backend-store-uri {store_path}")
+                    break
+                print(f"⚠️  Falló MLflow local en {store_path}: {local_err}")
     except Exception as exc:
         print(f"⚠️  MLflow no disponible, continuando sin tracking: {exc}")
         mlflow_enabled = False

@@ -57,6 +57,19 @@ docker-compose --profile airflow up -d
 docker-compose --profile all up -d
 ```
 
+### 2.b Modo transparente MLflow (offline→online)
+
+Para que los entrenamientos ejecutados sin Docker aparezcan luego en la UI de MLflow:
+
+```bash
+bash scripts/mlflow/up_transparent_mlflow.sh
+```
+
+Este script:
+- alinea la versión de MLflow del contenedor con tu entorno local,
+- reconstruye el servicio `mlflow`,
+- y lo levanta apuntando a `runs/mlflow_local` (mismo store de ejecuciones offline).
+
 ### 3. Acceder a interfaces
 
 - **Airflow UI**: http://localhost:8080
@@ -88,8 +101,8 @@ docker exec -it airflow_webserver airflow dags trigger e1_conservative_pipeline
 ```
 
 **Pasos**:
-1. Descarga datos diarios (Yahoo Finance)
-2. Calcula 27 features técnicos
+1. Descarga datos diarios (Yahoo Finance o IOL)
+2. Calcula 15 features técnicos
 3. Entrena modelos GRU por ticker
 4. Registra experimentos en MLflow
 5. Guarda artefactos en MinIO

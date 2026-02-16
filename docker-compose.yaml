@@ -128,7 +128,11 @@ services:
 
   mlflow:
     restart: always
-    build: "./dockerfiles/mlflow"
+    build:
+      context: .
+      dockerfile: ./dockerfiles/mlflow/Dockerfile
+      args:
+        MLFLOW_VERSION: ${MLFLOW_VERSION:-3.9.0}
     image: mlflow
     container_name: mlflow
     profiles:
@@ -147,11 +151,13 @@ services:
       - AWS_ACCESS_KEY_ID=${MINIO_ACCESS_KEY:-minio}
       - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-minio123}
       - MLFLOW_S3_ENDPOINT_URL=http://s3:9000
+    volumes:
+      - ./runs:/mlflow_data
     command: >
       mlflow server 
-      --backend-store-uri postgresql://${PG_USER:-airflow}:${PG_PASSWORD:-airflow}@postgres:5432/mlflow_db
+      --backend-store-uri ${MLFLOW_BACKEND_STORE_URI:-postgresql://${PG_USER:-airflow}:${PG_PASSWORD:-airflow}@postgres:5432/mlflow_db}
       --host 0.0.0.0
-      --default-artifact-root s3://${MLFLOW_BUCKET_NAME:-mlflow}/
+      --default-artifact-root ${MLFLOW_DEFAULT_ARTIFACT_ROOT:-s3://${MLFLOW_BUCKET_NAME:-mlflow}/}
     healthcheck:
       test: wget --no-verbose --tries=1 --spider http://mlflow:5000 || exit 1
       interval: 60s
