@@ -30,14 +30,14 @@ try:
 except ImportError:
     pass
 
-from src.features.build_features_e1 import compute_e1_features, make_target_e1  # Features y target E1
-from src.features.build_sequences_e1e2 import make_sequences, temporal_train_val_split  # Secuencias y split train/val
-from src.models.e1_baseline_linear import (  # Import baseline linear
+from .build_features import compute_e1_features, make_target_e1  # Features y target E1
+from ..features.build_sequences_e1e2 import make_sequences, temporal_train_val_split  # Secuencias y split train/val
+from .baseline_linear import (  # Import baseline linear
     LinearRegressionBaseline,  # Modelo baseline de regresión lineal
     compute_baseline_metrics,  # Métricas del baseline
 )  # Fin import baseline linear
-from src.backtest.backtest_daily import backtest_daily_signals, summarize_backtest  # Backtesting diario
-from src.utils import ensure_dir, load_yaml, project_root  # Utilidades comunes
+from ..backtest.backtest_daily import backtest_daily_signals, summarize_backtest  # Backtesting diario
+from ..utils import ensure_dir, load_yaml, project_root  # Utilidades comunes
 
 
 def run_baseline_for_ticker(  # Ejecutar baseline por ticker
@@ -318,7 +318,22 @@ def run_baseline_for_ticker(  # Ejecutar baseline por ticker
     pd.DataFrame([summary]).to_csv(  # Guardar summary
         out_dir / f"{ticker}_baseline_summary.csv", index=False  # Guardar summary
     )  # Fin guardado summary
-    
+
+    # Register as baseline in model lifecycle registry
+    try:
+        from ..lifecycle.registry import ModelRegistry
+        root = project_root()
+        registry_path = root / "models" / "registry.json"
+        registry = ModelRegistry(registry_path)
+        registry.register_baseline(
+            strategy="e1", ticker=ticker,
+            run_dir=str(out_dir.relative_to(root)),
+            metrics=summary, variant="e1_baseline",
+        )
+        print(f"  Registered {ticker} as baseline in lifecycle registry")
+    except Exception as exc:
+        print(f"  Lifecycle registration skipped: {exc}")
+
     # MLFLOW TRACKING
     if mlflow_enabled and mlflow is not None:  # Si MLflow habilitado
         try:  # Intentar logging

@@ -20,33 +20,37 @@ This project proposes the development of an application that, using LSTM neural 
 The effectiveness of the predictive models in this project depends largely on the quality and availability of data. Fortunately, financial markets are among the sectors with the greatest amount of available data. Historical and real-time data sources can be obtained from platforms such as Yahoo Finance, Google Finance, and specialized APIs such as Alpha Vantage, Quandl, or IEX Cloud. These sources offer data on historical prices, transaction volumes, technical indicators (such as moving averages and RSI), as well as fundamental economic information (such as earnings reports, balance sheets, and macroeconomic data). Many of these services offer free or low-cost access for research projects, making it easy to access reliable and up-to-date data.
 
 ### Potential Sources
-1. Yahoo Finance API (via RapidAPI)
+
+1. Yahoo Finance API (via RapidAPI) [implemented]
 Description: Yahoo Finance offers an API via RapidAPI for obtaining information on stocks, currencies, indices, etc.
 Features: You can obtain real-time and historical prices, charts, and more.
 Use: You need to create a RapidAPI account to access this API.
 Link: [Yahoo Finance API on RapidAPI](https://rapidapi.com/apidojo/api/yahoo-finance1)
 
-2. Alpha Vantage
+2. IOL API [implemented]
+Description: 
+
+3. Alpha Vantage
 Description: This is a popular and free API (with request limits) for obtaining data on stocks, forex, and cryptocurrencies.
 Features: Provides historical and real-time data, technical analysis, indicators, and more.
 Documentation: [Alpha Vantage](https://www.alphavantage.co/documentation/)
 
-3. IEX Cloud
+4. IEX Cloud
 Description: Offers data on stocks, funds, currencies, and more. Its free plan is quite comprehensive.
 Features: Real-time data, historical quotes, charts, and more.
 Documentation: [IEX Cloud](https://iexcloud.io/docs/)
 
-4. Finnhub
+5. Finnhub
 Description: Provides financial data, real-time stock prices, and market news.
 Features: Real-time and historical data, with a free plan available.
 Documentation: [Finnhub](https://finnhub.io/docs/api)
 
-5. Polygon.io
+6. Polygon.io
 Description: A comprehensive API with financial data, stock prices, cryptocurrencies, currencies, and more.
 Features: Real-time data and backtesting, with free and paid plans.
 Documentation: [Polygon.io](https://polygon.io/docs/stocks/getting-started)
 
-6. Quandl
+7. Quandl
 Description: Known for offering historical financial and economic data, but also includes stock market data.
 Features: Although it focuses on historical data, you can use it for long-term market analysis.
 Documentation: [Quandl](https://www.quandl.com/tools/api)
@@ -61,4 +65,3 @@ Documentation: [Quandl](https://www.quandl.com/tools/api)
 4. **[crypto-code/Stock-Market](https://github.com/crypto-code/Stock-Market)**: This repository combines stock market prediction with an AI-powered trading bot, offering tools for both forecasting and automated trading[7].
 
 5. **[Vatshayan/Final-Year-Machine-Learning-Stock-Price-Prediction-Project](https://github.com/Vatshayan/Final-Year-Machine-Learning-Stock-Price-Prediction-Project)**: A machine learning-based project designed to predict Google stock prices, emphasizing simplicity and ease of implementation[8].
-

@@ -30,7 +30,7 @@ Métrica objetivo:
   (trade_penalty = -5 si <50% de tickers generan trades)
 
 Uso:
-    # Optimización con defaults (usa MLFLOW_TRACKING_URI de .env)
+    # Optimización con defaults (MLflow local SQLite)
     python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 10
 
     # Optimizar un ticker específico
@@ -87,7 +87,7 @@ import mlflow
 # Agregar src/ al path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.train_e1_pipeline import run_e1_for_ticker, load_ohlcv_csv
+from src.e1.train_pipeline import run_e1_for_ticker, load_ohlcv_csv
 from src.utils import load_yaml, project_root
 
 
@@ -129,12 +129,14 @@ class E1HyperparameterOptimizer:
         
         # MLflow - Configurar tracking URI
         self.mlflow_enabled = True
+        mlflow_dir = self.root / "runs/mlflow_local"
+        mlflow_dir.mkdir(parents=True, exist_ok=True)
+        mlflow_db = mlflow_dir / "mlflow.db"
+        local_tracking_uri = f"sqlite:///{mlflow_db}"
+
         if mlflow_tracking_uri == "local":
             # Modo local: usar SQLite backend
-            mlflow_dir = self.root / "runs/mlflow_local"
-            mlflow_dir.mkdir(parents=True, exist_ok=True)
-            mlflow_db = mlflow_dir / "mlflow.db"
-            tracking_uri = f"sqlite:///{mlflow_db}"
+            tracking_uri = local_tracking_uri
             print(f"✓ Usando MLflow local (SQLite): {mlflow_db}")
         else:
             # Modo remoto: usar servidor MLflow (ej: Docker)
@@ -146,8 +148,10 @@ class E1HyperparameterOptimizer:
         # Configurar experimento
         experiment_name = "E1_Hyperparameter_Optimization"
 
-        # Forzar artifact location local para evitar conflictos con Docker
-        artifact_location = str(self.root / "mlruns")
+        # Artifact location compartido en modo local, para poder levantar MLflow UI luego
+        local_artifacts_dir = self.root / "runs" / "mlflow_local" / "artifacts"
+        local_artifacts_dir.mkdir(parents=True, exist_ok=True)
+        artifact_location = local_artifacts_dir.resolve().as_uri()
 
         try:
             mlflow.set_experiment(experiment_name)
@@ -159,8 +163,21 @@ class E1HyperparameterOptimizer:
             error_msg = str(e)
             print(f"⚠️  Error configurando MLflow: {e}")
 
+            # Fallback automático: si falla remoto, intentar local SQLite
+            if mlflow_tracking_uri != "local":
+                try:
+                    mlflow.set_tracking_uri(local_tracking_uri)
+                    mlflow.set_experiment(experiment_name)
+                    _test_run = mlflow.start_run(run_name="_init_test_local_fallback")
+                    mlflow.end_run()
+                    tracking_uri = local_tracking_uri
+                    print(f"✓ Fallback MLflow local habilitado: {tracking_uri} (experiment={experiment_name})")
+                    error_msg = ""  # Evitar lógica de error posterior
+                except Exception as fallback_exc:
+                    print(f"⚠️  Falló fallback local de MLflow: {fallback_exc}")
+
             # Si es un error de revisión de Alembic, recrear la base de datos
-            if "Can't locate revision" in error_msg or "alembic" in error_msg.lower():
+            if error_msg and ("Can't locate revision" in error_msg or "alembic" in error_msg.lower()):
                 if mlflow_tracking_uri == "local":
                     print(f"⚠️  Base de datos MLflow corrupta. Recreando...")
                     if mlflow_db.exists():
@@ -168,17 +185,18 @@ class E1HyperparameterOptimizer:
                     mlflow.set_tracking_uri(tracking_uri)
 
             # Crear experimento manualmente
-            try:
-                mlflow.create_experiment(experiment_name, artifact_location=artifact_location)
-                mlflow.set_experiment(experiment_name)
-                print(f"✓ Experimento '{experiment_name}' creado")
-            except Exception:
+            if error_msg:
                 try:
+                    mlflow.create_experiment(experiment_name, artifact_location=artifact_location)
                     mlflow.set_experiment(experiment_name)
-                    print(f"✓ Experimento '{experiment_name}' configurado")
-                except Exception as final_exc:
-                    print(f"⚠️  MLflow no disponible, continuando sin tracking: {final_exc}")
-                    self.mlflow_enabled = False
+                    print(f"✓ Experimento '{experiment_name}' creado")
+                except Exception:
+                    try:
+                        mlflow.set_experiment(experiment_name)
+                        print(f"✓ Experimento '{experiment_name}' configurado")
+                    except Exception as final_exc:
+                        print(f"⚠️  MLflow no disponible, continuando sin tracking: {final_exc}")
+                        self.mlflow_enabled = False
         
         # Optuna
         self.optuna_db_path = optuna_db_path
@@ -698,8 +716,8 @@ def main():
     parser.add_argument(
         "--mlflow_uri",
         type=str,
-        default=os.getenv("MLFLOW_TRACKING_URI", "local").strip(),
-        help="URI de MLflow tracking server (default: MLFLOW_TRACKING_URI env var o 'local' para SQLite)",
+        default="local",
+        help="URI de MLflow tracking server (default: 'local' para SQLite)",
     )
     parser.add_argument(
         "--output_dir",
@@ -849,6 +867,10 @@ def main():
     # Crear optimizador
     output_dir = root / args.output_dir
 
+    def _study_name_for_ticker(base_study_name: str, ticker_name: str) -> str:
+        suffix = f"__{ticker_name}"
+        return base_study_name if base_study_name.endswith(suffix) else f"{base_study_name}{suffix}"
+
     if args.per_ticker:
         # Resolver tickers si no se especificaron (usa universo E1)
         if tickers is None:
@@ -880,7 +902,7 @@ def main():
                 batch_size_choices=batch_sizes_list,
             )
 
-            study_name = f"{args.study_name}__{t}"
+            study_name = _study_name_for_ticker(args.study_name, t)
             study = optimizer.optimize(
                 n_trials=args.n_trials,
                 study_name=study_name,
@@ -939,6 +961,16 @@ def main():
         print("Para usarlo en training: export E1_TUNED_PARAMS_PATH=<ruta_al_yaml>")
 
     else:
+        study_name = args.study_name
+        if tickers and len(tickers) == 1:
+            single_ticker = tickers[0]
+            ticker_scoped_study_name = _study_name_for_ticker(args.study_name, single_ticker)
+            if ticker_scoped_study_name != args.study_name:
+                print(
+                    f"✓ Modo single-ticker: usando study aislado por ticker para evitar contaminación de metadata: {ticker_scoped_study_name}"
+                )
+            study_name = ticker_scoped_study_name
+
         optimizer = E1HyperparameterOptimizer(
             config_path=config_path,
             tickers=tickers,
@@ -949,7 +981,7 @@ def main():
 
         study = optimizer.optimize(
             n_trials=args.n_trials,
-            study_name=args.study_name,
+            study_name=study_name,
             timeout=args.timeout,
         )
 

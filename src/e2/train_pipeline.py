@@ -33,11 +33,11 @@ import numpy as np  # Cálculo numérico
 import pandas as pd  # DataFrames
 from sklearn.model_selection import TimeSeriesSplit  # Split temporal sin leakage
 
-from .features.build_features_e2 import compute_e2_features, make_target_e2  # Features y target E2
-from .features.build_sequences_e1e2 import make_sequences, time_split, temporal_train_val_split  # Secuencias y splits
-from .models.e2_lstm import LSTMRegressor  # Modelo LSTM
-from .backtest.backtest_daily import backtest_daily_signals, summarize_backtest  # Backtesting diario
-from .utils import ensure_dir, load_yaml, project_root, log_timing_event  # Utilidades comunes
+from .build_features import compute_e2_features, make_target_e2  # Features y target E2
+from ..features.build_sequences_e1e2 import make_sequences, time_split, temporal_train_val_split  # Secuencias y splits
+from .lstm import LSTMRegressor  # Modelo LSTM
+from ..backtest.backtest_daily import backtest_daily_signals, summarize_backtest  # Backtesting diario
+from ..utils import ensure_dir, load_yaml, project_root, log_timing_event  # Utilidades comunes
 
 
 @lru_cache(maxsize=8)  # Cachear lectura de YAMLs

@@ -28,11 +28,11 @@ import time
 import numpy as np  # NumPy
 import pandas as pd  # Pandas
 
-from .features.build_features_e2 import compute_e2_features, make_target_e2  # Features/target E2
-from .features.build_sequences_e1e2 import make_sequences, time_split  # Secuencias y split
-from .models.e2_lstm import LSTMRegressor  # Modelo LSTM
-from .backtest.backtest_daily import backtest_daily_signals, summarize_backtest  # Backtest
-from .utils import ensure_dir, load_yaml, project_root, log_timing_event  # Utils
+from .build_features import compute_e2_features, make_target_e2  # Features/target E2
+from ..features.build_sequences_e1e2 import make_sequences, time_split  # Secuencias y split
+from .lstm import LSTMRegressor  # Modelo LSTM
+from ..backtest.backtest_daily import backtest_daily_signals, summarize_backtest  # Backtest
+from ..utils import ensure_dir, load_yaml, project_root, log_timing_event  # Utils
 
 
 def load_ohlcv_csv(path: Path) -> pd.DataFrame:  # Cargar OHLCV

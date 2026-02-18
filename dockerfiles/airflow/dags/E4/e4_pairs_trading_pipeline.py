@@ -159,7 +159,7 @@ def discover_cointegrated_pairs(**context):
     import sys
     sys.path.insert(0, '/opt/airflow')
     
-    from src.pairs.discover_pairs import discover_cointegrated_pairs, filter_best_pairs, pairs_to_list
+    from src.e4.pairs.discover_pairs import discover_cointegrated_pairs, filter_best_pairs, pairs_to_list
     from src.utils import load_yaml
     from pathlib import Path
     import pandas as pd
@@ -318,7 +318,7 @@ def process_pairs_with_mlflow(**context):
     import sys
     sys.path.insert(0, '/opt/airflow')
     
-    from src.train_e4_pipeline import process_pair
+    from src.e4.train_pipeline import process_pair
     from src.utils import load_yaml, ensure_dir
     from pathlib import Path
     import pandas as pd

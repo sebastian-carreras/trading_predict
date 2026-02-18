@@ -35,12 +35,12 @@ try:
 except ImportError:
     pass
 
-from .features.build_features_e1 import compute_e1_features, make_target_e1
-from .features.build_sequences_e1e2 import make_sequences, time_split
-from .models.e1_gru import GRURegressor
-from .backtest.backtest_daily import backtest_daily_signals, summarize_backtest
-from .utils import ensure_dir, load_yaml, project_root, log_timing_event
-from .dashboard import (
+from .build_features import compute_e1_features, make_target_e1
+from ..features.build_sequences_e1e2 import make_sequences, time_split
+from .gru import GRURegressor
+from ..backtest.backtest_daily import backtest_daily_signals, summarize_backtest
+from ..utils import ensure_dir, load_yaml, project_root, log_timing_event
+from ..dashboard import (
     log_dashboard_tags,
     log_dashboard_timing,
     log_metric_alerts,

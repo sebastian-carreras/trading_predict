@@ -30,16 +30,16 @@ import time
 import numpy as np  # NumPy
 import pandas as pd  # Pandas
 
-from .backtest.backtest_intraday import (  # Backtest intraday
+from ..backtest.backtest_intraday import (  # Backtest intraday
     backtest_intraday_signals,  # Simula ejecución de órdenes
     compute_max_drawdown,        # Calcula máxima caída del equity
     compute_profit_factor,       # Calcula profit factor (ganancias/pérdidas)
 )  # Fin import backtest
-from .data.intraday_yfinance import download_ohlcv_5m, load_ohlcv_csv  # Data intraday
-from .features.build_features_e3 import compute_intraday_features, make_sequences, make_target_return  # Features/target
-from .models.e3_lstm import LSTMRegressor  # Modelo LSTM
-from .reporting.intraday_metrics import directional_accuracy, information_coefficient, mae, rmse  # Métricas
-from .utils import ensure_dir, get_nested, load_yaml, project_root, log_timing_event  # Utils
+from .intraday_data import download_ohlcv_5m, load_ohlcv_csv  # Data intraday
+from .build_features import compute_intraday_features, make_sequences, make_target_return  # Features/target
+from .lstm import LSTMRegressor  # Modelo LSTM
+from .intraday_metrics import directional_accuracy, information_coefficient, mae, rmse  # Métricas
+from ..utils import ensure_dir, get_nested, load_yaml, project_root, log_timing_event  # Utils
 
 
 def _time_split(n: int, train_frac: float = 0.7, val_frac: float = 0.15):  # Split temporal

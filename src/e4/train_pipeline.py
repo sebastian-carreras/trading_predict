@@ -55,12 +55,12 @@ from .pairs.knn_confirm import (  # k-NN confirm
     create_knn_target,              # Target para k-NN
     cross_validate_knn,             # Validación cruzada k-NN
 )  # Fin import knn_confirm
-from .backtest.backtest_rules_e4 import (  # Backtest E4
+from .backtest_rules import (  # Backtest E4
     generate_pair_signals,          # Genera señales de entrada/salida
     backtest_pair_strategy,         # Simula ejecución de trades
     summarize_pair_backtest,        # Resumen de resultados
 )  # Fin import backtest
-from .utils import ensure_dir, load_yaml, project_root, log_timing_event  # Utils
+from ..utils import ensure_dir, load_yaml, project_root, log_timing_event  # Utils
 
 logging.basicConfig(  # Config logging
     level=logging.INFO,  # Nivel

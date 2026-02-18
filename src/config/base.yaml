@@ -459,3 +459,21 @@ reporting:
     ml: ["mae", "rmse", "directional_accuracy"]
     trading: ["cagr", "sharpe", "sortino", "max_drawdown", "calmar", "profit_factor", "turnover", "hit_rate"]
   output_dir: "reports"
+
+lifecycle:
+  enabled: true
+  registry_path: "models/registry.json"
+  metrics_log_path: "models/metrics_log.jsonl"
+
+  guardrails:
+    # Phase 1: only reject technically broken models.
+    # Phase 2 (future): empirical thresholds from metrics_log.jsonl after 5-10 runs.
+    phase: 1
+    reject_if:
+      nan_in_predictions: true
+      nan_in_backtest: true
+      sharpe_below_zero: true
+      worse_than_baseline: true
+
+  retirement:
+    keep_last_n: 5

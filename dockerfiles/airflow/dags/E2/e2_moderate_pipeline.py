@@ -123,7 +123,7 @@ def train_e2_with_mlflow(**context):
     import sys
     sys.path.insert(0, '/opt/airflow')
     
-    from src.train_e2_pipeline import run_e2_for_ticker
+    from src.e2.train_pipeline import run_e2_for_ticker
     from src.utils import load_yaml, ensure_dir
     from pathlib import Path
     import pandas as pd

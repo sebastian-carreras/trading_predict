@@ -55,7 +55,7 @@ def download_intraday_data(**context):
     import sys
     sys.path.insert(0, '/opt/airflow')
     
-    from src.data.intraday_yfinance import download_ohlcv_5m
+    from src.e3.intraday_data import download_ohlcv_5m
     from src.utils import load_yaml
     from pathlib import Path
     
@@ -191,7 +191,7 @@ def train_e3_with_mlflow(**context):
     import sys
     sys.path.insert(0, '/opt/airflow')
     
-    from src.train_e3_pipeline import run_for_ticker
+    from src.e3.train_pipeline import run_for_ticker
     from src.utils import load_yaml
     from pathlib import Path
     

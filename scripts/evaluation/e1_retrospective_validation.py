@@ -30,9 +30,9 @@ import mlflow
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.utils import load_yaml, project_root
-from src.features.build_features_e1 import compute_e1_features
+from src.e1.build_features import compute_e1_features
 from src.features.build_sequences_e1e2 import make_sequences
-from src.models.e1_gru import GRURegressor
+from src.e1.gru import GRURegressor
 from src.backtest.backtest_daily import backtest_daily_signals, summarize_backtest
 
 

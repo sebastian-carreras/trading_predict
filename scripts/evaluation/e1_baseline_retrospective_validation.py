@@ -33,7 +33,7 @@ import mlflow
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.utils import load_yaml
-from src.features.build_features_e1 import compute_e1_features
+from src.e1.build_features import compute_e1_features
 from src.backtest.backtest_daily import backtest_daily_signals, summarize_backtest
 
 

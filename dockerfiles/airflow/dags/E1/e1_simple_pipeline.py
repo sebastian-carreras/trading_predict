@@ -157,7 +157,7 @@ def train_e1_simple_with_mlflow(**context):
     import sys
     sys.path.insert(0, '/opt/airflow')
     
-    from src.train_e1_simple_pipeline import run_e1_simple_for_ticker
+    from src.e1.train_simple_pipeline import run_e1_simple_for_ticker
     from src.utils import load_yaml
     from pathlib import Path
     import pandas as pd

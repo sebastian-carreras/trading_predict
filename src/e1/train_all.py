@@ -1,14 +1,14 @@
 """Runner unificado para entrenar todas las variantes de E1.
 
 Ejecuta, en este orden:
-1) e1_baseline      -> src.train_e1_baseline
-2) e1_simple        -> src.train_e1_simple_pipeline
-3) e1_conservador   -> src.train_e1_pipeline
+1) e1_baseline      -> src.e1.train_baseline
+2) e1_simple        -> src.e1.train_simple_pipeline
+3) e1_conservador   -> src.e1.train_pipeline
 
 Uso:
-    python -m src.train_e1_all
-    python -m src.train_e1_all --tickers AAPL,MSFT
-    python -m src.train_e1_all --config src/config/base.yaml --tickers YPFD.BA,GGAL.BA
+    python -m src.e1.train_all
+    python -m src.e1.train_all --tickers AAPL,MSFT
+    python -m src.e1.train_all --config src/config/base.yaml --tickers YPFD.BA,GGAL.BA
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 try:
-    from .utils import load_yaml, project_root
+    from ..utils import load_yaml, project_root
 except ImportError:  # pragma: no cover
     from src.utils import load_yaml, project_root
 
@@ -92,9 +92,9 @@ def main() -> None:
     print(f"Tickers ({len(tickers)}): {tickers_csv}")
 
     steps = [
-        ("e1_baseline", "src.train_e1_baseline"),
-        ("e1_simple", "src.train_e1_simple_pipeline"),
-        ("e1_conservador", "src.train_e1_pipeline"),
+        ("e1_baseline", "src.e1.train_baseline"),
+        ("e1_simple", "src.e1.train_simple_pipeline"),
+        ("e1_conservador", "src.e1.train_pipeline"),
     ]
 
     exit_codes: dict[str, int] = {}

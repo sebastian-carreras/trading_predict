@@ -126,7 +126,7 @@ def train_e1_with_mlflow(**context):
     import sys
     sys.path.insert(0, '/opt/airflow')
     
-    from src.train_e1_pipeline import run_e1_for_ticker, load_ohlcv_csv
+    from src.e1.train_pipeline import run_e1_for_ticker, load_ohlcv_csv
     from src.utils import load_yaml
     from pathlib import Path
     import pandas as pd
@@ -354,8 +354,69 @@ def train_e1_with_mlflow(**context):
     return f"Entrenados {len(results)} modelos"
 
 
+def register_lifecycle_candidates(**context):
+    """Task 3: Register trained models as candidates in lifecycle registry."""
+    import sys
+    sys.path.insert(0, '/opt/airflow')
+
+    from pathlib import Path
+
+    run_dir_str = context['task_instance'].xcom_pull(
+        task_ids='train_e1_models', key='run_dir'
+    )
+    if not run_dir_str:
+        return "No run_dir available, skipping lifecycle registration"
+
+    try:
+        from src.lifecycle.registry import ModelRegistry
+        from src.lifecycle.guardrails import validate_candidate, log_candidate_metrics
+
+        root = Path("/opt/airflow")
+        registry = ModelRegistry(root / "models" / "registry.json")
+        run_dir = Path(run_dir_str)
+
+        registered = 0
+        for ticker_dir in sorted(run_dir.iterdir()):
+            if not ticker_dir.is_dir():
+                continue
+            ticker = ticker_dir.name
+            if not list(ticker_dir.glob(f"{ticker}*_model.pth")):
+                continue
+
+            # Log all metrics for future threshold calibration
+            summary_path = run_dir / "summary_all.csv"
+            if summary_path.exists():
+                import pandas as pd
+                df = pd.read_csv(summary_path)
+                row = df[df["ticker"] == ticker]
+                if not row.empty:
+                    metrics = row.iloc[0].to_dict()
+                    log_candidate_metrics(
+                        metrics=metrics, strategy="e1", ticker=ticker,
+                        run_dir=ticker_dir, variant="e1_conservative",
+                        log_path=root / "models" / "metrics_log.jsonl",
+                    )
+
+            passed, errors = validate_candidate(run_dir=ticker_dir, ticker=ticker)
+            if passed:
+                registry.register_candidate(
+                    strategy="e1", ticker=ticker,
+                    run_dir=str(ticker_dir.relative_to(root)),
+                    metrics=metrics if 'metrics' in dir() else {},
+                    variant="e1_conservative",
+                )
+                registered += 1
+            else:
+                print(f"  Guardrails failed for {ticker}: {errors}")
+
+        return f"Registered {registered} candidates in lifecycle registry"
+    except Exception as e:
+        print(f"Lifecycle registration error: {e}")
+        return f"Lifecycle registration skipped: {e}"
+
+
 def notify_api_model_ready(**context):
-    """Task 3: Notificar a FastAPI que nuevos modelos están listos."""
+    """Task 4: Notificar a FastAPI que nuevos modelos están listos."""
     import requests
     
     run_dir = context['task_instance'].xcom_pull(task_ids='train_e1_models', key='run_dir')
@@ -396,11 +457,17 @@ task_train = PythonOperator(
     dag=dag,
 )
 
+task_lifecycle = PythonOperator(
+    task_id='register_lifecycle_candidates',
+    python_callable=register_lifecycle_candidates,
+    dag=dag,
+)
+
 task_notify = PythonOperator(
     task_id='notify_api',
     python_callable=notify_api_model_ready,
     dag=dag,
 )
 
-# Flujo del DAG: Download → Clean → Train → Notify
-task_download >> task_clean >> task_train >> task_notify
+# Flujo del DAG: Download → Clean → Train → Register Candidates → Notify
+task_download >> task_clean >> task_train >> task_lifecycle >> task_notify

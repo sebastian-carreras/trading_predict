@@ -31,8 +31,8 @@ from dotenv import load_dotenv
 # Agregar src al path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.models.e1_gru import GRURegressor
-from src.features.build_features_e1 import compute_e1_features
+from src.e1.gru import GRURegressor
+from src.e1.build_features import compute_e1_features
 from src.utils import load_yaml
 
 

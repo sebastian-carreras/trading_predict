@@ -111,9 +111,9 @@ def recalibrate_ou_parameters(**context):
     import sys
     sys.path.insert(0, '/opt/airflow')
     
-    from src.pairs.select_pairs import test_pair_cointegration, load_pair_prices
-    from src.pairs.build_spread import build_pair_features
-    from src.pairs.ou_process import estimate_ou_parameters, test_stationarity
+    from src.e4.pairs.select_pairs import test_pair_cointegration, load_pair_prices
+    from src.e4.pairs.build_spread import build_pair_features
+    from src.e4.pairs.ou_process import estimate_ou_parameters, test_stationarity
     from src.utils import load_yaml
     from pathlib import Path
     import pandas as pd

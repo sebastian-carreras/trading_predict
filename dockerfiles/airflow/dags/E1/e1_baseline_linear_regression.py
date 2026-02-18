@@ -132,7 +132,7 @@ def train_baseline_with_mlflow(**context):
     import sys
     sys.path.insert(0, '/opt/airflow')
     
-    from src.train_e1_baseline import run_baseline_for_ticker
+    from src.e1.train_baseline import run_baseline_for_ticker
     from src.utils import load_yaml
     from pathlib import Path
     import pandas as pd

@@ -33,11 +33,11 @@ try:
 except ImportError:
     pass
 
-from .features.build_features_e1 import compute_e1_features, make_target_e1
-from .features.build_sequences_e1e2 import make_sequences, time_split, temporal_train_val_split
-from .models.e1_gru import GRURegressor
-from .backtest.backtest_daily import backtest_daily_signals, summarize_backtest
-from .utils import ensure_dir, load_yaml, project_root, log_timing_event
+from .build_features import compute_e1_features, make_target_e1
+from ..features.build_sequences_e1e2 import make_sequences, time_split, temporal_train_val_split
+from .gru import GRURegressor
+from ..backtest.backtest_daily import backtest_daily_signals, summarize_backtest
+from ..utils import ensure_dir, load_yaml, project_root, log_timing_event
 
 
 @lru_cache(maxsize=8)
@@ -961,6 +961,31 @@ def run_e1_for_ticker(
         "model_file": as_relative(model_path),  # Modelo
     }
     pd.Series(summary).to_csv(out_dir / f"{ticker}_summary.csv")  # Guardar summary
+
+    # Register as candidate in model lifecycle registry
+    try:
+        from ..lifecycle.registry import ModelRegistry
+        from ..lifecycle.guardrails import validate_candidate, log_candidate_metrics
+
+        registry_path = root / "models" / "registry.json"
+        log_candidate_metrics(
+            metrics=summary, strategy="e1", ticker=ticker,
+            run_dir=out_dir, variant="e1_conservative",
+            log_path=root / "models" / "metrics_log.jsonl",
+        )
+        passed, errors = validate_candidate(run_dir=out_dir, ticker=ticker)
+        if passed:
+            registry = ModelRegistry(registry_path)
+            registry.register_candidate(
+                strategy="e1", ticker=ticker,
+                run_dir=str(out_dir.relative_to(root)),
+                metrics=summary, variant="e1_conservative",
+            )
+            logger.info("Registered %s as candidate in lifecycle registry", ticker)
+        else:
+            logger.warning("Guardrails failed for %s: %s", ticker, errors)
+    except Exception as exc:
+        logger.debug("Lifecycle registration skipped: %s", exc)
 
     return summary  # Retornar resumen
 

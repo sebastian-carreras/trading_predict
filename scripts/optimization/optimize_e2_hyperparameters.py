@@ -58,7 +58,7 @@ import mlflow
 # Agregar src/ al path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.train_e2_pipeline import run_e2_for_ticker, load_ohlcv_csv
+from src.e2.train_pipeline import run_e2_for_ticker, load_ohlcv_csv
 from src.utils import load_yaml, project_root
 
 
