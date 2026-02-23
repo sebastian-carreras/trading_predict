@@ -22,8 +22,8 @@ Predicción de retornos logarítmicos acumulados a 90 días usando arquitectura 
 pip install -r requirements.txt
 
 # E1 completo (3 versiones: baseline + simple + conservador)
-python -m src.train_e1_all
-python -m src.train_e1_all --tickers AAPL,MSFT
+python -m src.e1.train_all
+python -m src.e1.train_all --tickers AAPL,MSFT
 
 # E1 Conservative (walk-forward validation)
 python -m src.train_e1_pipeline 

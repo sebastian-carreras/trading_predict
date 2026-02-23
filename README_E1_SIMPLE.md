@@ -11,8 +11,8 @@
 pip install -r requirements.txt
 
 # Entrenar E1 completo (baseline + simple + conservador)
-python -m src.train_e1_all
-python -m src.train_e1_all --tickers AAPL,MSFT
+python -m src.e1.train_all
+python -m src.e1.train_all --tickers AAPL,MSFT
 
 # Al finalizar, ejecuta automáticamente la comparación de versiones E1
 # y guarda: reports/tables/e1_versions_comparison.csv y .md
@@ -175,8 +175,8 @@ Las features están optimizadas para predicción a largo plazo (horizon=90 días
 
 ```bash
 # Runner unificado de E1 (3 versiones)
-python -m src.train_e1_all
-python -m src.train_e1_all --tickers AAPL,MSFT
+python -m src.e1.train_all
+python -m src.e1.train_all --tickers AAPL,MSFT
 
 # Modo completo (download + clean + train)
 python -m src.train_e1_simple_pipeline --tickers AAPL,MSFT

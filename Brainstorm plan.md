@@ -2,7 +2,7 @@
 
 
 ### Semana libre plan de trabajo
-- [_] Plantear nomenglaturas para los modelos:
+- [_] Ciclo de vida de modelos. Plantear nomenglaturas para los modelos:
 	- Baseline: referencia fija para comparar, no tiene por qué estar en producción.
 	- Candidate: cualquier modelo nuevo que estás probando offline contra el baseline.
 	- Challenger: modelo candidato que compite contra el modelo “oficial” usando los mismos datos (A/B, shadow, etc.).
@@ -14,6 +14,8 @@
 - [_] Check the continuos evaluation "branch" that was never followed.
 
 - [_] Estudiar walk-forward validation.
+
+- [ ] Pedirle a la AI que te enseño conecptos y patrones usados durante el desarollo, especificos para el proyecto.
 
 
 ​

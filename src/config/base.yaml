@@ -61,53 +61,7 @@ universe:
       - "JNJ"
       - "PG"
       - "V"
-    e1_simple:
-      # Mismo universo que e1_conservative
-      - "YPFD.BA"
-      - "GGAL.BA"
-      - "PAMP.BA"
-      - "BYMA.BA"
-      - "CEPU.BA"
-      - "AAPL"
-      - "MSFT"
-      - "JNJ"
-      - "PG"
-      - "V"
-    e2_moderate:
-      - "BBAR.BA"
-      - "BMA.BA"
-      - "EDN.BA"
-      - "TGSUD.BA"
-      - "LOMA.BA"
-      - "NVDA"
-      - "GOOGL"
-      - "AMZN"
-      - "META"
-      - "NFLX"
-    e2_simple:
-      # Mismo universo que e2_moderate
-      - "BBAR.BA"
-      - "BMA.BA"
-      - "EDN.BA"
-      - "TGSUD.BA"
-      - "LOMA.BA"
-      - "NVDA"
-      - "GOOGL"
-      - "AMZN"
-      - "META"
-      - "NFLX"
-    e3_intraday:
-      - "GGAL.BA"
-      - "YPFD.BA"
-      - "BMA,BA"
-      - "BYMA.BA"
-      - "PAMP.BA"
-      - "TSLA"
-      - "NVDA"
-      - "SPY"
-      - "QQQ"
-      - "AMD"
-      - "MSFT"
+    # e2, e3, e4: tickers se definirán cuando se reconstruyan las estrategias
 
 costs:
   # Costos round-trip (entrada+salida). Usar en backtest neto.
@@ -120,14 +74,6 @@ splits:
   # Embargo para evitar leakage por targets con horizonte H.
   embargo_days:
     e1: 90
-    e2: 20
-    e4: 0
-    e3: 0
-
-features:
-  price:
-    use_adjusted: true
-    return_type: "log"  # log or simple
 
 strategies:
   e1_conservative:
@@ -140,17 +86,6 @@ strategies:
     thresholds:
       tau_buy: 0.02
       tau_sell: 0.00
-
-    filters:
-      rsi14_max: 60
-      regime:
-        type: "sma200"  # sma200 | adx
-        sma200_required: true
-      bollinger:
-        enabled: true
-        bb_period: 20
-        bb_std: 2
-        percent_b_max: 0.9
 
     risk:
       stop_loss_pct: 0.10
@@ -177,282 +112,19 @@ strategies:
       allow_short: false  # Solo long positions (estrategia conservadora)
       max_position: 1.0  # 100% del capital en una posición
 
-  e1_simple:
-    enabled: true
-    frequency: "1D"
-    lookback_days: 360
-    horizon_days: 90
-    rebalance: "monthly"
-
-    thresholds:
-      tau_buy: 0.06
-      tau_sell: 0.00
-
-    filters:
-      # Simplificado: solo filtro de tendencia
-      regime:
-        type: "sma200"
-        sma200_required: true
-
-    risk:
-      stop_loss_pct: 0.10
-
-    model:
-      type: "GRU"
-      gru_units: [64]  # Solo 1 capa (simplificado)
-      dropout: 0.2
-      dense_units: 16
-      loss: "huber"
-      huber_delta: 1.0
-      optimizer: "adamw"
-      learning_rate: 0.001
-      batch_size: 64
-      max_epochs: 100
-      early_stopping_patience: 10
-      clipnorm: 1.0
-
-    backtest:
-      holding_period_days: 90
-      allow_short: false
-      max_position: 1.0
-
   e2_moderate:
-    enabled: true
+    enabled: false  # TODO: rebuild from scratch
     frequency: "1D"
-    lookback_days: 60
     horizon_days: 20
-    rebalance: "weekly"
-
-    thresholds:
-      tau_buy: 0.025
-      tau_sell: 0.00
-
-    filters:
-      rsi14_min: 35
-      rsi14_max: 70
-      macd_confirmation: true
-      volume_zscore_window: 20
-      volume_zscore_min: 0
-
-    risk:
-      stop_loss_pct: 0.07
-      take_profit_pct: 0.10
-      time_stop_days: 20
-
-    model:
-      type: "LSTM"
-      lstm_units: [128, 64]
-      dropout: 0.2
-      dense_units: 32
-      loss: "huber"
-      huber_delta: 1.0
-      optimizer: "adamw"
-      learning_rate: 0.001
-      batch_size: 64
-      max_epochs: 150
-      early_stopping_patience: 12
-      clipnorm: 1.0
-
-  e2_simple:
-    enabled: true
-    frequency: "1D"
-    lookback_days: 60
-    horizon_days: 20
-    rebalance: "weekly"
-
-    thresholds:
-      tau_buy: 0.025
-      tau_sell: 0.00
-
-    filters:
-      rsi14_min: 35
-      rsi14_max: 70
-      macd_confirmation: true
-      volume_zscore_window: 20
-      volume_zscore_min: 0
-
-    risk:
-      stop_loss_pct: 0.07
-
-    model:
-      type: "LSTM"
-      lstm_units: [128, 64]  # 2 capas LSTM
-      dropout: 0.2
-      dense_units: 16
-      loss: "huber"
-      huber_delta: 1.0
-      optimizer: "adamw"
-      learning_rate: 0.001
-      batch_size: 64
-      max_epochs: 100  # Menos epochs (más rápido)
-      early_stopping_patience: 10
-      clipnorm: 1.0
-
-    backtest:
-      holding_period_days: 20
-      allow_short: false
-      max_position: 1.0
-
-  e4_pairs:
-    enabled: true
-    frequency: "1D"
-    training_window_days: 252
-    beta_lookback_days: 120
-    horizon_days: 10  # solo como confirmación
-    recalibration: "monthly"
-
-    entry_exit:
-      entry_z: 2.0
-      exit_z: 0.25
-      stop_z: 3.0
-      time_stop_days: 20
-
-    # Descubrimiento automático de pares cointegrados
-    discovery:
-      enabled: true  # Si True, descubre pares automáticamente; si False, usa 'pairs' fijos
-      pvalue_max: 0.10  # P-value máximo para cointegración (0.10 = 90% confianza)
-      half_life_min: 5.0  # Half-life mínimo en días
-      half_life_max: 500.0  # Half-life máximo en días (relajado para incluir pares de largo plazo)
-      correlation_min: 0.3  # Correlación mínima requerida (relajado)
-      max_pairs: 20  # Máximo número de pares a procesar
-      min_quality_score: 0.3  # Score mínimo de calidad (relajado)
-
-    # Universo de tickers para descubrir pares (se prueban todas las combinaciones)
-    universe:
-      # Argentina - Acciones
-      - "COME.BA"
-      - "BYMA.BA"
-      - "VALO.BA"
-      - "SEMI.BA"
-      - "GGAL.BA"
-      - "MORI.BA"
-      - "AGRO.BA"
-      - "TXAR.BA"
-      - "FERR.BA"
-      - "SUPV.BA"
-      - "PAMP.BA"
-      - "ALUA.BA"
-      - "CEPU.BA"
-      - "BHIP.BA"
-      - "CARC.BA"
-      - "EDN.BA"
-      - "METR.BA"
-      - "BOLT.BA"
-      - "COMED.BA"
-      - "LONG.BA"
-      - "LOMA.BA"
-      - "GCDI.BA"
-      - "TRAN.BA"
-      - "AMZN.BA"
-      - "IBIT.BA"
-      - "CELU.BA"
-      - "YPFD.BA"
-      - "ETHA.BA"
-      - "BMA.BA"
-      - "BBAR.BA"
-      - "TGNO4.BA"
-      - "CRES.BA"
-      - "ECOG.BA"
-      - "TGSU2.BA"
-      - "BYMAD.BA"
-      - "GOOGL.BA"
-      - "IRSA.BA"
-      - "INVJ.BA"
-      - "MELI.BA"
-      - "NVDA.BA"
-      - "SATL.BA"
-      - "SAMI.BA"
-      - "GLOB.BA"
-      - "NFLX.BA"
-      - "GLD.BA"
-      - "TECO2.BA"
-      - "A3.BA"
-      - "ROSE.BA"
-      - "CECO2.BA"
-      - "PAMPD.BA"
-      # Argentina - Bonos Soberanos
-      # Nota: Estos bonos se buscarán primero en Yahoo Finance
-      # Si no se encuentran, el sistema usará IOL como fallback
-      - "AL29"
-      - "AL30"
-      - "AL35"
-      - "AL41"
-      - "AE38"
-      - "GD29"
-      - "GD30"
-      - "GD35"
-      - "GD38"
-      - "GD41"
-      - "GD46"
-      - "AL29D"
-      - "AL30D"
-      - "AL35D"
-      - "AL41D"
-      - "GD29D"
-      # USA - Consumo
-      - "KO"
-      - "PEP"
-      # USA - Tech
-      - "MSFT"
-      - "GOOGL"
-      - "AAPL"
-      - "META"
-      # USA - Energía
-      - "XOM"
-      - "CVX"
-      # USA - Bancos
-      - "JPM"
-      - "BAC"
-      # USA - Industriales
-      - "CAT"
-      - "DE"
-
-    knn:
-      enabled: true
-      k_candidates: [5, 10, 20]
-      distance: "euclidean"  # euclidean | mahalanobis
-
-    # Pares fijos (solo se usan si discovery.enabled = False)
-    pairs:
-      - ["GGAL.BA", "BMA.BA"]
-      - ["PAMP.BA", "CEPU.BA"]
-      - ["TGSU2.BA", "TGNO4.BA"]
 
   e3_intraday:
-    enabled: true
+    enabled: false  # TODO: rebuild from scratch
     frequency: "5min"
-    bar_minutes: 5
-    lookback_bars: 96
     horizon_bars: 6
-    session_timezone: "America/New_York"
 
-    thresholds:
-      tau_buy: 0.001
-      tau_sell: 0.001
-
-    data:
-      provider: "yfinance"
-      period: "60d"
-      interval: "5m"
-
-    model:
-      type: "LSTM_ENSEMBLE"
-      ensemble_members: 3
-      lstm_hidden_size: 64
-      lstm_num_layers: 2
-      dropout: 0.2
-      loss: "huber"
-      huber_delta: 1.0
-      optimizer: "adam"
-      learning_rate: 0.001
-      batch_size: 256
-      max_epochs: 30
-      early_stopping_patience: 5
-
-    backtest:
-      max_position: 1.0
-      execution_delay_bars: 1
-      allow_short: true
+  e4_pairs:
+    enabled: false  # TODO: rebuild from scratch
+    frequency: "1D"
 
 reporting:
   metrics:

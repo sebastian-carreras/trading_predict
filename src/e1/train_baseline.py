@@ -187,25 +187,32 @@ def run_baseline_for_ticker(  # Ejecutar baseline por ticker
         y_train = y[train_idx]  # y train
         y_val = y[val_idx]  # y val
         y_test = y[test_idx]  # y test
-        
+
+        # Z-SCORE DEL TARGET (igual que GRU en train_pipeline.py)
+        mean_y = float(y_train.mean())  # Media del target (solo train)
+        std_y = float(y_train.std()) + 1e-12  # Std del target (solo train)
+
+        y_train_s = (y_train - mean_y) / std_y  # y train escalado
+        y_val_s = (y_val - mean_y) / std_y  # y val escalado
+
         # ENTRENAR REGRESIÓN LINEAL
-        # Baseline simple: modela relación lineal entre features y target
         print(f"    Entrenando regresión lineal...")  # Log entrenamiento
         model = LinearRegressionBaseline(seed=42)  # Modelo baseline
-        
+
         train_result = model.fit(  # Entrenar modelo
             X_train_scaled,  # Features de entrenamiento (normalizados)
-            y_train,  # Targets de entrenamiento
+            y_train_s,  # Targets escalados (Z-score)
             X_val_scaled,  # Features de validación
-            y_val,  # Targets de validación
+            y_val_s,  # Targets escalados (Z-score)
         )  # Fin entrenamiento
-        
-        print(f"    Train R²={train_result.train_score:.4f}, Val R²={train_result.val_score:.4f}")  # Log scores
-        
-        # PREDICCIONES EN TEST
-        y_pred_test = model.predict(X_test_scaled)  # Predicciones test
 
-        # MÉTRICAS ML
+        print(f"    Train R²={train_result.train_score:.4f}, Val R²={train_result.val_score:.4f}")  # Log scores
+
+        # PREDICCIONES EN TEST (des-escalar a escala original)
+        y_pred_test_s = model.predict(X_test_scaled)  # Predicciones en escala Z
+        y_pred_test = y_pred_test_s * std_y + mean_y  # Des-escalar a escala original
+
+        # MÉTRICAS ML (calculadas en escala original, comparable con GRU)
         test_metrics = compute_baseline_metrics(y_test, y_pred_test)  # Métricas ML
         print(
             f"    Test: MAE={test_metrics['mae']:.4f}, RMSE={test_metrics['rmse']:.4f}, "

@@ -241,3 +241,4 @@ dockerfiles/airflow/logs/**
 mlflow.db
 optuna_studies.db
 AGREGAR DESPUES.MD
+Brainstorm plan.md
