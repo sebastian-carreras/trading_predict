@@ -3,9 +3,13 @@
 Optimización de Hiperparámetros para Estrategia E1 usando Optuna + MLflow
 
 Este script busca automáticamente los mejores hiperparámetros para la
-estrategia E1 Conservative. Entrena el modelo GRU con walk-forward validation
-para cada combinación de parámetros y optimiza una métrica objetivo que combina
+estrategia E1 Conservative. Entrena el modelo GRU con split temporal de tuning
+(time_split) para cada combinación de parámetros y optimiza una métrica objetivo
+que combina
 IC (Information Coefficient) y Sharpe ratio.
+
+Nota metodológica: la validación walk-forward se reserva para la fase de
+entrenamiento/evaluación final, fuera del loop de Optuna.
 
 Parámetros optimizados y rangos de búsqueda:
   Trading thresholds:
@@ -19,11 +23,8 @@ Parámetros optimizados y rangos de búsqueda:
 
   Entrenamiento:
     - learning_rate: [1e-4, 1e-2] log scale
+        - weight_decay:  [1e-6, 1e-2] log scale
     - batch_size:    {32, 64, 128} categórico
-
-  Walk-forward validation:
-    - n_folds:                [3, 7]          — Número de folds temporales
-    - internal_val_fraction:  [0.10, 0.25] step=0.05 — Fracción de validación interna
 
 Métrica objetivo:
   0.5 * IC_mean + 0.5 * Sharpe_mean + trade_penalty
@@ -54,11 +55,14 @@ Outputs:
 """
 
 import argparse
+import io
+import logging
 import os
 import shutil
 import sys
 import tempfile
 import time
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Dict, List, Optional
 import warnings
@@ -67,6 +71,8 @@ import numpy as np
 import pandas as pd
 import yaml
 
+# Carga opcional de variables de entorno desde .env (si python-dotenv está instalado).
+# Esto permite setear, por ejemplo, URIs de MLflow sin hardcodear en el código.
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -85,10 +91,36 @@ from optuna.visualization import (
 import mlflow
 
 # Agregar src/ al path
+# Se inserta al inicio para priorizar módulos locales del proyecto por sobre paquetes globales.
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.e1.train_pipeline import run_e1_for_ticker, load_ohlcv_csv
 from src.utils import load_yaml, project_root
+
+
+DISPLAY_PARAM_KEYS = [
+    # Orden de impresión "humano" para el resumen final de mejores parámetros.
+    # Esto evita mostrar params legacy o desordenados de studies viejos.
+    "tau_buy",
+    "tau_sell",
+    "gru_units_1",
+    "gru_units_2",
+    "dropout",
+    "learning_rate",
+    "weight_decay",
+    "batch_size",
+]
+
+OPTIMIZED_PARAM_KEYS = [
+    "tau_buy",
+    "tau_sell",
+    "gru_units_1",
+    "gru_units_2",
+    "dropout",
+    "learning_rate",
+    "weight_decay",
+    "batch_size",
+]
 
 
 class E1HyperparameterOptimizer:
@@ -116,11 +148,18 @@ class E1HyperparameterOptimizer:
         """
         self.config = load_yaml(config_path)
         self.root = project_root()
+
+        # Reducir ruido de logs de librerías de infraestructura
+        logging.getLogger("alembic").setLevel(logging.WARNING)
+        logging.getLogger("mlflow").setLevel(logging.WARNING)
+        logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
         
         # Tickers
         if tickers:
+            # Si el usuario pasa tickers por CLI, usar exactamente esos.
             self.tickers = tickers
         else:
+            # Fallback: usar universo E1 definido en config base.
             self.tickers = list(
                 self.config.get("universe", {})
                 .get("tickers_by_strategy", {})
@@ -154,6 +193,7 @@ class E1HyperparameterOptimizer:
         artifact_location = local_artifacts_dir.resolve().as_uri()
 
         try:
+            # set_experiment crea o reutiliza experimento por nombre.
             mlflow.set_experiment(experiment_name)
             # Validar conexión con un test run
             _test_run = mlflow.start_run(run_name="_init_test")
@@ -181,12 +221,14 @@ class E1HyperparameterOptimizer:
                 if mlflow_tracking_uri == "local":
                     print(f"⚠️  Base de datos MLflow corrupta. Recreando...")
                     if mlflow_db.exists():
+                        # Si la DB quedó en estado inconsistente, se borra para regenerar limpia.
                         mlflow_db.unlink()
                     mlflow.set_tracking_uri(tracking_uri)
 
             # Crear experimento manualmente
             if error_msg:
                 try:
+                    # Intento manual con artifact_location explícito.
                     mlflow.create_experiment(experiment_name, artifact_location=artifact_location)
                     mlflow.set_experiment(experiment_name)
                     print(f"✓ Experimento '{experiment_name}' creado")
@@ -200,6 +242,7 @@ class E1HyperparameterOptimizer:
         
         # Optuna
         self.optuna_db_path = optuna_db_path
+        self.current_run_min_trial_number: int | None = None
 
         # Search space defaults (se pueden overridear vía CLI / DAG)
         self.tau_buy_bounds = {"min": 0.02, "max": 0.10, "step": 0.01}
@@ -208,22 +251,21 @@ class E1HyperparameterOptimizer:
         self.gru_units_2_bounds = {"min": 16, "max": 64, "step": 16}
         self.dropout_bounds = {"min": 0.2, "max": 0.5, "step": 0.05}
         self.learning_rate_bounds = {"min": 1e-4, "max": 1e-2, "log": True}
+        self.weight_decay_bounds = {"min": 1e-6, "max": 1e-2, "log": True}
 
         # Opciones de batch size
         default_batch_sizes = batch_size_choices or [32, 64, 128]
+        # Se limpia/normaliza: enteros positivos, únicos y ordenados.
         cleaned_batch_sizes = sorted({int(b) for b in default_batch_sizes if int(b) > 0})
         if not cleaned_batch_sizes:
             raise ValueError("Se requiere al menos un batch_size válido para la optimización")
         self.batch_size_choices = cleaned_batch_sizes
         
-        # Walk-forward parameters (opcional - afecta validación)
-        self.n_folds_bounds = {"min": 3, "max": 7}  # Balance robustez vs costo computacional
-        self.internal_val_fraction_bounds = {"min": 0.10, "max": 0.25, "step": 0.05}  # Fracción validación interna
-
         # Aplicar overrides si se proporcionaron
         overrides = search_space_overrides or {}
 
         def update_bounds(bounds: Dict[str, float], key: str) -> None:
+            # Toma overrides de CLI y pisa min/max/step del rango default.
             override = overrides.get(key)
             if not override:
                 return
@@ -240,8 +282,10 @@ class E1HyperparameterOptimizer:
         update_bounds(self.gru_units_2_bounds, "gru_units_2")
         update_bounds(self.dropout_bounds, "dropout")
         update_bounds(self.learning_rate_bounds, "learning_rate")
+        update_bounds(self.weight_decay_bounds, "weight_decay")
 
         def validate_bounds(bounds: Dict[str, float], name: str) -> None:
+            # Guardrails básicos del espacio de búsqueda.
             if bounds["min"] >= bounds["max"]:
                 raise ValueError(
                     f"Rango inválido para {name}: min ({bounds['min']}) debe ser < max ({bounds['max']})"
@@ -255,6 +299,7 @@ class E1HyperparameterOptimizer:
         validate_bounds(self.gru_units_2_bounds, "gru_units_2")
         validate_bounds(self.dropout_bounds, "dropout")
         validate_bounds(self.learning_rate_bounds, "learning_rate")
+        validate_bounds(self.weight_decay_bounds, "weight_decay")
         
         # Benchmark deshabilitado
         self.benchmark_df = None
@@ -266,6 +311,7 @@ class E1HyperparameterOptimizer:
     
     @staticmethod
     def _suggest_float(trial: optuna.Trial, name: str, bounds: Dict[str, float]) -> float:
+        # Normaliza tipos y decide la familia de distribución (lineal vs log).
         low = float(bounds["min"])
         high = float(bounds["max"])
         step = bounds.get("step")
@@ -273,6 +319,7 @@ class E1HyperparameterOptimizer:
 
         if log_flag:
             if step:
+                # Optuna no permite step + log simultáneamente.
                 raise ValueError(f"No se puede usar step con distribución log para {name}")
             return trial.suggest_float(name, low, high, log=True)
 
@@ -283,6 +330,7 @@ class E1HyperparameterOptimizer:
 
     @staticmethod
     def _suggest_int(trial: optuna.Trial, name: str, bounds: Dict[str, float]) -> int:
+        # Versión para variables discretas enteras.
         low = int(bounds["min"])
         high = int(bounds["max"])
         step = bounds.get("step")
@@ -305,8 +353,11 @@ class E1HyperparameterOptimizer:
             Métrica objetivo (Sharpe ratio promedio o IC promedio)
         """
         
-        # Iniciar run de MLflow para este trial (si está habilitado)
+        # Iniciar run de MLflow para este trial (si está habilitado).
+        # Se usa nullcontext para evitar if/else duplicando toda la lógica.
         from contextlib import nullcontext
+        # Timer de trial completo (incluye entrenamiento en todos los tickers).
+        trial_start = time.perf_counter()
         ctx = mlflow.start_run(run_name=f"trial_{trial.number}") if self.mlflow_enabled else nullcontext()
         with ctx:
             
@@ -325,20 +376,23 @@ class E1HyperparameterOptimizer:
             
             # Entrenamiento
             learning_rate = self._suggest_float(trial, "learning_rate", self.learning_rate_bounds)
+            weight_decay = self._suggest_float(trial, "weight_decay", self.weight_decay_bounds)
             batch_size = trial.suggest_categorical("batch_size", self.batch_size_choices)
-                        # Walk-forward parameters
-            n_folds = self._suggest_int(trial, "n_folds", self.n_folds_bounds)
-            internal_val_fraction = self._suggest_float(trial, "internal_val_fraction", self.internal_val_fraction_bounds)
-                        # Early stopping (fijar patience para consistencia)
+            # Early stopping (fijar patience para consistencia)
             early_stopping_patience = 10
             
             # 2. ACTUALIZAR CONFIG CON PARÁMETROS SUGERIDOS
             
+            # Copia superficial del dict principal. Ojo: objetos anidados siguen siendo compartidos.
+            # En este caso se sobrescriben claves relevantes, por eso alcanza para el flujo actual.
             config_trial = self.config.copy()
-            
-            # Walk-forward splits (sobrescribir configuración base)
-            config_trial.setdefault("splits", {})["folds"] = n_folds
-            config_trial["splits"]["internal_val_fraction"] = internal_val_fraction
+
+            # Política del proyecto: Optuna solo para selección de hiperparámetros.
+            # Forzamos split temporal liviano durante el tuning para evitar
+            # duplicar costo con walk-forward en cada trial.
+            splits_cfg = dict(config_trial.get("splits", {}))
+            splits_cfg["method"] = "time_split"
+            config_trial["splits"] = splits_cfg
             
             # Thresholds
             config_trial["strategies"]["e1_conservative"]["thresholds"] = {
@@ -352,6 +406,7 @@ class E1HyperparameterOptimizer:
                 "gru_units": [gru_units_1, gru_units_2],
                 "dropout": dropout,
                 "learning_rate": learning_rate,
+                "weight_decay": weight_decay,
                 "batch_size": batch_size,
                 "early_stopping_patience": early_stopping_patience,
             }
@@ -366,16 +421,34 @@ class E1HyperparameterOptimizer:
             out_dir.mkdir(parents=True, exist_ok=True)
             
             for ticker in self.tickers:
+                train_log_buffer = io.StringIO()
+                prev_e1_tuned = None
+                prev_tuned = None
                 try:
-                    result = run_e1_for_ticker(
-                        config=config_trial,
-                        ticker=ticker,
-                        raw_dir=raw_dir,
-                        out_dir=out_dir,
-                        benchmark_df=self.benchmark_df,
-                    )
+                    # Capturar logs internos del pipeline para mantener salida de Optuna concisa.
+                    # Si el trial falla, mostramos un extracto para diagnóstico.
+                    # Evitar contaminación de trials por YAMLs de parámetros tuneados
+                    # inyectados vía variables de entorno.
+                    prev_e1_tuned = os.environ.pop("E1_TUNED_PARAMS_PATH", None)
+                    prev_tuned = os.environ.pop("TUNED_PARAMS_PATH", None)
+                    try:
+                        with redirect_stdout(train_log_buffer), redirect_stderr(train_log_buffer):
+                            result = run_e1_for_ticker(
+                                config=config_trial,
+                                ticker=ticker,
+                                raw_dir=raw_dir,
+                                out_dir=out_dir,
+                                benchmark_df=self.benchmark_df,
+                                register_lifecycle=False,
+                            )
+                    finally:
+                        if prev_e1_tuned is not None:
+                            os.environ["E1_TUNED_PARAMS_PATH"] = prev_e1_tuned
+                        if prev_tuned is not None:
+                            os.environ["TUNED_PARAMS_PATH"] = prev_tuned
                     
                     results.append({
+                        # Se guardan métricas mínimas para score agregado y debugging.
                         "ticker": ticker,
                         "ic": result.get("ml_ic", 0),
                         "sharpe": result.get("bt_sharpe", 0),
@@ -385,7 +458,15 @@ class E1HyperparameterOptimizer:
                     })
                     
                 except Exception as e:
-                    print(f"  ⚠️  Error en {ticker}: {e}")
+                    debug_excerpt = ""
+                    try:
+                        # Mostrar solo las últimas líneas para no ensuciar consola.
+                        lines = train_log_buffer.getvalue().splitlines()
+                        if lines:
+                            debug_excerpt = " | logs: " + " || ".join(lines[-3:])
+                    except Exception:
+                        pass
+                    print(f"  ⚠️  Error en {ticker}: {e}{debug_excerpt}")
                     # Penalizar trials que fallan
                     results.append({
                         "ticker": ticker,
@@ -428,9 +509,8 @@ class E1HyperparameterOptimizer:
                     "gru_units_2": gru_units_2,
                     "dropout": dropout,
                     "learning_rate": learning_rate,
+                    "weight_decay": weight_decay,
                     "batch_size": batch_size,
-                    "n_folds": n_folds,
-                    "internal_val_fraction": internal_val_fraction,
                     "trial_number": trial.number,
                 })
 
@@ -449,7 +529,13 @@ class E1HyperparameterOptimizer:
 
             # Guardar tabla de resultados como artifact
             results_path = out_dir / "trial_results.csv"
-            df_results.to_csv(results_path, index=False)
+            # Escritura robusta para evitar caídas del trial por timeouts del filesystem
+            # (común en carpetas sincronizadas como iCloud/OneDrive).
+            try:
+                self._safe_write_file(results_path, lambda f: df_results.to_csv(f, index=False))
+            except Exception as write_exc:
+                # No abortar el trial por falla de IO auxiliar: métricas/objective ya están calculadas.
+                print(f"  ⚠️  No se pudo escribir trial_results.csv: {write_exc}")
             if self.mlflow_enabled:
                 try:
                     mlflow.log_artifact(str(results_path))
@@ -466,18 +552,35 @@ class E1HyperparameterOptimizer:
             
             # Opción 3: Combinación (balance predicción + trading)
             # Penalizar si pocos tickers generan trades
+            # trade_penalty: castigo fuerte para evitar soluciones “bonitas” en métricas pero que casi no operan.
             trade_penalty = 0 if tickers_with_trades >= len(self.tickers) * 0.5 else -5
-            objective_value = 0.5 * ic_mean + 0.5 * sharpe_mean + trade_penalty
+            # ic_mean: calidad predictiva (si el modelo ordena bien retornos futuros).
+            # sharpe_mean: calidad de trading ajustada por riesgo.
+            objective_raw = 0.5 * ic_mean + 0.5 * sharpe_mean
+            objective_value = objective_raw + trade_penalty
+
+            # Se guarda en user_attrs para poder graficar la evolución sin la penalización.
+            trial.set_user_attr("objective_raw", float(objective_raw))
+            trial.set_user_attr("trade_penalty", float(trade_penalty))
+           
             
             if self.mlflow_enabled:
                 mlflow.log_metric("objective_value", objective_value)
+                mlflow.log_metric("objective_raw", objective_raw)
+                mlflow.log_metric("trade_penalty", trade_penalty)
+                mlflow.log_metric("trial_duration_seconds", time.perf_counter() - trial_start)
             
-            print(f"\nTrial {trial.number}:")
-            print(f"  tau_buy={tau_buy:.3f}, tau_sell={tau_sell:.3f}")
-            print(f"  gru_units=[{gru_units_1}, {gru_units_2}], dropout={dropout:.2f}")
-            print(f"  IC mean={ic_mean:.4f}, Sharpe mean={sharpe_mean:.4f}")
-            print(f"  Tickers with trades: {tickers_with_trades}/{len(self.tickers)}")
-            print(f"  → Objective: {objective_value:.4f}")
+            trial_seconds = time.perf_counter() - trial_start
+            print(
+                # Línea compacta por trial: permite escanear rápido rendimiento y configuración.
+                f"[Trial {trial.number:04d}] obj={objective_value:+.4f} "
+                f"ic={ic_mean:+.4f} sharpe={sharpe_mean:+.4f} "
+                f"trades={tickers_with_trades}/{len(self.tickers)} "
+                f"time={trial_seconds:.1f}s | "
+                f"tau=({tau_buy:.3f},{tau_sell:.3f}) "
+                f"gru=[{gru_units_1},{gru_units_2}] do={dropout:.2f} "
+                f"lr={learning_rate:.6f} wd={weight_decay:.6f} bs={batch_size}"
+            )
             
             return objective_value
     
@@ -507,6 +610,9 @@ class E1HyperparameterOptimizer:
         print(f"Study: {study_name}")
         print(f"{'='*80}\n")
         
+        # Reducir ruido de logs INFO de Optuna (mantenemos warnings/errores).
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+
         # Crear o cargar estudio
         study = optuna.create_study(
             study_name=study_name,
@@ -515,6 +621,9 @@ class E1HyperparameterOptimizer:
             load_if_exists=True,  # Continuar si existe
             sampler=optuna.samplers.TPESampler(seed=42),  # Reproducibilidad
         )
+
+        existing_numbers = [trial.number for trial in study.trials]
+        self.current_run_min_trial_number = (max(existing_numbers) + 1) if existing_numbers else 0
         
         # Ejecutar optimización
         study.optimize(
@@ -534,6 +643,7 @@ class E1HyperparameterOptimizer:
         """
         for attempt in range(1, retries + 1):
             try:
+                # Escritura atómica aproximada: tmp + move.
                 tmp_fd, tmp_path = tempfile.mkstemp(
                     dir=str(path.parent), suffix=path.suffix,
                 )
@@ -548,6 +658,7 @@ class E1HyperparameterOptimizer:
                 except Exception:
                     pass
                 if attempt < retries:
+                    # Reintento útil para iCloud/FS remotos con latencia.
                     print(f"  ⚠️  Timeout escribiendo {path.name}, reintentando ({attempt}/{retries})...")
                     time.sleep(delay)
                 else:
@@ -580,12 +691,14 @@ class E1HyperparameterOptimizer:
         best_value = study.best_value
 
         best_params_yaml = {
+            # Bloque de metadata del estudio para trazabilidad.
             "optimization": {
                 "study_name": study.study_name,
                 "n_trials": len(study.trials),
                 "best_value": float(best_value),
                 "best_trial": study.best_trial.number,
             },
+            # Serialización segura de tipos numéricos (evita objetos raros de numpy/optuna).
             "best_params": {k: float(v) if isinstance(v, (int, float)) else v
                            for k, v in best_params.items()},
         }
@@ -608,18 +721,173 @@ class E1HyperparameterOptimizer:
         figures_dir = output_dir / "figures"
         figures_dir.mkdir(exist_ok=True)
 
-        # Optimization history
+        # Trials de la corrida actual (evita mezclar historia vieja del estudio).
+        if self.current_run_min_trial_number is not None:
+            df_run = df_trials[df_trials["number"] >= self.current_run_min_trial_number].copy()
+        else:
+            df_run = df_trials.copy()
+        df_run_complete = df_run[df_run["state"] == "COMPLETE"].copy()
+
+        run_csv_path = output_dir / "e1_run_trials.csv"
+        self._safe_write_file(run_csv_path, lambda f: df_run.to_csv(f, index=False))
+
+        df_all_complete = df_trials[df_trials["state"] == "COMPLETE"].copy()
+
+        # Optimization history (historial completo del estudio, objetivo penalizado)
         try:
-            fig = plot_optimization_history(study)
+            import plotly.graph_objects as go  # type: ignore
+
+            hist_df = df_all_complete.sort_values("number")
+            fig = go.Figure()
+            fig.add_trace(
+                go.Scatter(
+                    x=hist_df["number"],
+                    y=hist_df["value"],
+                    mode="lines+markers",
+                    name="objective_value",
+                )
+            )
+            fig.update_layout(
+                title="Optimization History (Full Study) - Penalized Objective",
+                xaxis_title="Trial",
+                yaxis_title="Objective Value",
+                template="plotly_white",
+            )
             fig.write_image(str(figures_dir / "optimization_history.png"), width=1200, height=600)
             print(f"✓ Gráfico: optimization_history.png")
         except Exception as e:
             print(f"⚠️  Error generando optimization_history: {e}")
 
-        # Parameter importances
+        # Optimization history (solo corrida actual, objetivo penalizado)
         try:
-            fig = plot_param_importances(study)
-            fig.write_image(str(figures_dir / "param_importances.png"), width=1200, height=600)
+            import plotly.graph_objects as go  # type: ignore
+
+            hist_df = df_run_complete.sort_values("number")
+            fig = go.Figure()
+            fig.add_trace(
+                go.Scatter(
+                    x=hist_df["number"],
+                    y=hist_df["value"],
+                    mode="lines+markers",
+                    name="objective_value",
+                )
+            )
+            fig.update_layout(
+                title="Optimization History (Current Run) - Penalized Objective",
+                xaxis_title="Trial",
+                yaxis_title="Objective Value",
+                template="plotly_white",
+            )
+            fig.write_image(str(figures_dir / "optimization_history_current_run.png"), width=1200, height=600)
+            print(f"✓ Gráfico: optimization_history_current_run.png")
+        except Exception as e:
+            print(f"⚠️  Error generando optimization_history_current_run: {e}")
+
+        # Optimization history sin penalización (historial completo del estudio)
+        try:
+            import plotly.graph_objects as go  # type: ignore
+
+            hist_df = df_all_complete.sort_values("number")
+            raw_col = "user_attrs_objective_raw"
+            raw_values = hist_df[raw_col] if raw_col in hist_df.columns else hist_df["value"]
+
+            fig = go.Figure()
+            fig.add_trace(
+                go.Scatter(
+                    x=hist_df["number"],
+                    y=raw_values,
+                    mode="lines+markers",
+                    name="objective_raw",
+                )
+            )
+            fig.update_layout(
+                title="Optimization History (Full Study) - Raw Objective",
+                xaxis_title="Trial",
+                yaxis_title="Objective Raw (0.5*IC + 0.5*Sharpe)",
+                template="plotly_white",
+            )
+            fig.write_image(str(figures_dir / "optimization_history_raw.png"), width=1200, height=600)
+            print(f"✓ Gráfico: optimization_history_raw.png")
+        except Exception as e:
+            print(f"⚠️  Error generando optimization_history_raw: {e}")
+
+        # Optimization history sin penalización (solo corrida actual)
+        try:
+            import plotly.graph_objects as go  # type: ignore
+
+            hist_df = df_run_complete.sort_values("number")
+            raw_col = "user_attrs_objective_raw"
+            raw_values = hist_df[raw_col] if raw_col in hist_df.columns else hist_df["value"]
+
+            fig = go.Figure()
+            fig.add_trace(
+                go.Scatter(
+                    x=hist_df["number"],
+                    y=raw_values,
+                    mode="lines+markers",
+                    name="objective_raw",
+                )
+            )
+            fig.update_layout(
+                title="Optimization History (Current Run) - Raw Objective",
+                xaxis_title="Trial",
+                yaxis_title="Objective Raw (0.5*IC + 0.5*Sharpe)",
+                template="plotly_white",
+            )
+            fig.write_image(str(figures_dir / "optimization_history_raw_current_run.png"), width=1200, height=600)
+            print(f"✓ Gráfico: optimization_history_raw_current_run.png")
+        except Exception as e:
+            print(f"⚠️  Error generando optimization_history_raw_current_run: {e}")
+
+        # Parameter importances (mostrar siempre todos los hiperparámetros del espacio actual)
+        try:
+            import plotly.graph_objects as go  # type: ignore
+
+            try:
+                importances = optuna.importance.get_param_importances(
+                    study,
+                    params=OPTIMIZED_PARAM_KEYS,
+                )
+            except Exception:
+                importances = {}
+
+            full_importances = {k: float(importances.get(k, 0.0)) for k in OPTIMIZED_PARAM_KEYS}
+
+            # Fallback: si todo quedó en cero, estimar importancia por correlación en la corrida actual.
+            if sum(full_importances.values()) == 0.0 and not df_run_complete.empty:
+                target_series = pd.to_numeric(df_run_complete["value"], errors="coerce")
+                for key in OPTIMIZED_PARAM_KEYS:
+                    col = f"params_{key}"
+                    if col not in df_run_complete.columns:
+                        continue
+                    param_series = df_run_complete[col]
+                    if param_series.dtype == object:
+                        codes, _ = pd.factorize(param_series)
+                        param_values = pd.Series(codes, index=param_series.index, dtype=float)
+                    else:
+                        param_values = pd.to_numeric(param_series, errors="coerce")
+
+                    valid = (~param_values.isna()) & (~target_series.isna())
+                    if valid.sum() < 3 or param_values[valid].nunique() <= 1:
+                        full_importances[key] = 0.0
+                        continue
+                    corr = param_values[valid].corr(target_series[valid], method="spearman")
+                    full_importances[key] = float(abs(corr)) if pd.notna(corr) else 0.0
+
+            fig = go.Figure(
+                go.Bar(
+                    x=list(full_importances.values()),
+                    y=list(full_importances.keys()),
+                    orientation="h",
+                )
+            )
+            fig.update_layout(
+                title="Parameter Importances (Current Search Space)",
+                xaxis_title="Importance",
+                yaxis_title="Hyperparameter",
+                template="plotly_white",
+            )
+            fig.write_image(str(figures_dir / "param_importances.png"), width=1200, height=700)
             print(f"✓ Gráfico: param_importances.png")
         except Exception as e:
             print(f"⚠️  Error generando param_importances: {e}")
@@ -637,6 +905,7 @@ class E1HyperparameterOptimizer:
         summary_path = output_dir / "e1_optimization_summary.txt"
 
         def _write_summary(f):
+            # Resumen textual simple para lectura rápida sin abrir notebook/dashboard.
             f.write("="*80 + "\n")
             f.write("OPTIMIZACIÓN DE HIPERPARÁMETROS E1 - RESUMEN\n")
             f.write("="*80 + "\n\n")
@@ -664,6 +933,7 @@ class E1HyperparameterOptimizer:
 
 
 def main():
+    # Parser CLI: centraliza todos los argumentos de ejecución del optimizador.
     parser = argparse.ArgumentParser(
         description="Optimización de hiperparámetros E1 con Optuna + MLflow"
     )
@@ -774,6 +1044,18 @@ def main():
         help="Máximo para learning_rate (default: 1e-2)",
     )
     parser.add_argument(
+        "--weight_decay_min",
+        type=float,
+        default=None,
+        help="Mínimo para weight_decay (default: 1e-6)",
+    )
+    parser.add_argument(
+        "--weight_decay_max",
+        type=float,
+        default=None,
+        help="Máximo para weight_decay (default: 1e-2)",
+    )
+    parser.add_argument(
         "--gru_units_1_min",
         type=int,
         default=None,
@@ -812,6 +1094,7 @@ def main():
     # Tickers
     tickers = None
     if args.tickers:
+        # Modo lista explícita de tickers (máxima prioridad).
         tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
         tickers = list(dict.fromkeys(tickers))
         if not tickers:
@@ -821,6 +1104,7 @@ def main():
         if args.quick:
             print("⚠️  Ignorando --quick porque --tickers fue proporcionado")
     elif args.ticker:
+        # Modo single-ticker.
         tickers = [args.ticker]
     elif args.quick:
         # Modo rápido: usar solo 3 tickers para prueba
@@ -835,6 +1119,7 @@ def main():
     search_overrides: Dict[str, Dict[str, float]] = {}
 
     def maybe_add_override(name: str, min_value: Optional[float], max_value: Optional[float]) -> None:
+        # Helper para no repetir lógica de carga de overrides por parámetro.
         if min_value is None and max_value is None:
             return
         search_overrides[name] = {}
@@ -847,6 +1132,7 @@ def main():
     maybe_add_override("tau_sell", args.tau_sell_min, args.tau_sell_max)
     maybe_add_override("dropout", args.dropout_min, args.dropout_max)
     maybe_add_override("learning_rate", args.learning_rate_min, args.learning_rate_max)
+    maybe_add_override("weight_decay", args.weight_decay_min, args.weight_decay_max)
     maybe_add_override("gru_units_1", args.gru_units_1_min, args.gru_units_1_max)
     maybe_add_override("gru_units_2", args.gru_units_2_min, args.gru_units_2_max)
 
@@ -868,6 +1154,7 @@ def main():
     output_dir = root / args.output_dir
 
     def _study_name_for_ticker(base_study_name: str, ticker_name: str) -> str:
+        # Evita mezclar trials de distintos tickers en el mismo estudio al correr single/per-ticker.
         suffix = f"__{ticker_name}"
         return base_study_name if base_study_name.endswith(suffix) else f"{base_study_name}{suffix}"
 
@@ -923,14 +1210,13 @@ def main():
                     "gru_units": [int(bp.get("gru_units_1")), int(bp.get("gru_units_2"))],
                     "dropout": float(bp.get("dropout")),
                     "learning_rate": float(bp.get("learning_rate")),
+                    "weight_decay": float(bp.get("weight_decay", 0.0)),
                     "batch_size": int(bp.get("batch_size")),
                     "early_stopping_patience": 10,
                 },
-                # Parámetros de walk-forward validation (opcional, con fallbacks)
-                "n_folds": int(bp.get("n_folds", 5)),
-                "internal_val_fraction": float(bp.get("internal_val_fraction", 0.15)),
             }
             meta_by_ticker[t] = {
+                # Metadata útil para auditoría/seguimiento de calidad del tuning.
                 "study_name": study.study_name,
                 "best_value": float(study.best_value),
                 "best_trial": int(study.best_trial.number),
@@ -1003,11 +1289,10 @@ def main():
                     "gru_units": [int(bp.get("gru_units_1")), int(bp.get("gru_units_2"))],
                     "dropout": float(bp.get("dropout")),
                     "learning_rate": float(bp.get("learning_rate")),
+                    "weight_decay": float(bp.get("weight_decay", 0.0)),
                     "batch_size": int(bp.get("batch_size")),
                     "early_stopping_patience": 10,
                 },
-                "n_folds": int(bp.get("n_folds", 5)),
-                "internal_val_fraction": float(bp.get("internal_val_fraction", 0.15)),
             }
 
             # best_params_e1.yaml por ticker
@@ -1023,6 +1308,7 @@ def main():
                 with open(agg_compact_path, "r") as f:
                     agg_compact = yaml.safe_load(f) or {}
             except FileNotFoundError:
+                # Primera corrida: archivo agregado todavía no existe.
                 agg_compact = {}
             agg_compact[t] = converted
             E1HyperparameterOptimizer._safe_write_file(
@@ -1038,6 +1324,7 @@ def main():
             except FileNotFoundError:
                 agg_meta = {}
             if not agg_meta:
+                # Estructura mínima si el archivo meta no existe o está vacío.
                 agg_meta = {"strategy": "e1_conservative", "generated_at": pd.Timestamp.utcnow().isoformat(), "meta": {}, "tickers": {}}
             agg_meta.setdefault("meta", {})[t] = {
                 "study_name": study.study_name,
@@ -1059,8 +1346,15 @@ def main():
         print("MEJORES PARÁMETROS ENCONTRADOS")
         print(f"{'='*80}\n")
 
-        for key, value in study.best_params.items():
-            print(f"  {key}: {value}")
+        displayed = False
+        for key in DISPLAY_PARAM_KEYS:
+            if key in study.best_params:
+                print(f"  {key}: {study.best_params[key]}")
+                displayed = True
+        if not displayed:
+            # Fallback para estudios con estructura distinta (compatibilidad retroactiva).
+            for key, value in study.best_params.items():
+                print(f"  {key}: {value}")
 
         print(f"\nMejor valor objetivo: {study.best_value:.6f}")
         print(f"Trial #{study.best_trial.number}")

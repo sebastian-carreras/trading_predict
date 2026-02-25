@@ -71,7 +71,11 @@ costs:
 splits:
   method: "walk_forward"
   folds: 5
-  # Embargo para evitar leakage por targets con horizonte H.
+  # Si H=90, embargo >= 90 días.
+  # El embargo debe ser >= al horizonte de predicción para evitar leakage.  
+  # embargo_days = horizon_days es la regla mínima
+  # El embargo descarta N días entre el fin de train y el inicio de test,
+  # rompiendo la correlación y evitando que el modelo "vea" información futura.
   embargo_days:
     e1: 90
 
@@ -102,6 +106,7 @@ strategies:
       huber_delta: 1.0
       optimizer: "adamw"
       learning_rate: 0.001
+      weight_decay: 0.0
       batch_size: 64
       max_epochs: 100  # REDUCIDO de 200 → evitar sobreajuste
       early_stopping_patience: 10  # REDUCIDO de 15 → parar antes si no mejora

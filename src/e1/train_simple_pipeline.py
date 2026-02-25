@@ -422,6 +422,8 @@ def run_e1_simple_for_ticker(
         "ml_rmse": rmse,
         "ml_directional_accuracy": dir_acc,
         "ml_ic": ic,
+        "tau_buy": float(tau_buy),
+        "tau_sell": float(tau_sell),
         **{f"bt_{k}": float(v) for k, v in trading_metrics.items()},
         "timing_train_seconds": round(train_end - train_start, 2),
         "timing_predict_seconds": round(pred_end - pred_start, 4),
@@ -662,7 +664,7 @@ def main():
     if not args.skip_download:
         print("Paso 1/3: Descargando datos...")
         print("-" * 60)
-        from .data.download_daily import download_daily_ohlcv
+        from ..data.download_daily import download_daily_ohlcv
         
         try:
             written = download_daily_ohlcv(
@@ -683,7 +685,7 @@ def main():
     if not args.skip_cleaning:
         print("Paso 2/3: Limpiando datos...")
         print("-" * 60)
-        from .data.clean_daily import process_daily_data_with_cleaning
+        from ..data.clean_daily import process_daily_data_with_cleaning
         
         try:
             tickers_to_clean = list(dict.fromkeys(tickers))

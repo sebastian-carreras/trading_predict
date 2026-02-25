@@ -242,3 +242,7 @@ mlflow.db
 optuna_studies.db
 AGREGAR DESPUES.MD
 Brainstorm plan.md
+.claude/
+.github/
+models/*
+optuna_studies.db

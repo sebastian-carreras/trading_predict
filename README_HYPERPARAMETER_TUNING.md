@@ -142,6 +142,7 @@ dropout: 0.2 → 0.5  # Proporción de neuronas desactivadas
 
 ```python
 learning_rate: 1e-4 → 1e-2  # Tasa de aprendizaje (log scale)
+weight_decay: 1e-6 → 1e-2   # Regularización L2 (log scale)
 batch_size: [32, 64, 128]   # Tamaño de batch
 ```
 
@@ -149,9 +150,32 @@ batch_size: [32, 64, 128]   # Tamaño de batch
 - Alto (1e-2) → aprende rápido pero inestable
 - Bajo (1e-4) → aprende lento pero estable
 
+**Impacto weight_decay**:
+- Bajo (≈1e-6) → poca regularización, mayor riesgo de overfitting
+- Alto (≈1e-2) → regularización fuerte, riesgo de underfitting
+
+**Rango recomendado inicial (académico/prototipo)**:
+- `weight_decay` entre `1e-5` y `1e-3`
+
 **Impacto batch_size**:
 - 32 → más actualizaciones, más ruidoso
 - 128 → menos actualizaciones, más estable
+
+### Validación temporal (fija)
+
+En E1, Optuna **no** optimiza parámetros de split de walk-forward.
+
+- `splits.folds` se toma del archivo de configuración activo.
+- `splits.internal_val_fraction` se toma del archivo de configuración activo.
+- El tuning se limita a `thresholds` + hiperparámetros del modelo/entrenamiento.
+
+### Política recomendada WF vs Optuna (E1)
+
+Para este proyecto académico, usar una política explícita evita duplicar costo computacional y mejora la trazabilidad metodológica:
+
+- **Optuna (selección de hiperparámetros):** usar split temporal configurable (rápido o robusto según presupuesto de cómputo).
+- **Entrenamiento/evaluación final:** usar **walk-forward** como validación oficial para reporte y conclusiones.
+- **Objetivo:** separar claramente *selección* de parámetros de la *validación final* de robustez temporal.
 
 ---
 
@@ -655,7 +679,7 @@ Para tu tesis, documenta:
 Después de optimización de hiperparámetros, siguiente fase:
 
 1.  **Aplicar parámetros óptimos** → Actualizar `base.yaml`
-2.  **Walk-Forward Validation** → Validar robustez temporal
+2.  **Walk-Forward Validation (fase final)** → Validar robustez temporal con los parámetros seleccionados
 3. 🔍 **Feature Importance** → Identificar features más relevantes
 4. 💼 **Portfolio Optimization** → Allocation multi-ticker óptimo
 5.  **Ensemble Methods** → Combinar múltiples modelos
@@ -690,7 +714,7 @@ optuna-dashboard sqlite:///optuna_studies.db
 ### Para Producción
 
 1. **Re-optimizar periódicamente**: Cada 6 meses o cuando cambie el mercado
-2. **Usar walk-forward**: Optimizar en ventana móvil
+2. **Separar tuning y validación final**: tuning con split eficiente, validación final con walk-forward
 3. **Validar out-of-sample**: No usar mismos datos para optimizar y validar
 4. **Considerar costos**: Incluir comisiones en Sharpe ratio
 5. **Multi-objetivo**: Considerar también max drawdown, win rate
@@ -838,6 +862,6 @@ Típicamente:
 Después de optimización:
 
 1.  **Aplicar parámetros** en `base.yaml`
-2.  **Validar con Walk-Forward** (implementar siguiente)
-3. 🔍 **Feature Importance** (analizar qué features usar)
-4. 💼 **Portfolio Optimization** (multi-ticker allocation)
+2.  **Validar con Walk-Forward (fase final)**
+3.  **Feature Importance** (analizar qué features usar)
+4.  **Portfolio Optimization** (multi-ticker allocation)

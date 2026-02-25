@@ -35,14 +35,49 @@ python scripts/data/run_data_cleaning.py
 ## 🔧 optimization/ - Optimización de Hiperparámetros
 
 ### `optimize_e1_hyperparameters.py`
-Optimización con Optuna para E1 Conservative.
+Optimización con Optuna para E1 Conservative (GRU) con logging conciso por trial.
 
-**Uso:**
+**Parámetros optimizados (actual):**
+- `tau_buy`, `tau_sell`
+- `gru_units_1`, `gru_units_2`, `dropout`
+- `learning_rate`, `weight_decay`, `batch_size`
+
+**Importante:**
+- En E1 ya **no** se optimizan parámetros de split (`n_folds`, `internal_val_fraction`).
+- Esos parámetros quedan fijos en la configuración del pipeline.
+
+**Uso típico:**
 ```bash
-python scripts/optimization/optimize_e1_hyperparameters.py \
-    --ticker AAPL \
-    --n-trials 50
+# 1 ticker (smoke test)
+python scripts/optimization/optimize_e1_hyperparameters.py --ticker YPFD.BA --n_trials 1
+
+# modo rápido (subset)
+python scripts/optimization/optimize_e1_hyperparameters.py --quick --n_trials 10
+
+# optimización por ticker (recomendado para generar YAML consumible)
+python scripts/optimization/optimize_e1_hyperparameters.py --per_ticker --n_trials 50
 ```
+
+**Salida por trial (modo conciso):**
+```text
+[Trial 0007] obj=+0.6042 ic=+0.3121 sharpe=+0.8963 trades=8/10 time=42.5s | tau=(0.050,0.000) gru=[112,48] do=0.25 lr=0.000200 wd=0.000120 bs=64
+```
+
+`weight_decay` se optimiza en log scale con rango default `1e-6 → 1e-2`.
+Rango recomendado para pruebas iniciales: `1e-5 → 1e-3`.
+
+**Artifacts principales:**
+- `reports/hyperparameter_optimization/best_params_e1.yaml`
+- `reports/hyperparameter_optimization/e1_all_trials.csv`
+- `reports/hyperparameter_optimization/e1_tuned_params_by_ticker.yaml` (consumible)
+- `reports/hyperparameter_optimization/e1_tuned_params_by_ticker.meta.yaml` (con metadata)
+
+**Integración con entrenamiento E1:**
+```bash
+export E1_TUNED_PARAMS_PATH="reports/hyperparameter_optimization/e1_tuned_params_by_ticker.yaml"
+```
+
+El entrenamiento E1 aplica overrides de `thresholds` y `model` por ticker.
 
 ### `optimize_e2_hyperparameters.py`
 Optimización con Optuna para E2 Moderate.

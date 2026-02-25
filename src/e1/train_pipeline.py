@@ -39,14 +39,18 @@ from .gru import GRURegressor
 from ..backtest.backtest_daily import backtest_daily_signals, summarize_backtest
 from ..utils import ensure_dir, load_yaml, project_root, log_timing_event
 
-
+# Memoriza hasta 8 lecturas de archivos de parámetros tuneados (clave = path_str); 
+# si se consulta el mismo path otra vez, evita re-leer/parsing del YAML.
+# esto acelera cargas repetidas del mismo archivo para múltiples tickers en un mismo proceso. 
 @lru_cache(maxsize=8)
 def _load_tuned_params(path_str: str) -> dict:
     path = Path(path_str)
     if not path.exists():
+        # Si no hay archivo tuneado, devolvemos vacío y se usa config base.
         return {}
     data = load_yaml(path)
     if not isinstance(data, dict):
+        # Esperamos un mapping {ticker: {...}}; cualquier otro formato se ignora.
         return {}
     return data
 
@@ -58,13 +62,18 @@ def _apply_tuned_overrides(*, config: dict, strategy_key: str, ticker: str) -> d
       1. E1_TUNED_PARAMS_PATH (env var, prioridad alta)
       2. TUNED_PARAMS_PATH (env var, fallback)
 
-    Si el ticker tiene parámetros tuneados, sobreescribe thresholds, model y splits.
+    Si el ticker tiene parámetros tuneados, sobreescribe thresholds y model.
     """
+    # Resolución de path con prioridad:
+    # 1) E1_TUNED_PARAMS_PATH: específico para E1 (preferido)
+    # 2) TUNED_PARAMS_PATH: variable genérica (compatibilidad/fallback)
+    # El operador `or` devuelve el primer string no vacío.
     tuned_path = (
         os.getenv("E1_TUNED_PARAMS_PATH", "").strip()
         or os.getenv("TUNED_PARAMS_PATH", "").strip()
     )
     if not tuned_path:
+        # No hay fuente de overrides configurada: continuar con base.yaml.
         return config
 
     # Resolver path relativo al root del proyecto
@@ -82,18 +91,21 @@ def _apply_tuned_overrides(*, config: dict, strategy_key: str, ticker: str) -> d
 
     per_ticker = all_tuned.get(ticker)
     if not isinstance(per_ticker, dict):
+        # Hay archivo tuneado pero no contiene este ticker específico.
         return config
 
-    # --- Aplicar overrides y loguear ---
+    # --- Aplica overrides y loguea cuales se aplicaron ---
     strat = config.setdefault("strategies", {}).setdefault(strategy_key, {})
     overrides_applied: list[str] = []
 
     thresholds = per_ticker.get("thresholds")
     if isinstance(thresholds, dict):
+        # update() pisa solo claves presentes y conserva defaults no tuneados.
         strat.setdefault("thresholds", {}).update(thresholds)
         parts = [f"{k}={v}" for k, v in thresholds.items()]
         overrides_applied.append(f"thresholds({', '.join(parts)})")
 
+    # Cargo el modelo de cada ticker, si es que hay un modelo específico tuneado para ese ticker. Esto permite tener diferentes arquitecturas o hiperparámetros por ticker.
     model = per_ticker.get("model")
     if isinstance(model, dict):
         strat.setdefault("model", {}).update(model)
@@ -104,21 +116,12 @@ def _apply_tuned_overrides(*, config: dict, strategy_key: str, ticker: str) -> d
             key_params.append(f"dropout={model['dropout']}")
         if "learning_rate" in model:
             key_params.append(f"lr={model['learning_rate']:.6f}")
+        if "weight_decay" in model:
+            key_params.append(f"wd={model['weight_decay']}")
         if "batch_size" in model:
             key_params.append(f"batch={model['batch_size']}")
         if key_params:
             overrides_applied.append(f"model({', '.join(key_params)})")
-
-    if "n_folds" in per_ticker or "internal_val_fraction" in per_ticker:
-        splits = config.setdefault("splits", {})
-        split_parts = []
-        if "n_folds" in per_ticker:
-            splits["folds"] = int(per_ticker["n_folds"])
-            split_parts.append(f"folds={per_ticker['n_folds']}")
-        if "internal_val_fraction" in per_ticker:
-            splits["internal_val_fraction"] = float(per_ticker["internal_val_fraction"])
-            split_parts.append(f"val_frac={per_ticker['internal_val_fraction']}")
-        overrides_applied.append(f"splits({', '.join(split_parts)})")
 
     if overrides_applied:
         print(f"  ✓ Optuna overrides para {ticker}: {' | '.join(overrides_applied)}")
@@ -127,48 +130,67 @@ def _apply_tuned_overrides(*, config: dict, strategy_key: str, ticker: str) -> d
 
 
 def load_ohlcv_csv(path: Path) -> pd.DataFrame:
+    # Normalizamos a Path por si llega como string u otro tipo path-like.
     path = Path(path)
+
+    # Validaciones tempranas de existencia/tipo para dar errores claros.
     if not path.exists():
         raise FileNotFoundError(f"CSV file not found: {path}")
     if path.is_dir():
         raise IsADirectoryError(f"Expected CSV file but got directory: {path}")
 
     try:
-        # EmptyDataError: file exists but has no header/rows (e.g., 0 bytes or only newlines)
+        # Lectura inicial del CSV completo en memoria.
+        # EmptyDataError: archivo existe pero sin columnas/filas parseables
+        # (por ejemplo, 0 bytes o solo saltos de línea).
         df = pd.read_csv(path)
     except pd.errors.EmptyDataError as exc:
+        # Incluir tamaño del archivo ayuda a diagnosticar corrupciones o descargas incompletas.
         size = path.stat().st_size
         raise ValueError(
             f"Empty/invalid CSV (no columns to parse): {path} (size={size} bytes)"
         ) from exc
+
+    # Columna temporal obligatoria para indexar series en orden cronológico.
     if "timestamp" not in df.columns:
         raise ValueError(f"Missing 'timestamp' column in {path}")
 
+    # Parseo robusto a datetime con zona horaria UTC para evitar ambigüedades.
+    # Esto homogeniza fuentes con distintos formatos horarios.
     df["timestamp"] = pd.to_datetime(df["timestamp"], format="ISO8601", utc=True)
+
+    # Orden cronológico ascendente y uso de timestamp como índice principal.
+    # El pipeline asume este orden para splits temporales y cálculo de features.
     df = df.sort_values("timestamp")
     df = df.set_index("timestamp")
 
+    # Esquema mínimo OHLCV requerido por features/backtesting.
     required = {"open", "high", "low", "close", "volume"}
     missing = required.difference(df.columns)
     if missing:
         raise ValueError(f"Missing columns {sorted(missing)} in {path}")
 
+    # Devuelve DataFrame indexado por timestamp y listo para etapas siguientes.
     return df
 
 
 def compute_information_coefficient(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    # IC mide ranking predictivo (correlación monotónica entre retorno real y predicho).
     if len(y_true) <= 1:
         return float("nan")
 
     if np.std(y_true) == 0 or np.std(y_pred) == 0:
+        # Si una serie es constante no existe correlación informativa.
         return float("nan")
 
     try:
         from scipy.stats import spearmanr
 
+        # Spearman es más robusto que Pearson frente a outliers/no-linealidad.
         ic, _ = spearmanr(y_true, y_pred)
         return float(ic) if np.isfinite(ic) else 0.0
     except Exception:
+        # Fallback defensivo cuando scipy no está disponible.
         return float(np.corrcoef(y_true, y_pred)[0, 1])
 
 
@@ -224,6 +246,7 @@ def run_e1_walk_forward(  # Walk-forward completo
     dropout: float,  # Dropout entre capas recurrentes
     dense_units: int,  # Dimensión de la capa densa final
     learning_rate: float,  # Learning rate del optimizador
+    weight_decay: float,  # Weight decay del optimizador
     batch_size: int,  # Tamaño del batch para cada step
     max_epochs: int,  # Máximo epochs permitidos
     patience: int,  # Paciencia para early stopping
@@ -261,7 +284,11 @@ def run_e1_walk_forward(  # Walk-forward completo
     if folds < 1:
         raise ValueError("'folds' debe ser >= 1 para walk-forward")
 
-    # Embargo entre train y test para evitar look-ahead bias
+    # Embargo entre train y test para evitar look-ahead bias.
+    # En series temporales financieras, los datos cercanos al límite train/test
+    # están correlacionados (autocorrelación, ventanas móviles solapadas).
+    # El embargo descarta N días entre el fin de train y el inicio de test,
+    # rompiendo esa correlación y evitando que el modelo "vea" información futura.
     embargo_cfg = splits_cfg.get("embargo_days", {})
     if isinstance(embargo_cfg, dict):
         embargo_days = int(embargo_cfg.get("e1", 0))
@@ -271,9 +298,14 @@ def run_e1_walk_forward(  # Walk-forward completo
     # Convertimos los días de embargo a muestras (approx. 1 muestra ≈ 1 día hábil)
     gap_samples = max(0, int(embargo_days))
 
-    # Definimos cuántas muestras atrevesará cada test set
+    # Tamaño del test set por fold.
+    # Se reparten muestras entre (folds + 1) bloques: los primeros folds son de test
+    # y el +1 reserva el bloque inicial mínimo para train.
+    # Ej: 1000 muestras, 5 folds → default_test_size = 1000 // 6 ≈ 166 muestras/fold.
     default_test_size = max(1, n_samples // (folds + 1))
     test_size = int(splits_cfg.get("test_size", default_test_size))
+    # Guardia: si test_size <= embargo, el test quedaría vacío tras descartar
+    # las muestras embargadas. Se fuerza mínimo gap+1 para tener al menos 1 muestra útil.
     if test_size <= gap_samples:
         test_size = gap_samples + 1
 
@@ -283,6 +315,8 @@ def run_e1_walk_forward(  # Walk-forward completo
     fold_summaries: list[dict] = []  # Lista de resúmenes por fold
     pred_frames: list[pd.DataFrame] = []  # Lista de predicciones por fold
 
+    # El Payload, no es solo el modelo entrenado. Incluye qué arquitectura usar, cómo 
+    # normalizar los datos de entrada y con qué horizonte se entrenó. El payload te da todo eso junto.
     last_model_payload: dict | None = None  # Payload del último fold (para guardar)
     last_torch = None  # Referencia a torch para serializar el modelo
     last_mean_X = None  # Media de X del último fold
@@ -303,7 +337,8 @@ def run_e1_walk_forward(  # Walk-forward completo
         except ValueError:
             return str(path)  # Fallback: devolver path absoluto si no está dentro del root
 
-    # Determinar el tamaño de validación interna dentro del bloque de entrenamiento
+    # Determinar fracción de validación interna dentro del bloque de entrenamiento de cada fold.
+    # Este valor NO define cuántos folds hay (eso lo define splits.folds / n_folds).
     raw_val_fraction = splits_cfg.get(
         "internal_val_fraction", splits_cfg.get("val_fraction", 0.15)
     )
@@ -316,13 +351,17 @@ def run_e1_walk_forward(  # Walk-forward completo
         val_fraction_cfg = 0.15  # Enforce rango válido (0,1)
 
 
+    # Bucle principal walk-forward:
+    # 1) TimeSeriesSplit define train/test por fold (usando folds, test_size, gap/embargo)
+    # 2) Dentro de train_full_idx se hace otro split train/val con internal_val_fraction
     for fold_idx, (train_full_idx, test_idx) in enumerate(
         splitter.split(np.arange(n_samples)), start=1  # Generar splits temporales de índices
     ):
         if len(test_idx) == 0 or len(train_full_idx) == 0:
             continue  # Si algún bloque queda vacío, se salta este fold
 
-        # Split interno train/val dentro del bloque de entrenamiento
+        # Split interno train/val dentro del bloque de entrenamiento del fold actual.
+        # Este split interno es temporal (respeta orden) para evitar leakage.
         try:
             train_idx, val_idx = temporal_train_val_split(
                 train_full_idx,  # Índices del bloque de entrenamiento completo
@@ -380,6 +419,7 @@ def run_e1_walk_forward(  # Walk-forward completo
             X_val_s,  # X val
             y_val_s,  # y val
             learning_rate=learning_rate,  # LR
+            weight_decay=weight_decay,  # Weight decay
             batch_size=batch_size,  # Batch size
             max_epochs=max_epochs,  # Máximo de epochs
             early_stopping_patience=patience,  # Early stopping
@@ -622,6 +662,7 @@ def run_e1_for_ticker(
     raw_dir: Path,  # Ruta de datos raw diarios
     out_dir: Path,  # Directorio base de salida
     benchmark_df: pd.DataFrame | None,  # Benchmark para features relativas
+    register_lifecycle: bool = True,  # Registrar en lifecycle (False para Optuna trials)
  ) -> dict:  # Retorna resumen
     """Entrena y evalúa la estrategia E1 para un ticker específico."""
 
@@ -660,6 +701,7 @@ def run_e1_for_ticker(
     dropout = float(model_cfg.get("dropout", 0.2))  # Dropout
     dense_units = int(model_cfg.get("dense_units", 32))  # Dense units
     lr = float(model_cfg.get("learning_rate", 1e-3))  # Learning rate
+    weight_decay = float(model_cfg.get("weight_decay", 0.0))  # Weight decay
     batch_size = int(model_cfg.get("batch_size", 64))  # Batch size
     max_epochs = int(model_cfg.get("max_epochs", 200))  # Max epochs
     patience = int(model_cfg.get("early_stopping_patience", 15))  # Patience
@@ -687,6 +729,7 @@ def run_e1_for_ticker(
     # Features
     features = compute_e1_features(ohlcv, benchmark_df)  # Features E1
     target = make_target_e1(ohlcv, horizon_days=horizon_days)  # Target futuro
+    # make_sequences alinea X/y/ts y descarta filas iniciales sin contexto suficiente.
 
     # Secuencias
     X, y, ts, feat_names = make_sequences(features, target, lookback=lookback_days)  # Construir secuencias
@@ -721,6 +764,7 @@ def run_e1_for_ticker(
             dropout=dropout,  # Dropout
             dense_units=dense_units,  # Dense units
             learning_rate=lr,  # LR
+            weight_decay=weight_decay,  # Weight decay
             batch_size=batch_size,  # Batch
             max_epochs=max_epochs,  # Epochs
             patience=patience,  # Patience
@@ -736,6 +780,45 @@ def run_e1_for_ticker(
             lookback_days=lookback_days,  # Lookback
             horizon_days=horizon_days,  # Horizon
         )  # Ejecutar walk-forward
+
+        # Agregar hiperparámetros al summary para tracking en JSONL
+        summary["hp_gru_units_1"] = gru_units[0]
+        summary["hp_gru_units_2"] = gru_units[1] if len(gru_units) > 1 else None
+        summary["hp_dropout"] = dropout
+        summary["hp_dense_units"] = dense_units
+        summary["hp_learning_rate"] = lr
+        summary["hp_weight_decay"] = weight_decay
+        summary["hp_batch_size"] = batch_size
+        summary["hp_tau_buy"] = tau_buy
+        summary["hp_tau_sell"] = tau_sell
+
+        # Register walk-forward candidate in model lifecycle registry
+        if register_lifecycle:
+            try:
+                from ..lifecycle.registry import ModelRegistry
+                from ..lifecycle.guardrails import validate_candidate, log_candidate_metrics
+
+                registry_path = root / "models" / "registry.json"
+                log_candidate_metrics(
+                    metrics=summary, strategy="e1", ticker=ticker,
+                    run_dir=out_dir, variant="e1_conservative",
+                    log_path=root / "models" / "metrics_log.jsonl",
+                )
+                passed, errors = validate_candidate(run_dir=out_dir, ticker=ticker)
+                if passed:
+                    # Solo registramos candidatos que superan guardrails mínimos de calidad.
+                    registry = ModelRegistry(registry_path)
+                    registry.register_candidate(
+                        strategy="e1", ticker=ticker,
+                        run_dir=str(out_dir.relative_to(root)),
+                        metrics=summary, variant="e1_conservative",
+                    )
+                    print(f"  ✓ Registered {ticker} as candidate in lifecycle registry")
+                else:
+                    print(f"  ⚠️  Guardrails failed for {ticker}: {errors}")
+            except Exception as exc:
+                print(f"  Lifecycle registration skipped: {exc}")
+
         return summary  # Retornar resumen walk-forward
 
     # Split temporal: dividir datos en 70% train, 15% val, 15% test
@@ -800,6 +883,7 @@ def run_e1_for_ticker(
         X_val_s,  # Features de validación (para early stopping)
         y_val_s,  # Targets de validación
         learning_rate=lr,  # Velocidad de aprendizaje del optimizador
+        weight_decay=weight_decay,  # Weight decay del optimizador
         batch_size=batch_size,  # Muestras por iteración
         max_epochs=max_epochs,  # Épocas máximas de entrenamiento
         early_stopping_patience=patience,  # Parar si no mejora en N épocas
@@ -959,33 +1043,44 @@ def run_e1_for_ticker(
         "backtest_file": as_relative(out_dir / f"{ticker}_backtest.csv"),  # CSV backtest
         "scaler_file": as_relative(out_dir / f"{ticker}_scaler.csv"),  # CSV scaler
         "model_file": as_relative(model_path),  # Modelo
+        # Hiperparámetros para tracking en JSONL
+        "hp_gru_units_1": gru_units[0],
+        "hp_gru_units_2": gru_units[1] if len(gru_units) > 1 else None,
+        "hp_dropout": dropout,
+        "hp_dense_units": dense_units,
+        "hp_learning_rate": lr,
+        "hp_weight_decay": weight_decay,
+        "hp_batch_size": batch_size,
+        "hp_tau_buy": tau_buy,
+        "hp_tau_sell": tau_sell,
     }
     pd.Series(summary).to_csv(out_dir / f"{ticker}_summary.csv")  # Guardar summary
 
     # Register as candidate in model lifecycle registry
-    try:
-        from ..lifecycle.registry import ModelRegistry
-        from ..lifecycle.guardrails import validate_candidate, log_candidate_metrics
+    if register_lifecycle:
+        try:
+            from ..lifecycle.registry import ModelRegistry
+            from ..lifecycle.guardrails import validate_candidate, log_candidate_metrics
 
-        registry_path = root / "models" / "registry.json"
-        log_candidate_metrics(
-            metrics=summary, strategy="e1", ticker=ticker,
-            run_dir=out_dir, variant="e1_conservative",
-            log_path=root / "models" / "metrics_log.jsonl",
-        )
-        passed, errors = validate_candidate(run_dir=out_dir, ticker=ticker)
-        if passed:
-            registry = ModelRegistry(registry_path)
-            registry.register_candidate(
-                strategy="e1", ticker=ticker,
-                run_dir=str(out_dir.relative_to(root)),
-                metrics=summary, variant="e1_conservative",
+            registry_path = root / "models" / "registry.json"
+            log_candidate_metrics(
+                metrics=summary, strategy="e1", ticker=ticker,
+                run_dir=out_dir, variant="e1_conservative",
+                log_path=root / "models" / "metrics_log.jsonl",
             )
-            logger.info("Registered %s as candidate in lifecycle registry", ticker)
-        else:
-            logger.warning("Guardrails failed for %s: %s", ticker, errors)
-    except Exception as exc:
-        logger.debug("Lifecycle registration skipped: %s", exc)
+            passed, errors = validate_candidate(run_dir=out_dir, ticker=ticker)
+            if passed:
+                registry = ModelRegistry(registry_path)
+                registry.register_candidate(
+                    strategy="e1", ticker=ticker,
+                    run_dir=str(out_dir.relative_to(root)),
+                    metrics=summary, variant="e1_conservative",
+                )
+                print(f"  ✓ Registered {ticker} as candidate in lifecycle registry")
+            else:
+                print(f"  ⚠️  Guardrails failed for {ticker}: {errors}")
+        except Exception as exc:
+            print(f"  Lifecycle registration skipped: {exc}")
 
     return summary  # Retornar resumen
 
@@ -1043,6 +1138,7 @@ def main() -> None:
                 print(f"  Tickers con overrides: {', '.join(matching)}")
             no_match = [t for t in tickers if t not in tuned_tickers]
             if no_match:
+                # Transparencia: estos tickers no tienen tuning y usan parámetros base.
                 print(f"  Tickers sin overrides (usarán base.yaml): {', '.join(no_match)}")
         else:
             print(f"⚠️  E1_TUNED_PARAMS_PATH configurado pero archivo no existe: {resolved}")
@@ -1097,9 +1193,11 @@ def main() -> None:
         uri: str,
         experiment_artifact_dir: Path | None = None,
     ) -> tuple[bool, str | None]:
+        # Encapsulamos activación para reutilizar misma lógica entre remoto/local.
         try:
             _mlflow_module.set_tracking_uri(uri)
             if experiment_artifact_dir is not None:
+                # En backend SQLite creamos experiment con artifact_location explícito.
                 exp = _mlflow_module.get_experiment_by_name(experiment_name)
                 if exp is None:
                     _mlflow_module.create_experiment(
@@ -1114,8 +1212,10 @@ def main() -> None:
             return False, str(exc)
 
     def _is_tracking_uri_reachable(uri: str, timeout_seconds: float) -> tuple[bool, str | None]:
+        # Chequeo rápido de conectividad para no bloquear entrenamiento si el remoto cayó.
         parsed = urlparse(uri)
         if parsed.scheme not in {"http", "https"}:
+            # URIs locales (file/sqlite) se consideran alcanzables por definición.
             return True, None
 
         host = parsed.hostname
@@ -1192,6 +1292,7 @@ def main() -> None:
                 )
 
         if not mlflow_enabled:
+            # Intentos en cascada: sqlite local -> file store; evita perder trazabilidad.
             for local_cfg in local_uris:
                 uri = local_cfg["uri"]
                 store_path = local_cfg["store_path"]
@@ -1224,37 +1325,35 @@ def main() -> None:
             if mlflow_enabled and mlflow is not None:
                 timestamp = out_base.name  # Timestamp de run
                 with mlflow.start_run(run_name=f"E1_{ticker}_{timestamp}"):
-                    mlflow.log_param("strategy", "e1_conservative")  # Param estrategia
-                    mlflow.log_param("ticker", ticker)  # Param ticker
-                    mlflow.log_param("model_type", "GRU")  # Param tipo modelo
-                    mlflow.log_param("timestamp", timestamp)  # Param timestamp
-
-                    e1_cfg = config.get("strategies", {}).get("e1_conservative", {})  # Config E1
-                    model_cfg = e1_cfg.get("model", {})  # Config modelo
-                    mlflow.log_params(
-                        {
-                            "lookback_days": int(e1_cfg.get("lookback_days", 360)),  # Lookback
-                            "horizon_days": int(e1_cfg.get("horizon_days", 90)),  # Horizon
-                            "gru_units": str(model_cfg.get("gru_units", [96, 32])),  # GRU units
-                            "dropout": float(model_cfg.get("dropout", 0.2)),  # Dropout
-                            "dense_units": int(model_cfg.get("dense_units", 32)),  # Dense units
-                            "learning_rate": float(model_cfg.get("learning_rate", 1e-3)),  # LR
-                            "batch_size": int(model_cfg.get("batch_size", 64)),  # Batch size
-                            "max_epochs": int(model_cfg.get("max_epochs", 200)),  # Max epochs
-                            "early_stopping_patience": int(model_cfg.get("early_stopping_patience", 15)),  # Patience
-                            "loss": str(model_cfg.get("loss", "huber")),  # Loss
-                            "huber_delta": float(model_cfg.get("huber_delta", 1.0)),  # Huber delta
-                            "split_method": str(config.get("splits", {}).get("method", "time_split")),  # Split method
-                            "seed": int(config.get("project", {}).get("seed", 42)),  # Seed
-                        }
-                    )
-
                     summary = run_e1_for_ticker(
                         config,  # Config
                         ticker=ticker,  # Ticker
                         raw_dir=raw_dir,  # Raw dir
                         out_dir=ticker_out,  # Output dir
                         benchmark_df=benchmark_df,  # Benchmark
+                    )
+
+                    # Parámetros: usar hp_ del summary (post-override de Optuna)
+                    mlflow.log_param("strategy", "e1_conservative")  # Param estrategia
+                    mlflow.log_param("ticker", ticker)  # Param ticker
+                    mlflow.log_param("model_type", "GRU")  # Param tipo modelo
+                    mlflow.log_param("timestamp", timestamp)  # Param timestamp
+                    mlflow.log_params(
+                        {
+                            "lookback_days": int(summary.get("lookback_days", 360)),
+                            "horizon_days": int(summary.get("horizon_days", 90)),
+                            "gru_units": str([int(summary.get("hp_gru_units_1", 64)), int(summary.get("hp_gru_units_2", 32))]),
+                            "dropout": summary.get("hp_dropout", 0.2),
+                            "dense_units": int(summary.get("hp_dense_units", 32)),
+                            "learning_rate": summary.get("hp_learning_rate", 1e-3),
+                            "weight_decay": summary.get("hp_weight_decay", 0.0),
+                            "batch_size": int(summary.get("hp_batch_size", 64)),
+                            "max_epochs": int(summary.get("epochs_ran", 0)),
+                            "tau_buy": summary.get("hp_tau_buy", 0.04),
+                            "tau_sell": summary.get("hp_tau_sell", -0.02),
+                            "split_method": summary.get("split_method", "time_split"),
+                            "seed": int(config.get("project", {}).get("seed", 42)),
+                        }
                     )
 
                     # Métricas
@@ -1304,6 +1403,7 @@ def main() -> None:
                     except Exception as art_exc:
                         print(f"  ⚠️  MLflow artifacts no guardados: {art_exc}")  # Warning artifacts
             else:
+                # Camino sin tracking: se entrena igual y se guardan artefactos locales.
                 summary = run_e1_for_ticker(
                     config, ticker=ticker, raw_dir=raw_dir, out_dir=ticker_out, benchmark_df=benchmark_df  # Run sin MLflow
                 )

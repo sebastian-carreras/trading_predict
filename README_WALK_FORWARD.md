@@ -22,6 +22,20 @@ Walk-forward es una técnica de validación específica para series temporales q
 | **Uso de datos** | Descarta 85% en test | Usa 100% de datos de forma eficiente |
 | **Rigor académico** | Básico | Gold standard para series temporales |
 
+## ¿Por qué usar Walk-Forward en este proyecto (FIUBA)?
+
+En este trabajo final, walk-forward aporta valor concreto por el tipo de problema (series financieras) y por el contexto académico (validación sólida, no solo performance puntual):
+
+- **Evaluación temporal realista**: entrena con pasado y evalúa en futuro, respetando causalidad.
+- **Menor riesgo de sobreestimar resultados**: evita depender de una sola ventana de test favorable.
+- **Robustez frente a cambios de régimen**: permite observar estabilidad del modelo en distintos períodos de mercado.
+- **Evidencia más defendible en tesis**: reporta desempeño multi-ventana out-of-sample, no un único split.
+- **Coherencia con objetivos del proyecto**: prioriza decisiones informadas y métricas de riesgo por encima de optimizar solo un caso puntual.
+- **Mejor aprovechamiento del histórico**: cada fold agrega evidencia OOS sin romper el orden temporal.
+- **Criterio común entre estrategias**: facilita comparar E1/E2 bajo una metodología homogénea de validación.
+
+> Recomendación práctica del proyecto: usar walk-forward para validación/evaluación final, y reservar configuraciones más livianas para iteración rápida durante tuning cuando el costo computacional sea restrictivo.
+
 ### Esquema Visual
 
 ```

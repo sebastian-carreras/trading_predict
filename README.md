@@ -198,7 +198,7 @@ runs/<estrategia>/<YYYYMMDD_HHMMSS>/
 
 ### Guías de Implementación
 - **[README_HYPERPARAMETER_TUNING.md](README_HYPERPARAMETER_TUNING.md)** - Optimización de hiperparámetros con Optuna + MLflow
-- **[README_WALK_FORWARD.md](README_WALK_FORWARD.md)** - Validación walk-forward para robustez temporal
+- **[README_WALK_FORWARD.md](README_WALK_FORWARD.md)** - Validación walk-forward + justificación metodológica para este proyecto
 - **[README_E1.md](README_E1.md)** - Estrategia E1 Conservadora (GRU)
 - **[README_E2.md](README_E2.md)** - Estrategia E2 Moderada (LSTM)
 - **[README_E3.md](README_E3.md)** - Estrategia E3 Intradía (Ensemble)

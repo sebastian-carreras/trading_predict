@@ -326,11 +326,20 @@ def run_baseline_for_ticker(  # Ejecutar baseline por ticker
         out_dir / f"{ticker}_baseline_summary.csv", index=False  # Guardar summary
     )  # Fin guardado summary
 
-    # Register as baseline in model lifecycle registry
+    # Register as baseline in model lifecycle registry and log metrics
     try:
         from ..lifecycle.registry import ModelRegistry
+        from ..lifecycle.guardrails import log_candidate_metrics
         root = project_root()
         registry_path = root / "models" / "registry.json"
+
+        # Log metrics to JSONL for historical tracking
+        log_candidate_metrics(
+            metrics=summary, strategy="e1", ticker=ticker,
+            run_dir=out_dir, variant="e1_baseline",
+            log_path=root / "models" / "metrics_log.jsonl",
+        )
+
         registry = ModelRegistry(registry_path)
         registry.register_baseline(
             strategy="e1", ticker=ticker,

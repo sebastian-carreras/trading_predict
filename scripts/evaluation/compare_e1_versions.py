@@ -105,13 +105,15 @@ def resolve_thresholds(df: pd.DataFrame, run_dir: Path, strategy_key: str) -> tu
     if cfg_path.exists():
         with open(cfg_path, "r", encoding="utf-8") as handle:
             cfg = yaml.safe_load(handle) or {}
-        thresholds = (
-            cfg.get("strategies", {})
-            .get(strategy_key, {})
-            .get("thresholds", {})
-        )
-        if isinstance(thresholds, dict):
+        strategies = cfg.get("strategies", {})
+        thresholds = strategies.get(strategy_key, {}).get("thresholds", {})
+        if isinstance(thresholds, dict) and ("tau_buy" in thresholds or "tau_sell" in thresholds):
             return float(thresholds.get("tau_buy", np.nan)), float(thresholds.get("tau_sell", np.nan))
+
+        if strategy_key == "e1_simple":
+            fallback = strategies.get("e1_conservative", {}).get("thresholds", {})
+            if isinstance(fallback, dict):
+                return float(fallback.get("tau_buy", np.nan)), float(fallback.get("tau_sell", np.nan))
 
     return float("nan"), float("nan")
 
@@ -139,8 +141,12 @@ def compute_row(version: str, df: pd.DataFrame, tau_buy: float, tau_sell: float)
         "train_time_seconds_total": float(df["timing_train_seconds"].sum()),
         "mae": float(df["ml_mae"].mean()),
         "rmse": float(df["ml_rmse"].mean()),
+        "median_mae": float(df["ml_mae"].median()),
+        "median_rmse": float(df["ml_rmse"].median()),
         "ic": float(df["ml_ic"].mean()),
         "directional_accuracy": float(df["ml_directional_accuracy"].mean()),
+        "median_ic": float(df["ml_ic"].median()),
+        "median_directional_accuracy": float(df["ml_directional_accuracy"].median()),
         "bt_sharpe": float(df["bt_sharpe"].mean()),
         "bt_cagr": float(df["bt_cagr"].mean()),
         "bt_max_drawdown": float(df["bt_max_drawdown"].mean()),
@@ -152,13 +158,37 @@ def compute_row(version: str, df: pd.DataFrame, tau_buy: float, tau_sell: float)
 
 def format_numeric(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
+    ordered_cols = [
+        "version",
+        "n_tickers",
+        "train_time_seconds_avg",
+        "train_time_seconds_total",
+        "mae",
+        "median_mae",
+        "rmse",
+        "median_rmse",
+        "ic",
+        "median_ic",
+        "directional_accuracy",
+        "median_directional_accuracy",
+        "bt_sharpe",
+        "bt_cagr",
+        "bt_max_drawdown",
+        "bt_num_trades",
+        "tau_buy",
+        "tau_sell",
+    ]
     numeric_cols = [
         "train_time_seconds_avg",
         "train_time_seconds_total",
         "mae",
         "rmse",
+        "median_mae",
+        "median_rmse",
         "ic",
         "directional_accuracy",
+        "median_ic",
+        "median_directional_accuracy",
         "bt_sharpe",
         "bt_cagr",
         "bt_max_drawdown",
@@ -168,7 +198,8 @@ def format_numeric(df: pd.DataFrame) -> pd.DataFrame:
     ]
     for col in numeric_cols:
         out[col] = out[col].astype(float).round(6)
-    return out
+    present_cols = [col for col in ordered_cols if col in out.columns]
+    return out[present_cols]
 
 
 def build_per_ticker_comparison(
@@ -326,7 +357,10 @@ def main() -> None:
     print(f"simple       : {simple_run}")
     print(f"conservative : {conservative_run}")
     print("\nMétricas: tau_buy, tau_sell, train_time_seconds_avg, train_time_seconds_total,")
-    print("          mae, rmse, ic, directional_accuracy, bt_sharpe, bt_cagr,")
+    print(
+        "          mae, rmse, median_mae, median_rmse, ic, directional_accuracy, "
+        "median_ic, median_directional_accuracy, bt_sharpe, bt_cagr,"
+    )
     print("          bt_max_drawdown, bt_num_trades\n")
     print(comparison_df.to_string(index=False))
 

@@ -10,6 +10,7 @@ Predicción de retornos logarítmicos acumulados a 90 días usando arquitectura 
 
 | Versión | Archivo | Validación | Uso Recomendado |
 |---------|---------|------------|-----------------|
+| **E1 Baseline** | `src/e1/train_baseline.py` | Walk-forward (5 folds) | Benchmark académico, comparación de valor incremental |
 | **E1 Conservative** | `train_e1_pipeline.py` | Walk-forward (5 folds) | Producción, validación robusta |
 | **E1 Simple** | `train_e1_simple_pipeline.py` | Time split (70/15/15) | Desarrollo, experimentación |
 
@@ -26,11 +27,14 @@ python -m src.e1.train_all
 python -m src.e1.train_all --tickers AAPL,MSFT
 
 # E1 Conservative (walk-forward validation)
-python -m src.train_e1_pipeline 
-python -m src.train_e1_pipeline --tickers AAPL
+python -m src.e1.train_pipeline 
+python -m src.e1.train_pipeline --tickers AAPL
+
+# E1 Baseline (regresión lineal, benchmark)
+python -m src.e1.train_baseline --tickers AAPL
 
 # E1 Simple (desarrollo rápido)
-python -m src.train_e1_simple_pipeline --tickers AAPL
+python -m src.e1.train_simple_pipeline --tickers AAPL
 
 # Ver resultados
 cat runs/e1_conservative/*/summary_all.csv
@@ -127,6 +131,22 @@ Dense(16, relu)
   ↓
 Output(1) - Predicción retorno 90d
 ```
+
+### E1 Baseline (Benchmark)
+
+```
+Input: (360 días, ~15 features)
+  ↓
+Flatten 3D→2D (secuencia completa como vector)
+  ↓
+LinearRegression (sklearn)
+  ↓
+Output(1) - Predicción retorno 90d
+```
+
+**Notas del baseline:**
+- Usa el mismo target y esquema temporal que E1 Conservative para comparación justa.
+- Es más rápido y simple, pero no modela dependencias temporales no lineales como GRU.
 
 ---
 
@@ -376,22 +396,22 @@ costs:
 
 ---
 
-## Comparación: E1 Conservative vs E1 Simple
+## Comparación: E1 Baseline vs Conservative vs Simple
 
-| Aspecto | E1 Conservative | E1 Simple |
-|---------|-----------------|-----------|
-| **Tiempo/ticker** | ~5 min | ~1 min |
-| **Validación** | Walk-forward (5 folds) | Time split (70/15/15) |
-| **Arquitectura GRU** | 2 capas (64→32) | 1 capa (64) |
-| **Parámetros modelo** | ~12K | ~8K |
-| **Dropout** | 0.3 | 0.2 |
-| **Uso ideal** | Producción, validación robusta | Desarrollo, experimentación |
-| **Robustez temporal** | Alta (múltiples períodos) | Media (un solo período) |
-| **Paper académico** | Sí | No |
+| Aspecto | E1 Baseline | E1 Conservative | E1 Simple |
+|---------|-------------|-----------------|-----------|
+| **Tiempo/ticker** | ~1-2 min | ~5 min | ~1 min |
+| **Validación** | Walk-forward (5 folds) | Walk-forward (5 folds) | Time split (70/15/15) |
+| **Modelo** | LinearRegression | GRU 2 capas (64→32) | GRU 1 capa (64) |
+| **Capta no-linealidad temporal** | No | Sí | Parcial |
+| **Uso ideal** | Benchmark / control académico | Producción, validación robusta | Desarrollo, experimentación |
+| **Robustez temporal** | Alta (múltiples períodos) | Alta (múltiples períodos) | Media (un solo período) |
+| **Paper académico** | Sí (baseline obligatorio) | Sí | No |
 
 **Cuándo usar cada uno:**
-- **E1 Conservative:** Producción, trading real, paper académico, validación final
-- **E1 Simple:** Desarrollo, experimentación, hyperparameter tuning, debugging
+- **E1 Baseline:** establecer piso de desempeño e identificar si GRU agrega valor real.
+- **E1 Conservative:** validación final y uso operativo dentro del alcance del proyecto.
+- **E1 Simple:** iteración rápida, debugging y pruebas exploratorias.
 
 ---
 
@@ -420,6 +440,8 @@ Si `MLFLOW_TRACKING_URI` está configurado, el pipeline registra:
 
 | Archivo | Propósito |
 |---------|-----------|
+| `src/e1/train_baseline.py` | Pipeline E1 Baseline (LinearRegression + walk-forward) |
+| `src/e1/baseline_linear.py` | Implementación del modelo baseline y métricas asociadas |
 | `src/train_e1_pipeline.py` | Pipeline E1 Conservative (walk-forward) |
 | `src/train_e1_simple_pipeline.py` | Pipeline E1 Simple (time split) |
 | `src/features/build_features_e1.py` | Cálculo de 15 features técnicos |
@@ -483,5 +505,5 @@ Ver: [README_CONTINUOUS_EVALUATION.md](README_CONTINUOUS_EVALUATION.md)
 
 ---
 
-**Última actualización:** Febrero 5, 2026
-**Versión:** 3.0 (features optimizadas, lookback 360d, GRU [64→32])
+**Última actualización:** Febrero 23, 2026
+**Versión:** 3.1 (incluye documentación del baseline E1 + comparación de 3 variantes)
