@@ -1,8 +1,6 @@
 # E2 - Estrategia Moderada (LSTM)
 
-**Horizonte**: 20 días | **Frecuencia**: diaria | **Perfil**: Riesgo medio, mediano plazo
 
-Predicción de retornos acumulados a 20 días usando arquitectura LSTM para capturar momentum y cambios de tendencia con rebalanceo semanal. Validación mediante walk-forward testing.
 
 **Variantes disponibles**:
 - **E2 Moderate** (este documento): LSTM con 2 capas, walk-forward validation, filtros complejos

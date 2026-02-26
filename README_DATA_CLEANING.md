@@ -339,7 +339,7 @@ python scripts/data/run_data_cleaning.py
 
 ### **Features siguen teniendo NaN después de limpieza**```python
 # Debug en train_e1_pipeline.py
-features = compute_e1_features(ohlcv, benchmark_df)
+features = compute_e1_features(ohlcv)
 print(features.isna().sum())  # Ver cuántos NaN por feature
 ```
 

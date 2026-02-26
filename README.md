@@ -137,17 +137,20 @@ python -m src.train_e3_pipeline --mode run --tickers SPY
 - **E1 Baseline - Regresión Lineal**: Modelo simple para comparar contra GRU → [README_E1_BASELINE.md](README_E1_BASELINE.md)
 
 **Métricas de Trading (online)**:
-- CAGR, Sharpe, Sortino: retorno ajustado por riesgo
- - El CAGR (Compound Annual Growth Rate) mide el retorno anualizado compuesto de la estrategia/inversión.
- - Nota: en ventanas menores a 1 año, el CAGR sigue siendo válido como **anualización**, pero puede volverse más ruidoso/volátil (la anualización amplifica retornos cortos). Por eso conviene interpretarlo junto con Max Drawdown, Sharpe/Sortino, Calmar, Profit Factor y hit rate.
+- CAGR, Sharpe, Sortino
+ - El CAGR (Compound Annual Growth Rate) mide el retorno anualizado compuesto de la estrategia/inversión. En ventanas menores a 1 año, el CAGR sigue siendo válido como **anualización**, pero puede volverse más ruidoso/volátil (la anualización amplifica retornos cortos). Por eso conviene interpretarlo junto con Max Drawdown, Sharpe/Sortino, Calmar, Profit Factor y hit rate.
  - El Sharpe Ratio evalúa el retorno ajustado por riesgo de una inversión o estrategia de trading, siendo una métrica estándar para comparar estrategias. Se compara con un retorno libre de riesgo y la volatilidad de la estrategia/inversión (objetivos típicos: E1 ≥0.9, E2 ≥0.8, E4 ≥1.0) 
- - El Sortino Ratio se enfoca en la volatilidad negativa (downside), siendo más relevante para inversionistas que solo se preocupan por pérdidas.
+ - El Sortino: retorno ajustado (rendimiento) por riesgo (volatilidad negativa). Se enfoca en la volatilidad negativa (downside), siendo más relevante para inversionistas que solo se preocupan por pérdidas.
+
 - Profit Factor, Hit Rate: calidad de operaciones
  - El Profit Factor es el ratio entre ganancias brutas totales y pérdidas brutas totales (objetivo mínimo 1.2-1.4 para estrategia intradía E3)
- - Hit Rate es el porcentaje de operaciones ganadoras sobre el total (idealmente > 50% para E1/E2, aunque depende de la estrategia) 
+ - Hit Rate es el porcentaje de operaciones ganadoras sobre el total (idealmente > 50% ) 
+
 - Max Drawdown, Calmar: control de pérdidas
  - El Max Drawdown representa el peor escenario de pérdida que experimentó una estrategia de trading o inversión durante un período específico. Esta métrica cuantifica el "dolor" financiero máximo al que estuvo expuesto un inversionista entre un punto máximo y su subsecuente mínimo. Un Max Drawdown bajo es crucial para estrategias conservadoras (E1) y moderadas (E2), ya que refleja la capacidad de la estrategia para proteger el capital en mercados adversos.
- - El ratio de Calmar divide el CAGR por el Max Drawdown absoluto, proporcionando una medida de retorno ajustado por pérdida máxima, particularmente relevante para inversionistas con baja tolerancia al riesgo
+ - El ratio de Calmar divide el CAGR por el Max Drawdown absoluto, proporcionando una medida de retorno ajustado por pérdida máxima, particularmente relevante para inversionistas con baja tolerancia al riesgo. 
+  - Visto de otra manera el Max Drawdown se parece al máximo “estrés psicológico” del inversor, mientras el CAGR es el “beneficio económico medio”.
+  - El “dolor máximo” (max drawdown) tiene dos efectos que no ves si mirás solo el riesgo promedio: aumenta el "riesgo de ruina" y aumenta el riesgo de que abandones la estrategia justo antes de que funcione
 - Turnover: frecuencia de rebalanceo
  - Turnover cuantifica la frecuencia de rebalanceo del portafolio, típicamente expresado como el valor total transaccionado dividido por el capital bajo gestión. Esta métrica es crítica porque alta frecuencia de operaciones incrementa los costos de transacción, pudiendo erosionar completamente la rentabilidad predicha por el modelo. El sistema evalúa todas las estrategias con costos de transacción incluidos (10 bps para estrategias diarias, 20 bps para intradía) en el backtesting neto, asegurando que las métricas reflejen performance ejecutable
 

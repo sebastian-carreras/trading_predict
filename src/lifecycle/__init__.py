@@ -1,1 +1,1 @@
-"""Model lifecycle management: registry, guardrails, and model loading."""
+"""Model lifecycle management: registry, guardrails, promotion, and model loading."""

@@ -272,7 +272,6 @@ def predict_with_model(
     scaler_y: dict,
     lookback: int,
     feature_names: list,
-    benchmark_df: pd.DataFrame = None
 ) -> tuple[float, pd.DataFrame]:
     """
     Hace predicción usando modelo E1 Simple.
@@ -281,7 +280,7 @@ def predict_with_model(
         (predicted_return, features_df)
     """
     # Calcular features
-    features = compute_e1_features(ohlcv, benchmark_df)
+    features = compute_e1_features(ohlcv)
     
     # Verificar que tengamos las features correctas
     if len(features.columns) != len(feature_names):
@@ -455,14 +454,12 @@ def main():
     print("3️⃣  Descargando datos recientes...")
     ohlcv = download_recent_data(args.ticker, days=365)
     
-    # Benchmark deshabilitado
-    benchmark_df = None
     print()
     
     # 5. Hacer predicción
     print("4️⃣  Calculando predicción...")
     pred_return, features = predict_with_model(
-        model, ohlcv, scaler_X, scaler_y, lookback_days, feature_names, benchmark_df
+        model, ohlcv, scaler_X, scaler_y, lookback_days, feature_names
     )
     
     # Guardar predicción en MLflow para evaluación continua

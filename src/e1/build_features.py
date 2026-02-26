@@ -4,7 +4,6 @@ Construcción de features para E1 (Estrategia Conservadora).
 Según especificación del documento:
 - Precio/retorno core: log-retornos, retornos rolling, volatilidad, ATR, volume z-score
 - Tendencia largo plazo: SMA(50/200), EMA(50), MACD, Bollinger, ADX
-- Contexto de mercado: retornos benchmark, sin leakage
 - Target: retorno acumulado a H=90 días
 """
 
@@ -14,12 +13,11 @@ import numpy as np
 import pandas as pd
 
 
-def compute_e1_features(df: pd.DataFrame, benchmark_df: pd.DataFrame | None = None) -> pd.DataFrame:
+def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
     """Calcula features para E1 (conservadora, largo plazo).
 
     Args:
         df: DataFrame con OHLCV diario (index=timestamp, cols: open/high/low/close/volume)
-        benchmark_df: DataFrame del benchmark (SPY) con mismo formato
 
     Returns:
         DataFrame con features (mismo índice que df)
@@ -246,20 +244,6 @@ def compute_e1_features(df: pd.DataFrame, benchmark_df: pd.DataFrame | None = No
     #   - adx_14 > 60 → Tendencia MUY FUERTE → posible agotamiento (cuidado con reversión)
     # IMPORTANTE: ADX NO dice si la tendencia es alcista o bajista, solo qué tan fuerte es
     out["adx_14"] = dx.rolling(14).mean()
-
-    # ===== Contexto de mercado (benchmark) =====
-    # REMOVIDO: benchmark returns pueden causar leakage temporal
-    # El modelo NO debe usar información del mercado del período reciente
-    # Si necesitas benchmark, usa retornos muy antiguos (ej. bench_ret_60d_lag30)
-    
-    # if benchmark_df is not None:
-    #     bench_close = benchmark_df["close"].astype("float64").reindex(df.index)
-    #     bench_log = np.log(bench_close)
-    #     out["bench_ret_1d"] = bench_log.diff()
-    #     out["bench_ret_20d"] = out["bench_ret_1d"].rolling(20).sum()
-    # else:
-    #     out["bench_ret_1d"] = 0.0
-    #     out["bench_ret_20d"] = 0.0
 
     return out
 

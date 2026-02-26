@@ -29,7 +29,7 @@ Uso:
 
 Outputs:
 - MLflow tracking: runs/mlflow_local/mlflow.db (SQLite local) o servidor remoto
-- Optuna database: optuna_studies.db (persistencia)
+- Optuna database: runs/optuna_trials/optuna_studies.db (persistencia)
 - Mejores parámetros: reports/hyperparameter_optimization/best_params_e2.yaml
 - Visualizaciones: reports/hyperparameter_optimization/figures/e2_*.png
 """
@@ -72,7 +72,7 @@ class E2HyperparameterOptimizer:
         config_path: Path,
         tickers: Optional[List[str]] = None,
         mlflow_tracking_uri: str = "local",
-        optuna_db_path: str = "sqlite:///optuna_studies.db",
+        optuna_db_path: str = "sqlite:///runs/optuna_trials/optuna_studies.db",
         search_space_overrides: Optional[Dict[str, Dict[str, float]]] = None,
         batch_size_choices: Optional[List[int]] = None,
     ):
@@ -117,7 +117,7 @@ class E2HyperparameterOptimizer:
         experiment_name = "E2_Hyperparameter_Optimization"
         
         # Forzar artifact location local para evitar conflictos con Docker
-        artifact_location = str(self.root / "mlruns")
+        artifact_location = str(self.root / "runs" / "mlflow_local" / "artifacts")
         
         try:
             # Intentar establecer experimento (crearlo si no existe)
@@ -768,8 +768,8 @@ def main():
     parser.add_argument(
         "--optuna_db",
         type=str,
-        default="sqlite:///optuna_studies.db",
-        help="Path a base de datos de Optuna (default: sqlite:///optuna_studies.db)",
+        default="sqlite:///runs/optuna_trials/optuna_studies.db",
+        help="Path a base de datos de Optuna (default: sqlite:///runs/optuna_trials/optuna_studies.db)",
     )
     parser.add_argument(
         "--output_dir",

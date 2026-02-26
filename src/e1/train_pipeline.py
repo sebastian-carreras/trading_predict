@@ -2,13 +2,21 @@
 Pipeline completo E1 (Estrategia Conservadora).
 
 Flujo:
-1. Cargar datos raw
-2. Calcular features
-3. Crear target y secuencias
-4. Split temporal
-5. Estandarizar features
-6. Entrenar GRU
-7. Evaluar y guardar resultados
+1.  Cargar config base y aplicar overrides de Optuna por ticker (si existen)
+2.  Cargar datos OHLCV (prioriza datos limpios en data/clean/, fallback a data/raw/)
+3.  Calcular features técnicas E1
+4.  Crear target (retorno futuro a N días) y secuencias temporales
+5.  Walk-forward validation (si splits.method == "walk_forward"):
+      Por cada fold:
+      a. Split temporal train/val/test con embargo
+      b. Estandarizar features y targets (Z-score, stats solo de train)
+      c. Entrenar GRU con early stopping
+      d. Predecir en test y calcular métricas ML (MAE, RMSE, IC, dir. accuracy)
+      e. Backtest de señales de trading
+    O bien split temporal simple (70/15/15) con el mismo flujo a-e en una sola pasada.
+6.  Guardar modelo (.pth), predicciones, scalers, métricas y gráficos
+7.  Registrar candidato en lifecycle registry + auto-promoción opcional
+8.  Tracking en MLflow (intenta servidor remoto, fallback SQLite local)
 """
 
 from __future__ import annotations
@@ -230,6 +238,165 @@ def save_walkforward_plot(fold_df: pd.DataFrame, ticker: str, out_path: Path) ->
     fig.tight_layout()  # Ajustar layout
     fig.savefig(str(out_path), dpi=150)  # Guardar PNG
     plt.close(fig)  # Cerrar figura
+
+
+def _import_matplotlib():
+    """Importa matplotlib con backend no interactivo. Retorna (matplotlib, plt) o None."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        return matplotlib, plt
+    except Exception:
+        return None
+
+
+def save_equity_curve_plot(
+    bt_all: pd.DataFrame, ohlcv: pd.DataFrame, ticker: str, out_path: Path
+) -> None:
+    """Equity curve de la estrategia vs buy-and-hold del activo."""
+    result = _import_matplotlib()
+    if result is None:
+        return
+    _, plt = result
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    # Equity de la estrategia (ya viene en bt_all)
+    equity = bt_all["equity"]
+    ax.plot(equity.index, equity.values, label="Estrategia", linewidth=1.2)
+
+    # Buy-and-hold: normalizado al mismo capital inicial
+    close = ohlcv.loc[equity.index, "close"]
+    bh_equity = equity.iloc[0] * (close / close.iloc[0])
+    ax.plot(bh_equity.index, bh_equity.values, label="Buy & Hold", linewidth=1.0, alpha=0.7)
+
+    ax.set_title(f"{ticker} - Equity Curve")
+    ax.set_ylabel("Equity ($)")
+    ax.set_xlabel("Fecha")
+    ax.legend()
+    ax.grid(alpha=0.3, linestyle="--", linewidth=0.8)
+    fig.autofmt_xdate()
+    fig.tight_layout()
+    fig.savefig(str(out_path), dpi=150)
+    plt.close(fig)
+
+
+def save_pred_vs_actual_plot(
+    y_true: np.ndarray, y_pred: np.ndarray, ticker: str, out_path: Path
+) -> None:
+    """Scatter de retornos predichos vs reales con línea identidad."""
+    result = _import_matplotlib()
+    if result is None:
+        return
+    _, plt = result
+
+    fig, ax = plt.subplots(figsize=(6, 6))
+
+    ax.scatter(y_true, y_pred, alpha=0.3, s=10, edgecolors="none")
+
+    # Línea identidad
+    lims = [
+        min(y_true.min(), y_pred.min()),
+        max(y_true.max(), y_pred.max()),
+    ]
+    ax.plot(lims, lims, "r--", linewidth=0.8, alpha=0.6, label="y = x")
+
+    # Correlación de Pearson como anotación
+    corr = float(np.corrcoef(y_true, y_pred)[0, 1]) if len(y_true) > 1 else 0.0
+    ax.text(
+        0.05, 0.95, f"Pearson r = {corr:.3f}",
+        transform=ax.transAxes, fontsize=9, verticalalignment="top",
+        bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
+    )
+
+    ax.set_xlabel("Retorno real")
+    ax.set_ylabel("Retorno predicho")
+    ax.set_title(f"{ticker} - Predicho vs Real")
+    ax.legend(loc="lower right")
+    ax.grid(alpha=0.3, linestyle="--", linewidth=0.8)
+    fig.tight_layout()
+    fig.savefig(str(out_path), dpi=150)
+    plt.close(fig)
+
+
+def save_residuals_plot(
+    y_true: np.ndarray, y_pred: np.ndarray, ticker: str, out_path: Path
+) -> None:
+    """Histograma de residuos (y_true - y_pred) con estadísticas."""
+    result = _import_matplotlib()
+    if result is None:
+        return
+    _, plt = result
+
+    residuals = y_true - y_pred
+    fig, ax = plt.subplots(figsize=(8, 4))
+
+    ax.hist(residuals, bins=50, edgecolor="black", linewidth=0.3, alpha=0.7)
+    ax.axvline(0.0, color="red", linestyle="--", linewidth=0.8, alpha=0.6)
+
+    mean_r = float(np.mean(residuals))
+    std_r = float(np.std(residuals))
+    ax.text(
+        0.95, 0.95,
+        f"media = {mean_r:.4f}\nstd = {std_r:.4f}",
+        transform=ax.transAxes, fontsize=9, verticalalignment="top",
+        horizontalalignment="right",
+        bbox=dict(boxstyle="round", facecolor="lightyellow", alpha=0.5),
+    )
+
+    ax.set_xlabel("Residuo (real - predicho)")
+    ax.set_ylabel("Frecuencia")
+    ax.set_title(f"{ticker} - Distribución de Residuos")
+    ax.grid(alpha=0.3, linestyle="--", linewidth=0.8)
+    fig.tight_layout()
+    fig.savefig(str(out_path), dpi=150)
+    plt.close(fig)
+
+
+def save_fold_metrics_panel(fold_df: pd.DataFrame, ticker: str, out_path: Path) -> None:
+    """Panel de 4 métricas por fold: IC, Sharpe, MAE y Directional Accuracy."""
+    if fold_df.empty:
+        return
+    result = _import_matplotlib()
+    if result is None:
+        return
+    _, plt = result
+
+    metrics = [
+        ("ml_ic", "IC (Spearman)", "#1f77b4"),
+        ("bt_sharpe", "Sharpe", "#2ca02c"),
+        ("ml_mae", "MAE", "#d62728"),
+        ("ml_directional_accuracy", "Dir. Accuracy", "#9467bd"),
+    ]
+
+    fig, axes = plt.subplots(2, 2, figsize=(10, 7), sharex=True)
+    axes = axes.flatten()
+
+    folds = fold_df["fold"].to_numpy()
+
+    for ax, (col, label, color) in zip(axes, metrics):
+        if col not in fold_df.columns:
+            ax.set_visible(False)
+            continue
+        vals = fold_df[col].to_numpy()
+        ax.bar(folds, vals, color=color, alpha=0.7, edgecolor="black", linewidth=0.3)
+        ax.axhline(float(np.mean(vals)), color="black", linestyle="--", linewidth=0.8, alpha=0.5)
+        ax.set_ylabel(label)
+        ax.grid(alpha=0.3, linestyle="--", linewidth=0.8, axis="y")
+        ax.set_title(label)
+
+    # Labels en eje X del último row
+    for ax in axes[2:]:
+        ax.set_xlabel("Fold")
+        if "window" in fold_df.columns:
+            ax.set_xticks(folds)
+            ax.set_xticklabels(fold_df["window"].to_list(), rotation=35, ha="right", fontsize=7)
+
+    fig.suptitle(f"{ticker} - Métricas por Fold", fontsize=12, y=1.01)
+    fig.tight_layout()
+    fig.savefig(str(out_path), dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
 
 def run_e1_walk_forward(  # Walk-forward completo
@@ -601,7 +768,11 @@ def run_e1_walk_forward(  # Walk-forward completo
     plot_path = out_dir / f"{ticker}_walkforward_metrics.png"  # Path gráfico
     save_walkforward_plot(fold_df, ticker, plot_path)  # Generar gráfico IC/Sharpe
 
-    
+    # Gráficos adicionales de diagnóstico
+    save_equity_curve_plot(bt_all, ohlcv, ticker, out_dir / f"{ticker}_equity_curve.png")
+    save_pred_vs_actual_plot(y_true_all, y_pred_all, ticker, out_dir / f"{ticker}_pred_vs_actual.png")
+    save_residuals_plot(y_true_all, y_pred_all, ticker, out_dir / f"{ticker}_residuals.png")
+    save_fold_metrics_panel(fold_df, ticker, out_dir / f"{ticker}_fold_metrics_panel.png")
 
     # Guardar modelo entrenado del último fold como artifact por ticker
     if last_model_payload is not None and last_torch is not None:
@@ -661,8 +832,8 @@ def run_e1_for_ticker(
     ticker: str,  # Símbolo del activo a entrenar
     raw_dir: Path,  # Ruta de datos raw diarios
     out_dir: Path,  # Directorio base de salida
-    benchmark_df: pd.DataFrame | None,  # Benchmark para features relativas
     register_lifecycle: bool = True,  # Registrar en lifecycle (False para Optuna trials)
+    auto_promote: bool = False,  # Auto-promover a champion si supera al actual
  ) -> dict:  # Retorna resumen
     """Entrena y evalúa la estrategia E1 para un ticker específico."""
 
@@ -727,7 +898,7 @@ def run_e1_for_ticker(
     ohlcv = load_ohlcv_csv(csv_path)  # Cargar OHLCV desde CSV
 
     # Features
-    features = compute_e1_features(ohlcv, benchmark_df)  # Features E1
+    features = compute_e1_features(ohlcv)  # Features E1
     target = make_target_e1(ohlcv, horizon_days=horizon_days)  # Target futuro
     # make_sequences alinea X/y/ts y descarta filas iniciales sin contexto suficiente.
 
@@ -735,8 +906,8 @@ def run_e1_for_ticker(
     X, y, ts, feat_names = make_sequences(features, target, lookback=lookback_days)  # Construir secuencias
 
     thresholds = e1.get("thresholds", {})  # Config de umbrales
-    tau_buy = float(thresholds.get("tau_buy", 0.04))  # Umbral compra
-    tau_sell = float(thresholds.get("tau_sell", -0.02))  # Umbral venta
+    tau_buy = float(thresholds.get("tau_buy", 0.02))  # Umbral compra (default base.yaml)
+    tau_sell = float(thresholds.get("tau_sell", 0.00))  # Umbral venta (default base.yaml)
 
     costs_cfg = config.get("costs", {})  # Config de costos
     round_trip_bps = float(costs_cfg.get("daily_round_trip_bps", 10))  # Costos diarios
@@ -814,11 +985,27 @@ def run_e1_for_ticker(
                         metrics=summary, variant="e1_conservative",
                     )
                     print(f"  ✓ Registered {ticker} as candidate in lifecycle registry")
+
+                    # Auto-promotion: compare candidate vs champion
+                    if auto_promote:
+                        try:
+                            from ..lifecycle.promotion import evaluate_and_promote
+                            promo_cfg = config.get("lifecycle", {}).get("promotion", {})
+                            decision = evaluate_and_promote(
+                                registry, "e1", ticker, promo_cfg,
+                            )
+                            if decision.promoted:
+                                print(f"  ★ PROMOTED {ticker} to champion ({decision.reason})")
+                            else:
+                                print(f"  ↳ Kept current champion for {ticker} ({decision.reason})")
+                        except Exception as promo_exc:
+                            print(f"  ⚠️  Auto-promotion failed for {ticker}: {promo_exc}")
                 else:
                     print(f"  ⚠️  Guardrails failed for {ticker}: {errors}")
             except Exception as exc:
                 print(f"  Lifecycle registration skipped: {exc}")
 
+        pd.Series(summary).to_csv(out_dir / f"{ticker}_summary.csv")  # Guardar summary per-ticker
         return summary  # Retornar resumen walk-forward
 
     # Split temporal: dividir datos en 70% train, 15% val, 15% test
@@ -1077,6 +1264,21 @@ def run_e1_for_ticker(
                     metrics=summary, variant="e1_conservative",
                 )
                 print(f"  ✓ Registered {ticker} as candidate in lifecycle registry")
+
+                # Auto-promotion: compare candidate vs champion
+                if auto_promote:
+                    try:
+                        from ..lifecycle.promotion import evaluate_and_promote
+                        promo_cfg = config.get("lifecycle", {}).get("promotion", {})
+                        decision = evaluate_and_promote(
+                            registry, "e1", ticker, promo_cfg,
+                        )
+                        if decision.promoted:
+                            print(f"  ★ PROMOTED {ticker} to champion ({decision.reason})")
+                        else:
+                            print(f"  ↳ Kept current champion for {ticker} ({decision.reason})")
+                    except Exception as promo_exc:
+                        print(f"  ⚠️  Auto-promotion failed for {ticker}: {promo_exc}")
             else:
                 print(f"  ⚠️  Guardrails failed for {ticker}: {errors}")
         except Exception as exc:
@@ -1098,6 +1300,11 @@ def main() -> None:
         type=str,  # Tipo str
         default="",  # Por defecto vacío (usa config)
         help="Comma-separated tickers (or uses universe.tickers_by_strategy.e1_conservative)",  # Ayuda CLI
+    )
+    parser.add_argument(
+        "--auto-promote",  # Flag de auto-promoción
+        action="store_true",  # Booleano
+        help="Automatically promote candidate to champion if it beats the current champion",
     )
     args = parser.parse_args()  # Parseo de argumentos
 
@@ -1142,10 +1349,6 @@ def main() -> None:
                 print(f"  Tickers sin overrides (usarán base.yaml): {', '.join(no_match)}")
         else:
             print(f"⚠️  E1_TUNED_PARAMS_PATH configurado pero archivo no existe: {resolved}")
-
-    # Benchmark (E1): actualmente NO se usa en features (ver build_features_e1.py).
-    # Para evitar fallas por CSVs vacíos/corruptos y simplificar el pipeline, lo deshabilitamos.
-    benchmark_df: pd.DataFrame | None = None
 
     raw_dir = root / "data" / "raw" / "daily"  # Directorio raw diario
 
@@ -1330,7 +1533,7 @@ def main() -> None:
                         ticker=ticker,  # Ticker
                         raw_dir=raw_dir,  # Raw dir
                         out_dir=ticker_out,  # Output dir
-                        benchmark_df=benchmark_df,  # Benchmark
+                        auto_promote=args.auto_promote,  # Auto-promoción CLI
                     )
 
                     # Parámetros: usar hp_ del summary (post-override de Optuna)
@@ -1338,6 +1541,8 @@ def main() -> None:
                     mlflow.log_param("ticker", ticker)  # Param ticker
                     mlflow.log_param("model_type", "GRU")  # Param tipo modelo
                     mlflow.log_param("timestamp", timestamp)  # Param timestamp
+                    strategy_cfg = config.get("strategies", {}).get("e1_conservative", {})
+                    model_cfg = strategy_cfg.get("model", {})
                     mlflow.log_params(
                         {
                             "lookback_days": int(summary.get("lookback_days", 360)),
@@ -1348,9 +1553,11 @@ def main() -> None:
                             "learning_rate": summary.get("hp_learning_rate", 1e-3),
                             "weight_decay": summary.get("hp_weight_decay", 0.0),
                             "batch_size": int(summary.get("hp_batch_size", 64)),
+                            "loss": str(model_cfg.get("loss", "huber")),
+                            "early_stopping_patience": int(model_cfg.get("early_stopping_patience", 10)),
                             "max_epochs": int(summary.get("epochs_ran", 0)),
-                            "tau_buy": summary.get("hp_tau_buy", 0.04),
-                            "tau_sell": summary.get("hp_tau_sell", -0.02),
+                            "tau_buy": summary.get("hp_tau_buy", 0.02),
+                            "tau_sell": summary.get("hp_tau_sell", 0.00),
                             "split_method": summary.get("split_method", "time_split"),
                             "seed": int(config.get("project", {}).get("seed", 42)),
                         }
@@ -1363,6 +1570,8 @@ def main() -> None:
                             continue  # Solo métricas ML/BT
                         if isinstance(v, (int, float)):
                             metrics[k] = float(v)  # Convertir a float
+                    if isinstance(summary.get("val_loss"), (int, float)):
+                        metrics["val_loss"] = float(summary["val_loss"])  # Loss de validación agregada
                     if metrics:
                         mlflow.log_metrics(metrics)  # Log métricas
 
@@ -1383,12 +1592,18 @@ def main() -> None:
                             f"{ticker}_walkforward_predictions.csv",
                             f"{ticker}_walkforward_backtest.csv",
                             f"{ticker}_walkforward_metrics.png",
+                            f"{ticker}_equity_curve.png",
+                            f"{ticker}_pred_vs_actual.png",
+                            f"{ticker}_residuals.png",
+                            f"{ticker}_fold_metrics_panel.png",
                         ]:
                             p = ticker_out / fname  # Path del artefacto
                             if p.exists():
                                 # agrupamos por tipo para que sea navegable en la UI
                                 if fname.endswith(".pth"):
                                     artifact_path = "models"  # Carpeta modelos
+                                elif fname.endswith(".png"):
+                                    artifact_path = "plots"  # Carpeta gráficos
                                 elif "pred" in fname:
                                     artifact_path = "predictions"  # Carpeta preds
                                 elif "backtest" in fname:
@@ -1405,7 +1620,8 @@ def main() -> None:
             else:
                 # Camino sin tracking: se entrena igual y se guardan artefactos locales.
                 summary = run_e1_for_ticker(
-                    config, ticker=ticker, raw_dir=raw_dir, out_dir=ticker_out, benchmark_df=benchmark_df  # Run sin MLflow
+                    config, ticker=ticker, raw_dir=raw_dir, out_dir=ticker_out,
+                    auto_promote=args.auto_promote,  # Run sin MLflow
                 )
             summaries.append(summary)  # Agregar summary
             print(f"✓ {ticker}: MAE={summary['ml_mae']:.4f} IC={summary['ml_ic']:.3f}\n")  # Log ticker OK
@@ -1427,6 +1643,37 @@ def main() -> None:
                     mlflow.log_artifact(str(summary_path), artifact_path="reports")  # Log summary
                 mlflow.log_metric("total_tickers", float(len(tickers)))  # Total tickers
                 mlflow.log_metric("successful_tickers", float(len(summaries)))  # Tickers ok
+
+                # Loguear todas las variables numéricas de summary_all.csv
+                summary_df = pd.DataFrame(summaries)
+                if not summary_df.empty:
+                    numeric_cols = list(summary_df.select_dtypes(include=[np.number]).columns)
+
+                    # Métricas agregadas (media) para cada variable numérica
+                    aggregate_metrics: dict[str, float] = {}
+                    for col in numeric_cols:
+                        series = pd.to_numeric(summary_df[col], errors="coerce")
+                        series = series.replace([np.inf, -np.inf], np.nan).dropna()
+                        if series.empty:
+                            continue
+                        aggregate_metrics[f"summary_{col}_mean"] = float(series.mean())
+
+                    if aggregate_metrics:
+                        mlflow.log_metrics(aggregate_metrics)
+
+                    # Métricas por ticker y variable (valor exacto de summary_all.csv)
+                    if "ticker" in summary_df.columns:
+                        for _, row in summary_df.iterrows():
+                            ticker_raw = str(row.get("ticker", "unknown"))
+                            ticker_key = "".join(ch if (ch.isalnum() or ch in {"_", "-"}) else "_" for ch in ticker_raw)
+                            ticker_metrics: dict[str, float] = {}
+                            for col in numeric_cols:
+                                value = pd.to_numeric(row.get(col), errors="coerce")
+                                if pd.isna(value) or np.isinf(float(value)):
+                                    continue
+                                ticker_metrics[f"ticker_{ticker_key}_{col}"] = float(value)
+                            if ticker_metrics:
+                                mlflow.log_metrics(ticker_metrics)
 
         except Exception as exc:
             print(f"⚠️  No se pudo loguear el summary en MLflow: {exc}")  # Warning MLflow

@@ -1,4 +1,4 @@
-# Consultas a optuna_studies.db - Guía Completa
+# Consultas a runs/optuna_trials/optuna_studies.db - Guía Completa
 
 ## ❌ Errores Comunes
 
@@ -258,32 +258,32 @@ analyzer.export_to_csv('e2_optimization_LOMA.BA', 'results.csv')
 
 ```bash
 # Eliminar un estudio específico
-sqlite3 optuna_studies.db \
+sqlite3 runs/optuna_trials/optuna_studies.db \
   "DELETE FROM studies WHERE study_name LIKE 'e1_test_%';"
 
 # Eliminar todos los E1
-sqlite3 optuna_studies.db \
+sqlite3 runs/optuna_trials/optuna_studies.db \
   "DELETE FROM studies WHERE study_name LIKE 'e1_%';"
 ```
 
 ### Crear backup de la DB
 
 ```bash
-cp optuna_studies.db optuna_studies.db.backup
+cp runs/optuna_trials/optuna_studies.db runs/optuna_trials/optuna_studies.db.backup
 ```
 
 ### Ver información de una única tabla
 
 ```bash
 # Todos los estudios
-sqlite3 optuna_studies.db "SELECT * FROM studies;"
+sqlite3 runs/optuna_trials/optuna_studies.db "SELECT * FROM studies;"
 
 # Todos los trials de un estudio
-sqlite3 optuna_studies.db \
+sqlite3 runs/optuna_trials/optuna_studies.db \
   "SELECT * FROM trials WHERE study_id = 1 LIMIT 5;"
 
 # Parámetros del trial 100
-sqlite3 optuna_studies.db \
+sqlite3 runs/optuna_trials/optuna_studies.db \
   "SELECT * FROM trial_params WHERE trial_id = 100;"
 ```
 
@@ -306,7 +306,7 @@ sqlite3 optuna_studies.db \
 | Estudio | Best Value | Status |
 |---------|-----------|--------|
 | e1_hyperparameter_optimization | -10.5 | ❌ Malo |
-| e2_optimization_TGSUD.BA | -12.0 | ❌ Malo |
+| e2_optimization_TGSU2.BA | -12.0 | ❌ Malo |
 | e2_hyperparameter_optimization | 0.93 | ⚠️ Pocos trials |
 
 ---

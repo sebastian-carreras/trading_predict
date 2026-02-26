@@ -95,20 +95,14 @@ PY
 - Guardar run completo en `runs/e1_simple/<timestamp>/`.
 
 ## 3) Guardrails automatizados (rápidos)
-Ejecuta el validador sobre el último run:
+Los guardrails están integrados en el pipeline vía `src/lifecycle/guardrails.py`.
+Para evaluar candidatos vs champion y ver los resultados:
 ```bash
-python scripts/evaluation/e1_simple_guardrails.py \
-  --config src/config/base.yaml \
-  --sharpe-min 0.8 \
-  --max-drawdown-max 0.20
-```
+# Dry-run: ver decisiones sin escribir al registry
+python -m scripts.evaluation.promote_candidate --verbose
 
-Si querés validar un run específico:
-```bash
-python scripts/evaluation/e1_simple_guardrails.py \
-  --run-dir runs/e1_simple/20260124_175222 \
-  --sharpe-min 0.8 \
-  --max-drawdown-max 0.20
+# Aplicar promociones
+python -m scripts.evaluation.promote_candidate --execute
 ```
 
 ## 4) Sensibilidad a costos (realismo)
@@ -119,11 +113,10 @@ python scripts/evaluation/e1_simple_guardrails.py \
 - Revisar `summary_all.csv` por ticker.
 - Identificar si el PnL viene de pocos activos o períodos.
 
-## 6) Tests unitarios rápidos
-- Tests incluidos en `tests/test_e1_simple_guardrails.py`.
-- Ejecutar con:
+## 6) Tests
+- Ejecutar tests del proyecto con:
 ```bash
-pytest -q tests/test_e1_simple_guardrails.py
+pytest -q tests/
 ```
 
 ## 7) Iteración controlada

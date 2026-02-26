@@ -45,7 +45,6 @@ def run_baseline_for_ticker(  # Ejecutar baseline por ticker
     ticker: str,  # Símbolo del activo
     raw_dir: Path,  # Directorio con CSVs diarios
     out_dir: Path,  # Directorio de salida por ticker
-    benchmark_df: pd.DataFrame | None = None,  # Benchmark opcional
     mlflow_enabled: bool = False,  # MLflow habilitado
     mlflow=None,  # Módulo MLflow
     timestamp: str | None = None,  # Timestamp de ejecución
@@ -60,7 +59,6 @@ def run_baseline_for_ticker(  # Ejecutar baseline por ticker
         ticker: Símbolo del activo (ej: "AAPL")
         raw_dir: Directorio con datos CSV limpios
         out_dir: Directorio para guardar outputs (predicciones, métricas, backtest)
-        benchmark_df: DataFrame opcional con benchmarks
     
     Retorna:
         dict: Resumen con métricas ML y trading del modelo entrenado
@@ -477,9 +475,6 @@ def main() -> None:  # Entry-point principal
     with open(out_base / "config_used.yaml", "w") as f:  # Abrir YAML
         yaml.dump(config, f)  # Dump YAML
     
-    # Benchmark (opcional)
-    benchmark_df = None  # Sin benchmark
-    
     # MLFLOW SETUP
     mlflow_enabled = False  # MLflow deshabilitado por default
     mlflow = None  # Módulo MLflow
@@ -654,7 +649,6 @@ def main() -> None:  # Entry-point principal
                 ticker=ticker,  # Ticker
                 raw_dir=raw_dir,  # Raw dir
                 out_dir=out_base / ticker,  # Output por ticker
-                benchmark_df=benchmark_df,  # Benchmark
                 mlflow_enabled=mlflow_enabled,  # MLflow habilitado
                 mlflow=mlflow,  # Módulo MLflow
                 timestamp=timestamp,  # Timestamp

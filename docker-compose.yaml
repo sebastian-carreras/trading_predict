@@ -155,9 +155,9 @@ services:
       - ./runs:/mlflow_data
     command: >
       mlflow server 
-      --backend-store-uri ${MLFLOW_BACKEND_STORE_URI:-postgresql://${PG_USER:-airflow}:${PG_PASSWORD:-airflow}@postgres:5432/mlflow_db}
+      --backend-store-uri ${MLFLOW_BACKEND_STORE_URI:-sqlite:////mlflow_data/mlflow_local/mlflow.db}
       --host 0.0.0.0
-      --default-artifact-root ${MLFLOW_DEFAULT_ARTIFACT_ROOT:-s3://${MLFLOW_BUCKET_NAME:-mlflow}/}
+      --default-artifact-root ${MLFLOW_DEFAULT_ARTIFACT_ROOT:-file:///mlflow_data/mlflow_local/artifacts}
     healthcheck:
       test: wget --no-verbose --tries=1 --spider http://mlflow:5000 || exit 1
       interval: 60s

@@ -107,7 +107,6 @@ def train_retrospective_model_gru(
     ticker: str,
     ohlcv: pd.DataFrame,
     config: dict,
-    benchmark_df: pd.DataFrame = None
 ) -> tuple:
     """
     Entrena modelo GRU E1 Simple con datos limitados (simulando pasado).
@@ -117,7 +116,7 @@ def train_retrospective_model_gru(
     """
     # Calcular features
     print(f"\n🔧 Calculando features...")
-    features = compute_e1_features(ohlcv, benchmark_df)
+    features = compute_e1_features(ohlcv)
     
     # Configuración
     lookback_days = config.get("lookback_days", 360)  # días calendario
@@ -265,7 +264,6 @@ def evaluate_out_of_time_gru(
     feature_names: list,
     config: dict,
     data_dir: Path,
-    benchmark_df: pd.DataFrame = None
 ) -> dict:
     """
     Evalúa modelo GRU con datos desde train_cutoff hasta eval_date.
@@ -316,7 +314,7 @@ def evaluate_out_of_time_gru(
         data.columns = [str(c).lower() for c in data.columns]
     
     # Calcular features
-    features = compute_e1_features(data, benchmark_df)
+    features = compute_e1_features(data)
     
     # Crear targets (retorno forward) - usar días CALENDARIO para horizon
     lookback_days = config.get("lookback_days", 360)
@@ -473,18 +471,15 @@ def main():
     # 1. Cargar/descargar datos hasta train_cutoff
     ohlcv = load_or_download_data(args.ticker, train_cutoff, data_dir)
     
-    # Benchmark deshabilitado
-    benchmark_df = None
-    
     # 2. Entrenar modelo GRU (simulando estar en train_cutoff)
     model, scaler, feature_names, train_end, ml_metrics_test = train_retrospective_model_gru(
-        args.ticker, ohlcv, model_config, benchmark_df
+        args.ticker, ohlcv, model_config
     )
     
     # 3. Evaluar out-of-time (train_cutoff → hoy)
     oot_metrics = evaluate_out_of_time_gru(
         args.ticker, train_cutoff, today, model, scaler, feature_names, 
-        model_config, data_dir, benchmark_df
+        model_config, data_dir
     )
     
     # 4. Comparar métricas

@@ -102,24 +102,6 @@ python scripts/optimization/analyze_optuna_db.py \
 
 ## 📊 evaluation/ - Evaluación y Validación
 
-### `e1_continuous_evaluation.py`
-Sistema de evaluación continua con MLflow.
-
-**Uso:**
-```bash
-# Guardar predicción
-python scripts/evaluation/e1_continuous_evaluation.py \
-    --mode save \
-    --ticker AAPL \
-    --prediction 0.15
-
-# Evaluar predicciones pendientes
-python scripts/evaluation/e1_continuous_evaluation.py \
-    --mode evaluate
-```
-
-**Ver:** `README_CONTINUOUS_EVALUATION.md`
-
 ### `e1_retrospective_validation.py`
 Validación out-of-time con modelo GRU (E1 Simple).
 
@@ -132,25 +114,9 @@ python scripts/evaluation/e1_retrospective_validation.py \
 ```
 
 **Características:**
-- Usa arquitectura GRU real (2 capas: 128, 64)
+- Usa arquitectura GRU real (2 capas: 64, 32)
 - Verifica `data/clean/` antes de descargar
 - Guarda resultados en MLflow
-
-### `e1_baseline_retrospective_validation.py`
-Validación out-of-time con LinearRegression (baseline).
-
-**Uso:**
-```bash
-python scripts/evaluation/e1_baseline_retrospective_validation.py \
-    --ticker AAPL \
-    --train-days-ago 360 \
-    --horizon 90
-```
-
-**Características:**
-- Modelo baseline simple (LinearRegression)
-- Más rápido que GRU
-- Útil para comparación
 
 ### `compare_e1_models.py`
 Compara modelos E1 entrenados.
@@ -184,9 +150,6 @@ python scripts/evaluation/compare_e1_versions.py --tickers AAPL,MSFT --per-ticke
 **Salida:**
 - Carpeta: `reports/tables/e1_versions_comparison/`
 - Archivos con timestamp: `e1_versions_comparison_<YYYYMMDD_HHMMSS>*.csv/.md`
-
-### `validate_e2_optimization.py`
-Valida resultados de optimización E2.
 
 ---
 
@@ -270,7 +233,6 @@ MLFLOW_VERSION=3.8.1 bash scripts/mlflow/up_transparent_mlflow.sh
 
 - **Data Cleaning:** `README_DATA_CLEANING.md`
 - **Hyperparameter Tuning:** `README_HYPERPARAMETER_TUNING.md`
-- **Continuous Evaluation:** `README_CONTINUOUS_EVALUATION.md`
 - **IOL Trading:** `README_IOL_FALLBACK.md`
 - **Backtesting:** `README_BACKTESTING.md`
 

@@ -197,6 +197,8 @@ def train_e1_with_mlflow(**context):
     if not tickers:
         return "No tickers to train for E1 strategy"
     
+    raw_dir = root / "data/raw/daily"
+    
     # Benchmark deshabilitado
     benchmark_df = None
     

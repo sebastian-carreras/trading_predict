@@ -225,7 +225,7 @@ Los valores objetivo/mínimos se loguean como **params** en el Summary Run para 
 
 ```bash
 # Ver runs en MLflow UI
-mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db --port 5000
+mlflow ui --backend-store-uri sqlite:///runs/mlflow_local/mlflow.db --port 5000
 
 # Filtrar runs con IC > target
 # En la UI: Metrics -> ic_mean > 0.05

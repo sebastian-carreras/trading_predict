@@ -19,7 +19,7 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 
 DAG_ID = "e1_optuna_hyperparameter_tuning"
-SCRIPT_REL_PATH = Path("scripts/optimize_e1_hyperparameters.py")
+SCRIPT_REL_PATH = Path("scripts/optimization/optimize_e1_hyperparameters.py")
 
 
 def resolve_project_root() -> Path:

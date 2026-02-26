@@ -23,7 +23,7 @@ universe:
     - "BBAR.BA"
     - "BMA.BA"
     - "EDN.BA"
-    - "TGSUD.BA"
+    - "TGSU2.BA"
     - "LOMA.BA"
     - "NVDA"
     - "GOOGL"
@@ -61,7 +61,18 @@ universe:
       - "JNJ"
       - "PG"
       - "V"
-    # e2, e3, e4: tickers se definirán cuando se reconstruyan las estrategias
+    e2_moderate:
+      - "NVDA"
+      - "GOOGL"
+      - "AMZN"
+      - "META"
+      - "NFLX"
+      - "BBAR.BA"
+      - "BMA.BA"
+      - "EDN.BA"
+      - "TGSU2.BA"
+      - "LOMA.BA"
+    # e3, e4: tickers se definirán cuando se reconstruyan las estrategias
 
 costs:
   # Costos round-trip (entrada+salida). Usar en backtest neto.
@@ -78,6 +89,7 @@ splits:
   # rompiendo la correlación y evitando que el modelo "vea" información futura.
   embargo_days:
     e1: 90
+    e2: 20
 
 strategies:
   e1_conservative:
@@ -118,9 +130,40 @@ strategies:
       max_position: 1.0  # 100% del capital en una posición
 
   e2_moderate:
-    enabled: false  # TODO: rebuild from scratch
+    enabled: true
     frequency: "1D"
+    lookback_days: 60
     horizon_days: 20
+    rebalance: "weekly"
+
+    thresholds:
+      tau_buy: 0.025       # +2.5% predicho → señal compra
+      tau_sell: 0.00        # 0% o menos → cerrar posición
+
+    risk:
+      stop_loss_pct: 0.07   # Stop loss del 7%
+      take_profit_pct: 0.10  # Take profit del 10%
+      trailing_stop: false
+
+    model:
+      type: "LSTM"
+      lstm_units: [128, 64]  # 2 capas LSTM
+      dropout: 0.2
+      dense_units: 32
+      loss: "huber"
+      huber_delta: 1.0
+      optimizer: "adamw"
+      learning_rate: 0.001
+      weight_decay: 0.0
+      batch_size: 64
+      max_epochs: 150
+      early_stopping_patience: 12
+      clipnorm: 1.0
+
+    backtest:
+      holding_period_days: 20
+      allow_short: false
+      max_position: 1.0
 
   e3_intraday:
     enabled: false  # TODO: rebuild from scratch
@@ -133,8 +176,8 @@ strategies:
 
 reporting:
   metrics:
-    ml: ["mae", "rmse", "directional_accuracy"]
-    trading: ["cagr", "sharpe", "sortino", "max_drawdown", "calmar", "profit_factor", "turnover", "hit_rate"]
+    ml: ["mae", "rmse", "ic", "directional_accuracy"]
+    trading: ["cagr", "sharpe", "sortino", "max_drawdown", "calmar", "profit_factor", "turnover", "win_rate"]
   output_dir: "reports"
 
 lifecycle:
@@ -151,6 +194,43 @@ lifecycle:
       nan_in_backtest: true
       sharpe_below_zero: true
       worse_than_baseline: true
+
+  promotion:
+    auto_promote: false          # Default conservador; habilitar con --auto-promote CLI flag
+    first_champion_strategy: "promote"  # Si no hay champion, promover candidato si pasa guardrails
+    min_improvement: 0.05        # Margen mínimo de mejora (5%) en composite score
+    require_positive_sharpe: true  # Safety net: candidato debe tener bt_sharpe > 0
+
+    # Scoring weights globales (fallback si la estrategia no tiene overrides)
+    scoring_weights:
+      bt_sharpe: 0.35
+      ml_ic: 0.25
+      ml_directional_accuracy: 0.20
+      bt_calmar: 0.20
+
+    # Overrides por estrategia.
+    # Cada entrada puede redefinir cualquier campo de promotion (scoring_weights,
+    # min_improvement, require_positive_sharpe, etc.).
+    # Si una estrategia no aparece, se usan los valores globales de arriba.
+    # Lookup jerárquico: per_strategy.{strategy} → per_strategy.{prefix} → global
+    #   (prefix = parte antes del primer '_', e.g. "e1_conservative" → "e1")
+    per_strategy:
+      e1:
+        # E1 conservador: horizonte largo (90d), prioriza Sharpe y Calmar
+        scoring_weights:
+          bt_sharpe: 0.35
+          ml_ic: 0.25
+          ml_directional_accuracy: 0.20
+          bt_calmar: 0.20
+      e2:
+        # E2 moderado: horizonte corto (20d), más peso a directional_accuracy y Sharpe
+        scoring_weights:
+          bt_sharpe: 0.30
+          ml_ic: 0.20
+          ml_directional_accuracy: 0.30
+          bt_calmar: 0.20
+      # e3: {}   # TODO: definir al reconstruir E3 (intradía, métricas como profit_factor/win_rate)
+      # e4: {}   # TODO: definir al reconstruir E4 (pairs trading, métricas de spread/cointegración)
 
   retirement:
     keep_last_n: 5

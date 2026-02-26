@@ -10,9 +10,9 @@ Predicción de retornos logarítmicos acumulados a 90 días usando arquitectura 
 
 | Versión | Archivo | Validación | Uso Recomendado |
 |---------|---------|------------|-----------------|
-| **E1 Baseline** | `src/e1/train_baseline.py` | Walk-forward (5 folds) | Benchmark académico, comparación de valor incremental |
-| **E1 Conservative** | `train_e1_pipeline.py` | Walk-forward (5 folds) | Producción, validación robusta |
-| **E1 Simple** | `train_e1_simple_pipeline.py` | Time split (70/15/15) | Desarrollo, experimentación |
+| **E1 Baseline** | `src/e1/train_baseline.py`  | Time split (70/15/15)  |  Benchmark académico, comparación de valor incremental |
+| **E1 Conservative** | `train_e1_pipeline.py`  | Walk-forward (5 folds) | Producción, validación robusta |
+| **E1 Simple** | `train_e1_simple_pipeline.py` | Time split (70/15/15)  | Desarrollo, experimentación |
 
 ---
 
@@ -65,8 +65,9 @@ cat runs/e1_conservative/*/summary_all.csv
 ```
 Predicción → Comparar con umbrales → Señal de trading
 
-Si predicción ≥ tau_buy (0.06 = +6%)  → BUY
+Si predicción ≥ tau_buy (0.02 = +2%)  → BUY
 Si predicción ≤ tau_sell (0.00)       → SELL/HOLD
+(Nota: valores por defecto; Optuna puede generar overrides por ticker)
 ```
 
 ### 4. Flujo Resumido
@@ -354,17 +355,8 @@ strategies:
     rebalance: "monthly"
 
     thresholds:
-      tau_buy: 0.06           # +6% predicho → señal compra
-      tau_sell: 0.00          # 0% o menos → cerrar posición
-
-    filters:
-      rsi14_max: 60           # Evitar sobrecompra
-      regime:
-        type: "sma200"
-        sma200_required: true # Solo operar si close > SMA200
-      bollinger:
-        enabled: true
-        percent_b_max: 0.9    # No en extremo superior
+      tau_buy: 0.02           # +2% predicho → señal compra (default; Optuna override por ticker)
+      tau_sell: 0.00          # 0% o menos → cerrar posición (default; Optuna override por ticker)
 
     risk:
       stop_loss_pct: 0.10     # Stop loss del 10%
@@ -422,11 +414,18 @@ Si `MLFLOW_TRACKING_URI` está configurado, el pipeline registra:
 **Parámetros:**
 - strategy, ticker, lookback_days, horizon_days
 - gru_units, dropout, learning_rate, batch_size
+- loss, early_stopping_patience, max_epochs
 - split_method, seed
 
 **Métricas:**
+- val_loss
 - ml_mae, ml_rmse, ml_ic, ml_directional_accuracy
 - bt_sharpe, bt_cagr, bt_max_drawdown
+
+**Run agregado (E1 Conservative):**
+- `E1_Summary_<timestamp>` con artifact `summary_all.csv`
+- Métricas agregadas `summary_<col>_mean` para columnas numéricas de `summary_all.csv`
+- Métricas por ticker `ticker_<TICKER>_<col>` para auditoría rápida en la UI
 
 **Artifacts:**
 - models/{ticker}_model.pth
@@ -442,6 +441,8 @@ Si `MLFLOW_TRACKING_URI` está configurado, el pipeline registra:
 |---------|-----------|
 | `src/e1/train_baseline.py` | Pipeline E1 Baseline (LinearRegression + walk-forward) |
 | `src/e1/baseline_linear.py` | Implementación del modelo baseline y métricas asociadas |
+| `src/lifecycle/promotion.py` | Lógica de scoring y decisión de promoción champion/challenger |
+| `scripts/evaluation/promote_candidate.py` | CLI para evaluar y promover candidatos manualmente |
 | `src/train_e1_pipeline.py` | Pipeline E1 Conservative (walk-forward) |
 | `src/train_e1_simple_pipeline.py` | Pipeline E1 Simple (time split) |
 | `src/features/build_features_e1.py` | Cálculo de 15 features técnicos |
@@ -455,11 +456,7 @@ Si `MLFLOW_TRACKING_URI` está configurado, el pipeline registra:
 ## Lógica de Señales de Trading
 
 ### Criterio de compra (entrada larga)
-- **Condición principal**: `ŷ^(90) > τ_buy` (predicción > 6%)
-- **Filtros de confirmación**:
-  - RSI(14) < 60 - Evitar sobrecompra
-  - Close > SMA(200) - Filtro de régimen alcista
-  - Bollinger %B < 0.9 - No en extremo superior
+- **Condición principal**: `ŷ^(90) > τ_buy` (predicción > 2%, default; Optuna override por ticker)
 
 ### Criterio de venta (salida)
 - Por modelo: `ŷ^(90) < 0` o `< τ_sell`
@@ -473,6 +470,61 @@ Si `MLFLOW_TRACKING_URI` está configurado, el pipeline registra:
 
 ---
 
+## Model Promotion (Champion/Challenger)
+
+El sistema usa un patrón champion/challenger para gestionar modelos en producción:
+
+**Ciclo de vida:** `candidate → (guardrails) → (comparación) → champion → retired`
+
+### Composite Score
+
+La decisión de promoción se basa en un score compuesto configurable:
+
+$$\text{score} = 0.35 \cdot \text{Sharpe} + 0.25 \cdot \text{IC} + 0.20 \cdot \text{DirAcc} + 0.20 \cdot \text{Calmar}$$
+
+- **Margen mínimo**: el candidato debe superar al champion por ≥5% en el composite score
+- **Safety net**: el candidato debe tener `bt_sharpe > 0`
+- **Granularidad**: cada ticker se evalúa y promueve independientemente
+- **Bootstrap**: si no hay champion, el candidato se promueve automáticamente
+
+### Uso
+
+```bash
+# Dry-run: ver decisiones sin modificar el registry
+python -m scripts.evaluation.promote_candidate
+
+# Ejecutar promociones
+python -m scripts.evaluation.promote_candidate --execute
+
+# Tickers específicos
+python -m scripts.evaluation.promote_candidate --tickers AAPL,MSFT --execute
+
+# Detalle por métrica
+python -m scripts.evaluation.promote_candidate --verbose
+
+# Auto-promoción durante entrenamiento
+python -m src.e1.train_pipeline --auto-promote
+```
+
+### Configuración
+
+Los pesos y umbrales se configuran en `src/config/base.yaml` bajo `lifecycle.promotion`:
+
+```yaml
+lifecycle:
+  promotion:
+    auto_promote: false
+    min_improvement: 0.05
+    require_positive_sharpe: true
+    scoring_weights:
+      bt_sharpe: 0.35
+      ml_ic: 0.25
+      ml_directional_accuracy: 0.20
+      bt_calmar: 0.20
+```
+
+---
+
 ## Evaluación Continua
 
 Para validar modelos en producción:
@@ -483,15 +535,7 @@ python scripts/evaluation/e1_retrospective_validation.py \
     --ticker AAPL \
     --train-days-ago 360 \
     --horizon 90
-
-# Comparar con baseline (Regresión Lineal)
-python scripts/evaluation/e1_baseline_retrospective_validation.py \
-    --ticker AAPL \
-    --train-days-ago 360 \
-    --horizon 90
 ```
-
-Ver: [README_CONTINUOUS_EVALUATION.md](README_CONTINUOUS_EVALUATION.md)
 
 ---
 
@@ -505,5 +549,5 @@ Ver: [README_CONTINUOUS_EVALUATION.md](README_CONTINUOUS_EVALUATION.md)
 
 ---
 
-**Última actualización:** Febrero 23, 2026
-**Versión:** 3.1 (incluye documentación del baseline E1 + comparación de 3 variantes)
+**Última actualización:** Febrero 25, 2026
+**Versión:** 3.2 (incluye documentación de Model Promotion champion/challenger)

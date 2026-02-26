@@ -90,7 +90,6 @@ def run_e1_simple_for_ticker(
     ticker: str,
     raw_dir: Path,
     out_dir: Path,
-    benchmark_df: pd.DataFrame | None = None,
 ) -> dict:
     """Entrena y evalúa E1 simple para un ticker (sin walk-forward)."""
 
@@ -466,6 +465,11 @@ def main():
         action="store_true",
         help="Omite la limpieza de datos (usa datos raw)"
     )
+    parser.add_argument(
+        "--auto-promote",
+        action="store_true",
+        help="Automatically promote candidate to champion if it beats the current champion",
+    )
     args = parser.parse_args()
     
     root = project_root()
@@ -774,6 +778,8 @@ def main():
                             continue
                         if k.startswith("ml_") or k.startswith("bt_"):
                             metrics[k] = float(v)
+                    if isinstance(summary.get("val_loss"), (int, float)):
+                        metrics["val_loss"] = float(summary["val_loss"])
                     if metrics:
                         mlflow.log_metrics(metrics)
 
@@ -818,6 +824,47 @@ def main():
                     out_dir=out_dir,
                 )
             summaries.append(summary)  # Guardar summary
+
+            # Lifecycle registration + auto-promotion
+            try:
+                from ..lifecycle.registry import ModelRegistry
+                from ..lifecycle.guardrails import validate_candidate, log_candidate_metrics
+
+                ticker_out_dir = out_dir / ticker
+                registry_path = root / "models" / "registry.json"
+                log_candidate_metrics(
+                    metrics=summary, strategy="e1", ticker=ticker,
+                    run_dir=ticker_out_dir, variant="e1_simple",
+                    log_path=root / "models" / "metrics_log.jsonl",
+                )
+                passed, errors = validate_candidate(run_dir=ticker_out_dir, ticker=ticker)
+                if passed:
+                    registry = ModelRegistry(registry_path)
+                    registry.register_candidate(
+                        strategy="e1", ticker=ticker,
+                        run_dir=str(ticker_out_dir.relative_to(root)),
+                        metrics=summary, variant="e1_simple",
+                    )
+                    print(f"  ✓ Registered {ticker} as candidate in lifecycle registry")
+
+                    # Auto-promotion: compare candidate vs champion
+                    if args.auto_promote:
+                        try:
+                            from ..lifecycle.promotion import evaluate_and_promote
+                            promo_cfg = config.get("lifecycle", {}).get("promotion", {})
+                            decision = evaluate_and_promote(
+                                registry, "e1", ticker, promo_cfg,
+                            )
+                            if decision.promoted:
+                                print(f"  ★ PROMOTED {ticker} to champion ({decision.reason})")
+                            else:
+                                print(f"  ↳ Kept current champion for {ticker} ({decision.reason})")
+                        except Exception as promo_exc:
+                            print(f"  ⚠️  Auto-promotion failed for {ticker}: {promo_exc}")
+                else:
+                    print(f"  ⚠️  Guardrails failed for {ticker}: {errors}")
+            except Exception as lc_exc:
+                print(f"  Lifecycle registration skipped: {lc_exc}")
         except Exception as exc:
             # Si falla, loguear error pero continuar con siguiente ticker
             print(f"  ❌ Error: {exc}\n")

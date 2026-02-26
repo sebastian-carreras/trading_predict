@@ -48,7 +48,7 @@ Uso:
 
 Outputs:
 - MLflow tracking: MLFLOW_TRACKING_URI (.env) o runs/mlflow_local/mlflow.db (SQLite local)
-- Optuna database: optuna_studies.db (persistencia entre corridas)
+- Optuna database: runs/optuna_trials/optuna_studies.db (persistencia entre corridas)
 - Mejores parámetros: reports/hyperparameter_optimization/best_params_e1.yaml
 - Per-ticker overrides: reports/hyperparameter_optimization/e1_tuned_params_by_ticker.yaml
 - Visualizaciones: reports/hyperparameter_optimization/by_ticker/<TICKER>/figures/
@@ -133,7 +133,7 @@ class E1HyperparameterOptimizer:
         config_path: Path,
         tickers: Optional[List[str]] = None,
         mlflow_tracking_uri: str = "local",
-        optuna_db_path: str = "sqlite:///optuna_studies.db",
+        optuna_db_path: str = "sqlite:///runs/optuna_trials/optuna_studies.db",
         search_space_overrides: Optional[Dict[str, Dict[str, float]]] = None,
         batch_size_choices: Optional[List[int]] = None,
     ):
@@ -301,9 +301,6 @@ class E1HyperparameterOptimizer:
         validate_bounds(self.learning_rate_bounds, "learning_rate")
         validate_bounds(self.weight_decay_bounds, "weight_decay")
         
-        # Benchmark deshabilitado
-        self.benchmark_df = None
-        
         print(f"✓ Inicializado optimizador para {len(self.tickers)} tickers")
         print(f"  Tickers: {', '.join(self.tickers[:5])}{'...' if len(self.tickers) > 5 else ''}")
         print(f"  MLflow: {mlflow_tracking_uri}")
@@ -438,7 +435,6 @@ class E1HyperparameterOptimizer:
                                 ticker=ticker,
                                 raw_dir=raw_dir,
                                 out_dir=out_dir,
-                                benchmark_df=self.benchmark_df,
                                 register_lifecycle=False,
                             )
                     finally:
@@ -990,6 +986,12 @@ def main():
         help="URI de MLflow tracking server (default: 'local' para SQLite)",
     )
     parser.add_argument(
+        "--optuna_db",
+        type=str,
+        default="sqlite:///runs/optuna_trials/optuna_studies.db",
+        help="Path a base de datos de Optuna (default: sqlite:///runs/optuna_trials/optuna_studies.db)",
+    )
+    parser.add_argument(
         "--output_dir",
         type=str,
         default="reports/hyperparameter_optimization",
@@ -1185,6 +1187,7 @@ def main():
                 config_path=config_path,
                 tickers=[t],
                 mlflow_tracking_uri=args.mlflow_uri,
+                optuna_db_path=args.optuna_db,
                 search_space_overrides=search_overrides or None,
                 batch_size_choices=batch_sizes_list,
             )
@@ -1261,6 +1264,7 @@ def main():
             config_path=config_path,
             tickers=tickers,
             mlflow_tracking_uri=args.mlflow_uri,
+            optuna_db_path=args.optuna_db,
             search_space_overrides=search_overrides or None,
             batch_size_choices=batch_sizes_list,
         )
@@ -1365,7 +1369,7 @@ def main():
 
         print(f"📊 Resultados en: {output_dir}")
         print(f"📈 MLflow UI: {args.mlflow_uri}")
-        print(f"🔍 Optuna Dashboard: optuna-dashboard sqlite:///optuna_studies.db")
+        print(f"🔍 Optuna Dashboard: optuna-dashboard {args.optuna_db}")
 
 
 if __name__ == "__main__":

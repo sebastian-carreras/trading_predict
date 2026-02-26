@@ -172,7 +172,7 @@ mlflow ui --backend-store-uri sqlite:///runs/mlflow_local/mlflow.db
 
 Por default:
 
-- `sqlite:///optuna_studies.db`
+- `sqlite:///runs/optuna_trials/optuna_studies.db`
 
 Continuar un estudio existente:
 

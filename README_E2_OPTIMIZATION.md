@@ -313,11 +313,11 @@ python scripts/optimization/optimize_e2_hyperparameters.py \
 pip install optuna kaleido plotly
 ```
 
-### Error: "Permission denied" en optuna_studies.db
+### Error: "Permission denied" en runs/optuna_trials/optuna_studies.db
 
 ```bash
 # Eliminar DB corrupta
-rm optuna_studies.db
+rm runs/optuna_trials/optuna_studies.db
 
 # Re-ejecutar optimización
 python scripts/optimization/optimize_e2_hyperparameters.py --n_trials 10

@@ -9,12 +9,11 @@
 ### Opción A — Local (sin Docker)
 
 ```bash
-# 1. Levantar MLflow UI local
-mlflow ui --port 5050
-
-# 2. Entrenar con tracking habilitado
-export MLFLOW_TRACKING_URI=http://localhost:5050
+# 1. Entrenar — MLflow guarda automáticamente en SQLite local
 python -m src.train_e1_simple_pipeline --tickers AAPL
+
+# 2. Levantar MLflow UI apuntando a la DB local
+mlflow ui --backend-store-uri sqlite:///runs/mlflow_local/mlflow.db --port 5050
 
 # 3. Ver dashboard en navegador
 open http://localhost:5050
@@ -22,6 +21,10 @@ open http://localhost:5050
 # 4. Generar reporte de alertas
 python -m src.dashboard.checker
 ```
+
+> **Nota:** No es necesario tener MLflow server corriendo para entrenar.
+> Los pipelines guardan métricas en `runs/mlflow_local/mlflow.db` automáticamente.
+> Al levantar MLflow UI después, se ven todos los runs anteriores.
 
 ### Opción B — Docker (Postgres + MinIO)
 
@@ -307,12 +310,12 @@ El context manager registra automáticamente:
 ### Modo Local (desarrollo)
 
 ```bash
-# MLflow UI con backend local (SQLite + filesystem)
-mlflow ui --port 5050
+# MLflow UI con backend local SQLite
+mlflow ui --backend-store-uri sqlite:///runs/mlflow_local/mlflow.db --port 5050
 ```
 
-- **Backend store:** `mlruns/` (SQLite)
-- **Artifact store:** `mlruns/` (filesystem)
+- **Backend store:** `runs/mlflow_local/mlflow.db` (SQLite)
+- **Artifact store:** `runs/mlflow_local/artifacts/` (filesystem)
 - **Adecuado para:** desarrollo, experimentación individual
 
 ### Modo Docker (producción local)
@@ -385,6 +388,10 @@ src/
 │   ├── __init__.py                    # Helpers: tags, timing, alerts
 │   ├── checker.py                     # CLI: genera reporte de salud
 │   └── integration.py                 # Context manager para pipelines
+runs/
+└── mlflow_local/
+    ├── mlflow.db                      # SQLite — backend store local (single source of truth)
+    └── artifacts/                     # Artifacts de los runs (modelos, configs, etc.)
 reports/
 ├── timing/
 │   └── timing_log.jsonl               # Log de tiempos (JSONL)
@@ -425,6 +432,18 @@ O en MLflow UI: seleccionar runs y usar "Compare".
 
 Sí. Editar [`src/config/dashboard_thresholds.yaml`](src/config/dashboard_thresholds.yaml) y re-ejecutar el checker.
 
+### ¿Dónde se guardan los datos de MLflow?
+
+En **`runs/mlflow_local/mlflow.db`** (SQLite). Es la single source of truth para métricas.
+Los pipelines y el checker usan la misma cascada de fallback:
+
+1. Servidor remoto (`MLFLOW_TRACKING_URI`) si está configurado y accesible
+2. SQLite local (`runs/mlflow_local/mlflow.db`)
+3. File store por defecto (`mlruns/`) como último recurso
+
+> **Nota:** La carpeta `mlruns/` ya no se usa. Fue eliminada porque contenía
+> experimentos corruptos. Todo el tracking se hace via SQLite local o servidor remoto.
+
 ---
 
 ## Referencias
@@ -435,9 +454,8 @@ Sí. Editar [`src/config/dashboard_thresholds.yaml`](src/config/dashboard_thresh
 - [README_E3.md](README_E3.md) — E3 Intraday pipeline
 - [README_E4.md](README_E4.md) — E4 Pairs pipeline
 - [README_DOCKER.md](README_DOCKER.md) — Infraestructura Docker
-- [README_CONTINUOUS_EVALUATION.md](README_CONTINUOUS_EVALUATION.md) — Evaluación continua
 
 ---
 
-**Última actualización:** Febrero 7, 2026
-**Versión:** 1.0
+**Última actualización:** Febrero 26, 2026
+**Versión:** 1.1

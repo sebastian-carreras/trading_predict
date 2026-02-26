@@ -218,7 +218,7 @@ python -m src.train_e1_pipeline --tickers GGAL.BA
 Los parámetros también están en la base de datos de Optuna:
 
 ```bash
-$ sqlite3 optuna_studies.db \
+$ sqlite3 runs/optuna_trials/optuna_studies.db \
   "SELECT param_name, param_value FROM trial_params WHERE trial_id=..."
 ```
 

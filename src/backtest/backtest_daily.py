@@ -377,7 +377,7 @@ def summarize_backtest(bt: pd.DataFrame, periods_per_year: int = 252) -> dict:
         'calmar': sanitize_value(float(calmar)),
         'profit_factor': sanitize_value(float(profit_factor), max_val=1e3),
         'win_rate': sanitize_value(float(win_rate)),
-        'hit_rate': sanitize_value(float(win_rate)),
+        'hit_rate': sanitize_value(float(win_rate)),  # alias for backward compat
         'num_trades': int(num_trades),
         'avg_turnover': sanitize_value(float(avg_turnover)),
         'total_costs': sanitize_value(float(total_costs)),

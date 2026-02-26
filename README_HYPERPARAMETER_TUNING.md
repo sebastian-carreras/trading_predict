@@ -231,7 +231,7 @@ python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 50
 - `reports/hyperparameter_optimization/e1_optimization_summary.txt`
 - `reports/hyperparameter_optimization/figures/*.png`
 - MLflow tracking: `runs/mlflow_local/mlflow.db` (SQLite)
-- Optuna database: `optuna_studies.db`
+- Optuna database: `runs/optuna_trials/optuna_studies.db`
 
 #### 2. Modo Rápido (Prueba con 3 tickers)
 
@@ -264,7 +264,7 @@ python scripts/optimization/optimize_e1_hyperparameters.py \
   --n_trials 20
 ```
 
-**Nota**: Optuna guarda progreso en `optuna_studies.db`, puedes interrumpir y continuar después
+**Nota**: Optuna guarda progreso en `runs/optuna_trials/optuna_studies.db`, puedes interrumpir y continuar después
 
 #### 5. Con Timeout (Limitar Tiempo)
 
@@ -584,7 +584,7 @@ python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 50
 ```
 
 **Resultado**: Parámetros óptimos en ~3 horas
-**Persiste en**: `optuna_studies.db` + `runs/mlflow_local/mlflow.db`
+**Persiste en**: `runs/optuna_trials/optuna_studies.db` + `runs/mlflow_local/mlflow.db`
 
 ### Paso 3: Analizar Resultados
 
@@ -687,7 +687,7 @@ Después de optimización de hiperparámetros, siguiente fase:
 
 Ver `README_E1.md` para roadmap completo del proyecto.
 # Iniciar dashboard
-optuna-dashboard sqlite:///optuna_studies.db
+optuna-dashboard sqlite:///runs/optuna_trials/optuna_studies.db
 
 # Abrir: http://localhost:8080
 ```
@@ -738,7 +738,7 @@ optuna-dashboard sqlite:///optuna_studies.db
 ps aux | grep optimize_e1
 
 # Si es necesario, eliminar lock
-rm optuna_studies.db-shm optuna_studies.db-wal
+rm runs/optuna_trials/optuna_studies.db-shm runs/optuna_trials/optuna_studies.db-wal
 ```
 
 ### Visualizaciones no se generan

@@ -344,11 +344,11 @@ docker compose exec -T airflow-scheduler airflow dags trigger \
 ### MLflow Tracking
 
 - **Experiment:** "E1_Simple"
-- **Metricas:** mae, rmse, ic, directional_accuracy, bt_sharpe, bt_cagr, bt_max_drawdown
-- **Parametros:** strategy, ticker, lookback_days, gru_units, learning_rate, etc.
+- **Metricas:** val_loss, mae, rmse, ic, directional_accuracy, bt_sharpe, bt_cagr, bt_max_drawdown
+- **Parametros:** strategy, ticker, lookback_days, horizon_days, gru_units, dropout, dense_units, learning_rate, batch_size, max_epochs, loss, early_stopping_patience, tau_buy, tau_sell, split_method, seed
 - **Artifacts:** models/, predictions/, backtest/, scalers/
 - **Fallback robusto:** si `MLFLOW_TRACKING_URI` remoto no está disponible, el pipeline usa tracking local automáticamente.
-- **Store aislado automático:** si `mlruns/` tiene experimentos malformados (por ejemplo, `meta.yaml` faltante), usa `runs/e1_simple/mlflow_store` para evitar errores ruidosos de inicialización.
+- **Store aislado automático:** si el file store por defecto tiene experimentos malformados, usa `runs/e1_simple/mlflow_store` como fallback adicional.
 - **Modo transparente offline→online:** por defecto, el fallback local prioriza SQLite en `runs/mlflow_local/mlflow.db` (artifacts en `runs/mlflow_local/artifacts`), para que luego MLflow pueda leer los mismos runs.
 
 #### Modo Transparente (CLI sin Docker + UI con Docker)
@@ -402,6 +402,37 @@ docker compose --profile mlflow up -d mlflow
 
 ---
 
+## Model Promotion (Champion/Challenger)
+
+El pipeline E1 Simple ahora integra el sistema de lifecycle con registro automático de candidatos y promoción opcional.
+
+### Registro automático de candidatos
+
+Al finalizar el entrenamiento de cada ticker, el pipeline:
+1. Ejecuta guardrails (Phase 1: rechaza modelos rotos)
+2. Registra el modelo como candidato en `models/registry.json`
+3. Opcionalmente, compara contra el champion actual y promueve si supera el composite score
+
+### Auto-promoción durante entrenamiento
+
+```bash
+python -m src.e1.train_simple_pipeline --auto-promote
+```
+
+### Promoción manual
+
+```bash
+# Dry-run (default): ver decisiones sin modificar
+python -m scripts.evaluation.promote_candidate --verbose
+
+# Ejecutar promociones
+python -m scripts.evaluation.promote_candidate --execute
+```
+
+Ver [README_E1.md → Model Promotion](README_E1.md#model-promotion-championchallenger) para detalles del composite score y configuración.
+
+---
+
 ## Comparación de las 3 versiones de E1
 
 Puedes comparar automáticamente **E1 Baseline**, **E1 Simple** y **E1 Conservative** con tiempo de entrenamiento y métricas clave.
@@ -438,6 +469,8 @@ Archivos de salida:
 - [README_AIRFLOW_USAGE.md](README_AIRFLOW_USAGE.md) - Uso de DAGs
 - [src/train_e1_simple_pipeline.py](src/train_e1_simple_pipeline.py) - Código fuente
 - [src/features/build_features_e1.py](src/features/build_features_e1.py) - Cálculo de features
+- [src/lifecycle/promotion.py](src/lifecycle/promotion.py) - Lógica de promoción champion/challenger
+- [scripts/evaluation/promote_candidate.py](scripts/evaluation/promote_candidate.py) - CLI de promoción
 - [src/config/base.yaml](src/config/base.yaml) - Configuración
 
 ---
@@ -452,5 +485,5 @@ Archivos de salida:
 
 ---
 
-**Última actualización:** Febrero 5, 2026
-**Versión:** 3.0 (features optimizadas, lookback 360d)
+**Última actualización:** Febrero 25, 2026
+**Versión:** 3.1 (lifecycle registration + champion/challenger promotion)

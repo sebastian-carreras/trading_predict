@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Script para inspeccionar y analizar la base de datos de Optuna (optuna_studies.db).
+Script para inspeccionar y analizar la base de datos de Optuna (runs/optuna_trials/optuna_studies.db).
 
 Proporciona consultas útiles para entender el progreso de la optimización
 sin usar la UI de optuna-dashboard.
@@ -15,7 +15,7 @@ import pandas as pd
 class OptunaDBAnalyzer:
     """Analizador de base de datos SQLite de Optuna."""
     
-    def __init__(self, db_path: str = "optuna_studies.db"):
+    def __init__(self, db_path: str = "runs/optuna_trials/optuna_studies.db"):
         self.db_path = db_path
         self.conn = sqlite3.connect(db_path)
         self.conn.row_factory = sqlite3.Row

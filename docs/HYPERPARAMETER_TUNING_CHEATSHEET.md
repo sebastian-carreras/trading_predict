@@ -109,7 +109,7 @@ mlflow ui --backend-store-uri sqlite:///runs/mlflow_local/mlflow.db --port 5001
 rm -rf runs/mlflow_local/*
 
 # Limpiar database Optuna (empezar desde cero)
-rm optuna_studies.db
+rm runs/optuna_trials/optuna_studies.db
 
 # Ver progreso en tiempo real
 # Terminal 1: Ejecutar optimización
@@ -117,7 +117,7 @@ python scripts/optimize_e1_hyperparameters.py --n_trials 50
 
 # Terminal 2: Ver en Optuna Dashboard (opcional)
 pip install optuna-dashboard
-optuna-dashboard sqlite:///optuna_studies.db
+optuna-dashboard sqlite:///runs/optuna_trials/optuna_studies.db
 # → http://localhost:8080
 
 # Terminal 3: Ver logs

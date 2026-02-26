@@ -46,7 +46,7 @@ dag = DAG(
     catchup=False,
     tags=['trading', 'e2', 'simple', 'lstm', 'simplified'],
     params={
-        'tickers': 'BBAR.BA, BMA.BA, EDN.BA, TGSUD.BA, LOMA.BA, NVDA, GOOGL, AMZN, META, NFLX',
+        'tickers': 'BBAR.BA, BMA.BA, EDN.BA, TGSU2.BA, LOMA.BA, NVDA, GOOGL, AMZN, META, NFLX',
         'skip_download': 'False',  # Permite reutilizar datos descargados por E2 Moderate
         'skip_cleaning': 'False',   # Permite reutilizar datos limpios
     },
