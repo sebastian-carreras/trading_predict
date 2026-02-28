@@ -187,12 +187,12 @@ runs/<estrategia>/<YYYYMMDD_HHMMSS>/
 
 | Componente | Estado | Notas |
 |------------|--------|-------|
-| E1 - Descarga datos |  | `src/data/download_daily.py` |
-| E1 - Features |  | 27 indicadores técnicos |
-| E1 - Modelo GRU |  | `src/models/e1_gru.py` |
-| E1 - Pipeline |  | `src/train_e1_pipeline.py` |
-| E1 - Backtest |  | Implementado: `src/backtest/daily.py` (costos + señales por `tau_buy`/`tau_sell`) |
-| E2 - Modelo + Pipeline |  | `src/models/e2_lstm.py`, `src/train_e2_pipeline.py` |
+| E1 - Descarga datos | X | `src/data/download_daily.py` |
+| E1 - Features | X | 27 indicadores técnicos |
+| E1 - Modelo GRU | X | `src/models/e1_gru.py` |
+| E1 - Pipeline | X | `src/train_e1_pipeline.py` |
+| E1 - Backtest | X | Implementado: `src/backtest/daily.py` (costos + señales por `tau_buy`/`tau_sell`) |
+| E2 - Modelo + Pipeline | X | `src/models/e2_lstm.py`, `src/train_e2_pipeline.py` |
 | E3 - Pipeline completo |  | `src/train_e3_pipeline.py` |
 | E3 - Backtest |  | Implementado: `src/backtest/intraday.py` (costos intradía) |
 | E4 - Implementación |  | Especificada, no codificada |
