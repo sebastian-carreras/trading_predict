@@ -729,10 +729,10 @@ La idea de esta checklist es que cada punto se pueda “tildar” con un entrega
 
 **Objetivo**: tener un dataset diario limpio y reproducible para un universo fijo de tickers.
 
-- [ ] Definir universo final (lista de tickers) y período total (mínimo 5–8 años si se puede; si no, lo máximo disponible).
-- [ ] Descargar OHLCV ajustado (si aplica).
+- [X] Definir universo final (lista de tickers) y período total (mínimo 5–8 años si se puede; si no, lo máximo disponible).
+- [X] Descargar OHLCV ajustado (si aplica).
 - [ ] (E3) Descargar OHLCV 5-min (p. ej. Yahoo Finance) para el universo intradía y guardar en `data/raw/intraday/`.
-- [ ] Estandarizar calendario: solo días de mercado; tratar faltantes (forward-fill solo donde tenga sentido, nunca en el target).
+- [X] Estandarizar calendario: solo días de mercado; tratar faltantes (forward-fill solo donde tenga sentido, nunca en el target).
 - [ ] Guardar “raw” y “clean” con versionado (parquet/csv + checksum + fecha de descarga).
 
 **Criterio de aceptación**
@@ -742,10 +742,10 @@ La idea de esta checklist es que cada punto se pueda “tildar” con un entrega
 
 **Objetivo**: implementar un generador de features determinístico (mismo input → mismo output).
 
-- [ ] Implementar retornos/log-retornos ($r_t$) y features rolling (retornos, volatilidad, ATR, medias móviles, MACD, RSI, Bollinger %B/bandwidth).
-- [ ] Verificar “as-of” time: toda feature en $t$ usa solo datos ≤ $t$.
+- [X] Implementar retornos/log-retornos ($r_t$) y features rolling (retornos, volatilidad, ATR, medias móviles, MACD, RSI, Bollinger %B/bandwidth).
+- [X] Verificar “as-of” time: toda feature en $t$ usa solo datos ≤ $t$.
 - [ ] (Opcional) Macro/fundamentales/sentimiento: incorporar solo si se puede garantizar timestamp de publicación + lag.
-- [ ] Normalización: definir qué se escala (features y/o target) y asegurar fit solo en train.
+- [X] Normalización: definir qué se escala (features y/o target) y asegurar fit solo en train.
 
 **Criterio de aceptación**
 - Test simple: para un rango temporal, recalcular features y confirmar igualdad bit a bit (o tolerancia numérica).
@@ -755,11 +755,10 @@ La idea de esta checklist es que cada punto se pueda “tildar” con un entrega
 
 **Objetivo**: armar datasets (X, y) por estrategia con ventanas temporales.
 
-- [ ] E1: construir $y_t^{(90)}$ y secuencias lookback=360.
-- [ ] E2: construir $y_t^{(20)}$ y secuencias lookback=60.
+- [X] E1: construir $y_t^{(90)}$ y secuencias lookback=360.
+- [X] E2: construir $y_t^{(20)}$ y secuencias lookback=60.
 - [ ] E3: construir $y_t^{(H)}$ con $H=6$ barras (30 min) y secuencias lookback=96 (5-min).
 - [ ] E4: construir spread $S_t$, Z-score $Z_t$, half-life, $\beta$ rolling y dataset k-NN.
-- [ ] Evitar solapamiento indebido: al usar $y_t^{(H)}$, recordar que utiliza $t+1..t+H$; eso afecta cómo se hace el split.
 
 **Criterio de aceptación**
 - Dimensiones correctas: (n_samples, lookback, n_features) y targets alineados.
@@ -769,8 +768,8 @@ La idea de esta checklist es que cada punto se pueda “tildar” con un entrega
 
 **Objetivo**: evaluar como serie temporal (sin shuffle) y evitar fuga por solapamiento.
 
-- [ ] Implementar walk-forward (expanding o rolling) con 3–5 folds.
-- [ ] Agregar embargo/purga simple: entre train y val/test dejar un gap de al menos $H$ días (para E1/E2).
+- [X] Implementar walk-forward (expanding o rolling) con 3–5 folds.
+- [X] Agregar embargo/purga simple: entre train y val/test dejar un gap de al menos $H$ días (para E1/E2).
 - [ ] Definir una métrica de selección por estrategia (cierre):
    - E1/E2: Sharpe neto en validación, con tope de turnover.
    - E3: Profit Factor neto y control de *time-in-market* (muy sensible a costos).
@@ -783,8 +782,8 @@ La idea de esta checklist es que cada punto se pueda “tildar” con un entrega
 
 **Objetivo**: entrenar GRU (E1) y LSTM (E2) sobre retornos.
 
-- [ ] Implementar GRU E1 con los hiperparámetros cerrados (y logging de seeds, versiones, y config).
-- [ ] Implementar LSTM E2 con los hiperparámetros cerrados.
+- [X] Implementar GRU E1 con los hiperparámetros cerrados (y logging de seeds, versiones, y config).
+- [X] Implementar LSTM E2 con los hiperparámetros cerrados.
 - [ ] EarlyStopping + ReduceLROnPlateau + gradient clipping.
 - [ ] Guardar checkpoints y el scaler del fold.
 
@@ -796,7 +795,7 @@ La idea de esta checklist es que cada punto se pueda “tildar” con un entrega
 
 **Objetivo**: tener un pipeline estable de selección y trading de pares.
 
-- [ ] Generar candidatos por sector/universo.
+- [X] Generar candidatos por sector/universo.
 - [ ] Test de cointegración (Engle-Granger y/o Johansen) y filtro por estabilidad.
 - [ ] Estimar $\beta$ rolling, calcular Z-score y half-life.
 - [ ] Implementar k-NN (k ∈ {5,10,20}) como confirmación (no reemplaza la regla Z).
@@ -810,7 +809,7 @@ La idea de esta checklist es que cada punto se pueda “tildar” con un entrega
 
 - [ ] Implementar simulador diario con: costo round-trip=10 bps, posiciones, rebalanceo y stops (si aplican).
 - [ ] (E3) Implementar simulador intradía con costo round-trip=20 bps, delay de ejecución 1 barra, y soporte long/short.
-- [ ] E1/E2: reglas por umbral ($\tau_{buy}$/$\tau_{sell}$) + filtros (RSI/MACD) + time stop.
+- [X] E1/E2: reglas por umbral ($\tau_{buy}$/$\tau_{sell}$) + filtros (RSI/MACD) + time stop.
 - [ ] E4: entradas/salidas por Z-score (±2.0 / 0.25 / stop 3.0 / time-stop 20 días), dollar-neutral.
 - [ ] Reportar métricas netas: CAGR, Sharpe/Sortino, MaxDD, Calmar, hit rate, Profit Factor, turnover.
 
@@ -1085,7 +1084,7 @@ timestamp, ticker, open, high, low, close, volume, [indicadores técnicos calcul
 
 **Próximos pasos sugeridos:**
 1. Definir los tickers específicos a operar (acciones argentinas, estadounidenses, bonos)
-2. Seleccionar proveedor de datos según presupuesto (Yahoo Finance gratuito, APIs premium como Alpha Vantage, Bloomberg)[1]
+2. Seleccionar proveedor de datos según presupuesto (Yahoo Finance gratuito, IOL)[1]
 3. Implementar módulo de adquisición y limpieza de datos (Fase 4 del proyecto, 80h)[1]
 4. Calcular y almacenar indicadores técnicos para cada estrategia
 5. Crear datasets específicos por estrategia con las features definidas
