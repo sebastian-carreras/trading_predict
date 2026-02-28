@@ -3,7 +3,6 @@ Descarga de datos OHLCV diarios para estrategias E1/E2/E4.
 
 Según especificación:
 - OHLCV ajustado (splits/dividendos)
-- Benchmark SPY
 - Calendario de mercado (solo días de trading)
 """
 
@@ -235,7 +234,7 @@ def main() -> None:
     root = project_root()
     config = load_yaml(root / "src/config/base.yaml")
 
-    # Universo global (sin benchmark forzado)
+    # Universo global
     tickers = list(config.get("universe", {}).get("tickers", []))
 
     if not tickers:

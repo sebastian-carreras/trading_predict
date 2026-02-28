@@ -93,7 +93,6 @@ Output (1): predicción de retorno a 20 días
 - `volume_zscore_20` - Z-score volumen normalizado
 
 **Contexto**:
-- `bench_ret_1d`, `bench_ret_20d` - Retornos benchmark
 - Opcional: FX, sentimiento diario
 
 ## Lógica de Señales de Trading

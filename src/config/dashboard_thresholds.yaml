@@ -188,47 +188,66 @@ strategies:
     description: "LSTM 2 capas, time split, horizon 20d"
 
     metrics:
+      # Umbrales alineados con E2 Moderate (misma escala, sin datos propios aún)
       ml_mae:
         direction: "lower_is_better"
-        green_max: 0.02
-        red_min: 0.04
+        green_max: 0.10
+        red_min: 0.18
         unit: ""
 
       ml_rmse:
         direction: "lower_is_better"
-        green_max: 0.03
-        red_min: 0.06
+        green_max: 0.13
+        red_min: 0.22
         unit: ""
 
       ml_ic:
         direction: "higher_is_better"
         green_min: 0.05
-        red_max: 0.02
+        red_max: -0.10
         unit: ""
 
       ml_directional_accuracy:
         direction: "higher_is_better"
         green_min: 0.55
-        red_max: 0.50
+        red_max: 0.48
         unit: "%"
 
       bt_sharpe:
         direction: "higher_is_better"
-        green_min: 0.8
-        red_max: 0.4
+        green_min: 0.5
+        red_max: 0.1
+        unit: ""
+
+      bt_sortino:
+        direction: "higher_is_better"
+        green_min: 0.4
+        red_max: 0.1
         unit: ""
 
       bt_cagr:
         direction: "higher_is_better"
-        green_min: 0.10
-        red_max: 0.0
+        green_min: 0.08
+        red_max: 0.02
         unit: "%"
 
       bt_max_drawdown:
         direction: "lower_is_better"
-        green_max: 0.15
-        red_min: 0.20
+        green_max: 0.45
+        red_min: 0.70
         unit: "%"
+
+      bt_calmar:
+        direction: "higher_is_better"
+        green_min: 0.20
+        red_max: 0.05
+        unit: ""
+
+      bt_profit_factor:
+        direction: "higher_is_better"
+        green_min: 1.10
+        red_max: 1.0
+        unit: ""
 
     timing:
       train_seconds:
@@ -247,47 +266,66 @@ strategies:
     description: "LSTM 2 capas, walk-forward, horizon 20d"
 
     metrics:
+      # Umbrales calibrados con distribución real de métricas (feb 2026)
       ml_mae:
         direction: "lower_is_better"
-        green_max: 0.02
-        red_min: 0.04
+        green_max: 0.10       # p25 ~ 0.085
+        red_min: 0.18         # p75 ~ 0.14, modelo pobre > 0.18
         unit: ""
 
       ml_rmse:
         direction: "lower_is_better"
-        green_max: 0.03
-        red_min: 0.06
+        green_max: 0.13       # p25 ~ 0.11
+        red_min: 0.22         # p75 ~ 0.18
         unit: ""
 
       ml_ic:
         direction: "higher_is_better"
-        green_min: 0.05
-        red_max: 0.02
+        green_min: 0.05       # correlación positiva significativa
+        red_max: -0.10        # anticorrelación fuerte
         unit: ""
 
       ml_directional_accuracy:
         direction: "higher_is_better"
         green_min: 0.55
-        red_max: 0.50
+        red_max: 0.48
         unit: "%"
 
       bt_sharpe:
         direction: "higher_is_better"
-        green_min: 0.8
-        red_max: 0.4
+        green_min: 0.5        # median ~ 0.33, top quartile > 0.75
+        red_max: 0.1
+        unit: ""
+
+      bt_sortino:
+        direction: "higher_is_better"
+        green_min: 0.4        # median ~ 0.24
+        red_max: 0.1
         unit: ""
 
       bt_cagr:
         direction: "higher_is_better"
-        green_min: 0.10
-        red_max: 0.0
+        green_min: 0.08       # median ~ 0.096
+        red_max: 0.02
         unit: "%"
 
       bt_max_drawdown:
         direction: "lower_is_better"
-        green_max: 0.15
-        red_min: 0.20
+        green_max: 0.45       # median ~ 0.49
+        red_min: 0.70         # peor caso real ~ 0.75
         unit: "%"
+
+      bt_calmar:
+        direction: "higher_is_better"
+        green_min: 0.20       # median ~ 0.21
+        red_max: 0.05
+        unit: ""
+
+      bt_profit_factor:
+        direction: "higher_is_better"
+        green_min: 1.10       # median ~ 1.08
+        red_max: 1.0          # < 1.0 = pierde plata
+        unit: ""
 
     timing:
       train_seconds:

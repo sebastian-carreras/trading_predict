@@ -2,47 +2,81 @@
 """
 Optimización de Hiperparámetros para Estrategia E2 usando Optuna + MLflow
 
-Este script busca automáticamente los mejores hiperparámetros para:
-- Thresholds de trading (tau_buy, tau_sell)
-- Arquitectura del modelo LSTM (lstm_units, dropout)
-- Hiperparámetros de entrenamiento (learning_rate, batch_size)
-- Filtros de entrada (rsi14_min, rsi14_max)
+Este script busca automáticamente los mejores hiperparámetros para la
+estrategia E2 Moderate. Entrena el modelo LSTM con split temporal de tuning
+(time_split) para cada combinación de parámetros y optimiza una métrica objetivo
+que combina Sharpe ratio, Profit Factor y CAGR.
+
+Nota metodológica: la validación walk-forward se reserva para la fase de
+entrenamiento/evaluación final, fuera del loop de Optuna.
+
+Parámetros optimizados y rangos de búsqueda:
+  Trading thresholds:
+    - tau_buy:  [0.015, 0.05] step=0.005 — Umbral de predicción para señal de compra
+    - tau_sell: [-0.01, 0.01]  step=0.005 — Umbral de predicción para señal de venta
+
+  Arquitectura LSTM (2 capas):
+    - lstm_units_1: [64, 256] step=32  — Unidades primera capa LSTM
+    - lstm_units_2: [32, 128] step=16  — Unidades segunda capa LSTM
+    - dropout:      [0.10, 0.40] step=0.05
+
+  Entrenamiento:
+    - learning_rate: [5e-5, 5e-3] log scale
+    - batch_size:    {32, 64, 128} categórico
+
+Métrica objetivo:
+  0.4 * Sharpe_mean + 0.3 * min(PF_mean, 3.0) + 0.3 * CAGR_mean * 10 + trade_penalty
+  (trade_penalty = -5 si <50% de tickers generan trades)
 
 Uso:
-    # Optimización local (por defecto, sin Docker)
-    python scripts/optimize_e2_hyperparameters.py --n_trials 10
-    
-    # Optimización rápida (3 tickers, 10 trials)
-    python scripts/optimize_e2_hyperparameters.py --n_trials 10 --quick
-    
-    # Optimizar solo un ticker
-    python scripts/optimize_e2_hyperparameters.py --ticker NVDA --n_trials 30
-    
+    # Optimización con defaults (MLflow local SQLite)
+    python scripts/optimization/optimize_e2_hyperparameters.py --n_trials 10
+
+    # Optimizar un ticker específico
+    python scripts/optimization/optimize_e2_hyperparameters.py --ticker NVDA --n_trials 30
+
+    # Optimización per-ticker (genera YAML de overrides por ticker)
+    python scripts/optimization/optimize_e2_hyperparameters.py --per_ticker --n_trials 30
+
     # Usar servidor MLflow remoto (Docker)
-    python scripts/optimize_e2_hyperparameters.py --n_trials 50 --mlflow_uri http://localhost:5050
-    
+    python scripts/optimization/optimize_e2_hyperparameters.py --n_trials 50 --mlflow_uri http://localhost:5050
+
     # Continuar estudio existente
-    python scripts/optimize_e2_hyperparameters.py --study_name e2_optimization --n_trials 20
-    
-    # Optimización por ticker (genera YAML con mejores params por ticker)
-    python scripts/optimize_e2_hyperparameters.py --per_ticker --n_trials 30
+    python scripts/optimization/optimize_e2_hyperparameters.py --study_name e2_optimization --n_trials 20
 
 Outputs:
-- MLflow tracking: runs/mlflow_local/mlflow.db (SQLite local) o servidor remoto
-- Optuna database: runs/optuna_trials/optuna_studies.db (persistencia)
+- MLflow tracking: MLFLOW_TRACKING_URI (.env) o runs/mlflow_local/mlflow.db (SQLite local)
+- Optuna database: runs/optuna_trials/optuna_studies.db (persistencia entre corridas)
 - Mejores parámetros: reports/hyperparameter_optimization/best_params_e2.yaml
-- Visualizaciones: reports/hyperparameter_optimization/figures/e2_*.png
+- Per-ticker overrides: reports/hyperparameter_optimization/e2_tuned_params_by_ticker.yaml
+- Visualizaciones: reports/hyperparameter_optimization/by_ticker/<TICKER>/figures/
 """
 
 import argparse
+import copy
+import io
+import logging
+import os
+import shutil
 import sys
+import tempfile
+import time
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Dict, List, Optional
 import warnings
+from optuna.trial import TrialState
 
 import numpy as np
 import pandas as pd
 import yaml
+
+# Carga opcional de variables de entorno desde .env (si python-dotenv está instalado).
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 # Optuna
 import optuna
@@ -58,15 +92,36 @@ import mlflow
 # Agregar src/ al path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.e2.train_pipeline import run_e2_for_ticker, load_ohlcv_csv
+from src.e2.train_pipeline import run_e2_for_ticker
 from src.utils import load_yaml, project_root
+
+
+DISPLAY_PARAM_KEYS = [
+    "tau_buy",
+    "tau_sell",
+    "lstm_units_1",
+    "lstm_units_2",
+    "dropout",
+    "learning_rate",
+    "batch_size",
+]
+
+OPTIMIZED_PARAM_KEYS = [
+    "tau_buy",
+    "tau_sell",
+    "lstm_units_1",
+    "lstm_units_2",
+    "dropout",
+    "learning_rate",
+    "batch_size",
+]
 
 
 class E2HyperparameterOptimizer:
     """
     Optimizador de hiperparámetros para estrategia E2 (LSTM).
     """
-    
+
     def __init__(
         self,
         config_path: Path,
@@ -87,7 +142,12 @@ class E2HyperparameterOptimizer:
         """
         self.config = load_yaml(config_path)
         self.root = project_root()
-        
+
+        # Reducir ruido de logs de librerías de infraestructura
+        logging.getLogger("alembic").setLevel(logging.WARNING)
+        logging.getLogger("mlflow").setLevel(logging.WARNING)
+        logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
+
         # Tickers
         if tickers:
             self.tickers = tickers
@@ -97,61 +157,93 @@ class E2HyperparameterOptimizer:
                 .get("tickers_by_strategy", {})
                 .get("e2_moderate", [])
             )
-        
+
         # MLflow - Configurar tracking URI
+        self.mlflow_enabled = True
+        mlflow_dir = self.root / "runs/mlflow_local"
+        mlflow_dir.mkdir(parents=True, exist_ok=True)
+        mlflow_db = mlflow_dir / "mlflow.db"
+        local_tracking_uri = f"sqlite:///{mlflow_db}"
+
         if mlflow_tracking_uri == "local":
-            # Modo local: usar SQLite backend (recomendado por MLflow)
-            mlflow_dir = self.root / "runs/mlflow_local"
-            mlflow_dir.mkdir(parents=True, exist_ok=True)
-            mlflow_db = mlflow_dir / "mlflow.db"
-            tracking_uri = f"sqlite:///{mlflow_db}"
+            tracking_uri = local_tracking_uri
             print(f"✓ Usando MLflow local (SQLite): {mlflow_db}")
         else:
-            # Modo remoto: usar servidor MLflow (ej: Docker)
             tracking_uri = mlflow_tracking_uri
             print(f"✓ Conectando a MLflow server: {tracking_uri}")
-        
+
         mlflow.set_tracking_uri(tracking_uri)
-        
+
         # Configurar experimento
         experiment_name = "E2_Hyperparameter_Optimization"
-        
-        # Forzar artifact location local para evitar conflictos con Docker
-        artifact_location = str(self.root / "runs" / "mlflow_local" / "artifacts")
-        
+
+        local_artifacts_dir = self.root / "runs" / "mlflow_local" / "artifacts"
+        local_artifacts_dir.mkdir(parents=True, exist_ok=True)
+        artifact_location = local_artifacts_dir.resolve().as_uri()
+
         try:
-            # Intentar establecer experimento (crearlo si no existe)
             mlflow.set_experiment(experiment_name)
-            print(f"✓ Usando experimento '{experiment_name}'")
+
+            # Verificar si el artifact_location del experimento existente es accesible.
+            # Si fue creado desde Docker (ej: /opt/airflow/...), log_artifact fallará localmente.
+            exp = mlflow.get_experiment_by_name(experiment_name)
+            if exp and exp.artifact_location:
+                _art_loc = exp.artifact_location
+                # Detectar paths de Docker/contenedor inaccesibles desde el host
+                if _art_loc.startswith("/opt/") or _art_loc.startswith("file:///opt/"):
+                    print(f"⚠️  Experimento '{experiment_name}' tiene artifact_location de Docker: {_art_loc}")
+                    print(f"   Recreando experimento con artifact_location local...")
+                    # Eliminar experimento viejo (soft delete) y recrear
+                    mlflow.delete_experiment(exp.experiment_id)
+                    mlflow.create_experiment(experiment_name, artifact_location=artifact_location)
+                    mlflow.set_experiment(experiment_name)
+                    print(f"✓ Experimento recreado con artifacts locales: {artifact_location}")
+
+            _test_run = mlflow.start_run(run_name="_init_test")
+            mlflow.end_run()
+            print(f"✓ MLflow habilitado: {tracking_uri} (experiment={experiment_name})")
         except Exception as e:
             error_msg = str(e)
-            print(f"⚠️  Error configurando experimento: {e}")
-            
+            print(f"⚠️  Error configurando MLflow: {e}")
+
+            # Fallback automático: si falla remoto, intentar local SQLite
+            if mlflow_tracking_uri != "local":
+                try:
+                    mlflow.set_tracking_uri(local_tracking_uri)
+                    mlflow.set_experiment(experiment_name)
+                    _test_run = mlflow.start_run(run_name="_init_test_local_fallback")
+                    mlflow.end_run()
+                    tracking_uri = local_tracking_uri
+                    print(f"✓ Fallback MLflow local habilitado: {tracking_uri} (experiment={experiment_name})")
+                    error_msg = ""
+                except Exception as fallback_exc:
+                    print(f"⚠️  Falló fallback local de MLflow: {fallback_exc}")
+
             # Si es un error de revisión de Alembic, recrear la base de datos
-            if "Can't locate revision" in error_msg or "alembic" in error_msg.lower():
+            if error_msg and ("Can't locate revision" in error_msg or "alembic" in error_msg.lower()):
                 if mlflow_tracking_uri == "local":
                     print(f"⚠️  Base de datos MLflow corrupta. Recreando...")
-                    # Eliminar base de datos corrupta
                     if mlflow_db.exists():
                         mlflow_db.unlink()
-                        print(f"✓ Base de datos antigua eliminada: {mlflow_db}")
-                    
-                    # Reconectar con base de datos nueva
                     mlflow.set_tracking_uri(tracking_uri)
-                    print(f"✓ Nueva base de datos MLflow creada")
-            
-            # Crear experimento manualmente con artifact location local
-            try:
-                mlflow.create_experiment(experiment_name, artifact_location=artifact_location)
-                mlflow.set_experiment(experiment_name)
-                print(f"✓ Experimento '{experiment_name}' creado")
-            except Exception as create_error:
-                # Si el experimento ya existe, solo establecerlo
-                mlflow.set_experiment(experiment_name)
-                print(f"✓ Experimento '{experiment_name}' configurado")
-        
+
+            # Crear experimento manualmente
+            if error_msg:
+                try:
+                    mlflow.create_experiment(experiment_name, artifact_location=artifact_location)
+                    mlflow.set_experiment(experiment_name)
+                    print(f"✓ Experimento '{experiment_name}' creado")
+                except Exception:
+                    try:
+                        mlflow.set_experiment(experiment_name)
+                        print(f"✓ Experimento '{experiment_name}' configurado")
+                    except Exception as final_exc:
+                        print(f"⚠️  MLflow no disponible, continuando sin tracking: {final_exc}")
+                        self.mlflow_enabled = False
+
         # Optuna
         self.optuna_db_path = optuna_db_path
+        self.current_run_min_trial_number: int | None = None
 
         # Search space defaults (se pueden sobreescribir vía CLI / DAG)
         self.tau_buy_bounds = {"min": 0.015, "max": 0.05, "step": 0.005}
@@ -160,18 +252,12 @@ class E2HyperparameterOptimizer:
         self.lstm_units_2_bounds = {"min": 32, "max": 128, "step": 16}
         self.dropout_bounds = {"min": 0.1, "max": 0.4, "step": 0.05}
         self.learning_rate_bounds = {"min": 5e-5, "max": 5e-3, "log": True}
-        self.rsi14_min_bounds = {"min": 25, "max": 40, "step": 5}
-        self.rsi14_max_bounds = {"min": 60, "max": 75, "step": 5}
 
         # Opciones de batch size
         default_batch_sizes = batch_size_choices or [32, 64, 128]
         cleaned_batch_sizes = sorted({int(b) for b in default_batch_sizes if int(b) > 0})
         if not cleaned_batch_sizes:
             raise ValueError("Se requiere al menos un batch_size válido para la optimización")
-        
-        # Walk-forward parameters (opcional - afecta validación)
-        self.n_folds_bounds = {"min": 3, "max": 7}  # Balance robustez vs costo computacional
-        self.internal_val_fraction_bounds = {"min": 0.10, "max": 0.25, "step": 0.05}  # Fracción validación interna
         self.batch_size_choices = cleaned_batch_sizes
 
         # Aplicar overrides si se proporcionaron
@@ -194,8 +280,6 @@ class E2HyperparameterOptimizer:
         update_bounds(self.lstm_units_2_bounds, "lstm_units_2")
         update_bounds(self.dropout_bounds, "dropout")
         update_bounds(self.learning_rate_bounds, "learning_rate")
-        update_bounds(self.rsi14_min_bounds, "rsi14_min")
-        update_bounds(self.rsi14_max_bounds, "rsi14_max")
 
         def validate_bounds(bounds: Dict[str, float], name: str) -> None:
             if bounds["min"] >= bounds["max"]:
@@ -211,17 +295,12 @@ class E2HyperparameterOptimizer:
         validate_bounds(self.lstm_units_2_bounds, "lstm_units_2")
         validate_bounds(self.dropout_bounds, "dropout")
         validate_bounds(self.learning_rate_bounds, "learning_rate")
-        validate_bounds(self.rsi14_min_bounds, "rsi14_min")
-        validate_bounds(self.rsi14_max_bounds, "rsi14_max")
-        
-        # Benchmark deshabilitado
-        self.benchmark_df = None
-        
+
         print(f"✓ Inicializado optimizador para {len(self.tickers)} tickers")
         print(f"  Tickers: {', '.join(self.tickers[:5])}{'...' if len(self.tickers) > 5 else ''}")
         print(f"  MLflow: {mlflow_tracking_uri}")
         print(f"  Optuna DB: {optuna_db_path}")
-    
+
     @staticmethod
     def _suggest_float(trial: optuna.Trial, name: str, bounds: Dict[str, float]) -> float:
         low = float(bounds["min"])
@@ -253,74 +332,56 @@ class E2HyperparameterOptimizer:
     def objective(self, trial: optuna.Trial) -> float:
         """
         Función objetivo para Optuna.
-        
+
         Entrena modelo con hiperparámetros sugeridos y retorna métrica a optimizar.
-        
+
         Args:
             trial: Trial de Optuna con suggestions
-            
+
         Returns:
-            Métrica objetivo (combinación de Sharpe ratio y profit factor)
+            Métrica objetivo (combinación de Sharpe ratio, profit factor y CAGR)
         """
-        
-        # Iniciar run de MLflow para este trial
-        with mlflow.start_run(run_name=f"trial_{trial.number}"):
-            
+
+        from contextlib import nullcontext
+        trial_start = time.perf_counter()
+        ctx = mlflow.start_run(run_name=f"trial_{trial.number}") if self.mlflow_enabled else nullcontext()
+        with ctx:
+
             # 1. SUGERIR HIPERPARÁMETROS
-            
+
             # Trading thresholds (críticos para backtesting)
             tau_buy = self._suggest_float(trial, "tau_buy", self.tau_buy_bounds)
             tau_sell = self._suggest_float(trial, "tau_sell", self.tau_sell_bounds)
-            
+
             # Arquitectura LSTM
             lstm_units_1 = self._suggest_int(trial, "lstm_units_1", self.lstm_units_1_bounds)
             lstm_units_2 = self._suggest_int(trial, "lstm_units_2", self.lstm_units_2_bounds)
-            
+
             # Regularización
             dropout = self._suggest_float(trial, "dropout", self.dropout_bounds)
-            
+
             # Entrenamiento
             learning_rate = self._suggest_float(trial, "learning_rate", self.learning_rate_bounds)
             batch_size = trial.suggest_categorical("batch_size", self.batch_size_choices)
-            
-            # Filtros RSI
-            rsi14_min = self._suggest_int(trial, "rsi14_min", self.rsi14_min_bounds)
-            rsi14_max = self._suggest_int(trial, "rsi14_max", self.rsi14_max_bounds)
-            
-            # Validar que rsi14_min < rsi14_max
-            if rsi14_min >= rsi14_max:
-                # Penalizar configuración inválida
-                mlflow.log_metric("objective_value", -100.0)
-                return -100.0
-            
-            # Walk-forward parameters
-            n_folds = self._suggest_int(trial, "n_folds", self.n_folds_bounds)
-            internal_val_fraction = self._suggest_float(trial, "internal_val_fraction", self.internal_val_fraction_bounds)
-            
+
             # Early stopping (fijar patience para consistencia)
             early_stopping_patience = 12
-            
+
             # 2. ACTUALIZAR CONFIG CON PARÁMETROS SUGERIDOS
-            
-            config_trial = self.config.copy()
-            
-            # Walk-forward splits (sobrescribir configuración base)
-            config_trial.setdefault("splits", {})["folds"] = n_folds
-            config_trial["splits"]["internal_val_fraction"] = internal_val_fraction
-            
+
+            config_trial = copy.deepcopy(self.config)
+
+            # Forzamos split temporal liviano durante el tuning
+            splits_cfg = dict(config_trial.get("splits", {}))
+            splits_cfg["method"] = "time_split"
+            config_trial["splits"] = splits_cfg
+
             # Thresholds
             config_trial["strategies"]["e2_moderate"]["thresholds"] = {
                 "tau_buy": tau_buy,
                 "tau_sell": tau_sell,
             }
-            
-            # Filtros
-            config_trial["strategies"]["e2_moderate"]["filters"] = {
-                **config_trial["strategies"]["e2_moderate"].get("filters", {}),
-                "rsi14_min": rsi14_min,
-                "rsi14_max": rsi14_max,
-            }
-            
+
             # Modelo
             config_trial["strategies"]["e2_moderate"]["model"] = {
                 **config_trial["strategies"]["e2_moderate"].get("model", {}),
@@ -330,26 +391,40 @@ class E2HyperparameterOptimizer:
                 "batch_size": batch_size,
                 "early_stopping_patience": early_stopping_patience,
             }
-            
+
             # 3. ENTRENAR PARA TODOS LOS TICKERS
-            
+
             results = []
             raw_dir = self.root / "data/raw/daily"
-            
+
             # Output temporal para este trial
             out_dir = self.root / "runs/optuna_trials" / f"e2_trial_{trial.number}"
             out_dir.mkdir(parents=True, exist_ok=True)
-            
+
             for ticker in self.tickers:
+                train_log_buffer = io.StringIO()
+                prev_e2_tuned = None
+                prev_tuned = None
                 try:
-                    result = run_e2_for_ticker(
-                        config=config_trial,
-                        ticker=ticker,
-                        raw_dir=raw_dir,
-                        out_dir=out_dir,
-                        benchmark_df=self.benchmark_df,
-                    )
-                    
+                    # Evitar contaminación de trials por YAMLs de parámetros tuneados
+                    prev_e2_tuned = os.environ.pop("E2_TUNED_PARAMS_PATH", None)
+                    prev_tuned = os.environ.pop("TUNED_PARAMS_PATH", None)
+                    try:
+                        with redirect_stdout(train_log_buffer), redirect_stderr(train_log_buffer):
+                            result = run_e2_for_ticker(
+                                config=config_trial,
+                                ticker=ticker,
+                                raw_dir=raw_dir,
+                                out_dir=out_dir,
+                                register_lifecycle=False,
+                                auto_promote=False,
+                            )
+                    finally:
+                        if prev_e2_tuned is not None:
+                            os.environ["E2_TUNED_PARAMS_PATH"] = prev_e2_tuned
+                        if prev_tuned is not None:
+                            os.environ["TUNED_PARAMS_PATH"] = prev_tuned
+
                     results.append({
                         "ticker": ticker,
                         "ic": result.get("ml_ic", 0),
@@ -360,9 +435,16 @@ class E2HyperparameterOptimizer:
                         "max_dd": result.get("bt_max_drawdown", 0),
                         "cagr": result.get("bt_cagr", 0),
                     })
-                    
+
                 except Exception as e:
-                    print(f"  ⚠️  Error en {ticker}: {e}")
+                    debug_excerpt = ""
+                    try:
+                        lines = train_log_buffer.getvalue().splitlines()
+                        if lines:
+                            debug_excerpt = " | logs: " + " || ".join(lines[-3:])
+                    except Exception:
+                        pass
+                    print(f"  ⚠️  Error en {ticker}: {e}{debug_excerpt}")
                     # Penalizar trials que fallan
                     results.append({
                         "ticker": ticker,
@@ -374,11 +456,11 @@ class E2HyperparameterOptimizer:
                         "max_dd": 1.0,
                         "cagr": -1.0,
                     })
-            
+
             # 4. CALCULAR MÉTRICAS AGREGADAS
-            
+
             df_results = pd.DataFrame(results)
-            
+
             # Métricas promedio
             ic_mean = df_results["ic"].mean()
             ic_median = df_results["ic"].median()
@@ -386,106 +468,117 @@ class E2HyperparameterOptimizer:
             sharpe_median = df_results["sharpe"].median()
             profit_factor_mean = df_results["profit_factor"].mean()
             cagr_mean = df_results["cagr"].mean()
-            
+
             # Métricas de consistencia
             ic_std = df_results["ic"].std()
             sharpe_std = df_results["sharpe"].std()
-            
+
             # Tickers con performance positiva
             ic_positive_pct = (df_results["ic"] > 0.05).sum() / len(df_results) * 100
             sharpe_positive_pct = (df_results["sharpe"] > 0).sum() / len(df_results) * 100
             profit_factor_above_1_pct = (df_results["profit_factor"] > 1.0).sum() / len(df_results) * 100
-            
+
             # Tickers con trades (evitar thresholds muy altos que no generan señales)
             tickers_with_trades = (df_results["num_trades"] > 0).sum()
             avg_num_trades = df_results["num_trades"].mean()
-            
+
             # 5. REGISTRAR EN MLFLOW (dentro del trial)
-            
-            # Registrar parámetros
-            mlflow.log_params({
-                "tau_buy": tau_buy,
-                "tau_sell": tau_sell,
-                "lstm_units_1": lstm_units_1,
-                "lstm_units_2": lstm_units_2,
-                "dropout": dropout,
-                "learning_rate": learning_rate,
-                "batch_size": batch_size,
-                "rsi14_min": rsi14_min,
-                "rsi14_max": rsi14_max,
-                "n_folds": n_folds,
-                "internal_val_fraction": internal_val_fraction,
-                "trial_number": trial.number,
-            })
-            
-            # Registrar métricas
-            mlflow.log_metrics({
-                "ic_mean": ic_mean,
-                "ic_median": ic_median,
-                "ic_std": ic_std,
-                "sharpe_mean": sharpe_mean,
-                "sharpe_median": sharpe_median,
-                "sharpe_std": sharpe_std,
-                "profit_factor_mean": profit_factor_mean,
-                "cagr_mean": cagr_mean,
-                "ic_positive_pct": ic_positive_pct,
-                "sharpe_positive_pct": sharpe_positive_pct,
-                "profit_factor_above_1_pct": profit_factor_above_1_pct,
-                "tickers_with_trades": tickers_with_trades,
-                "avg_num_trades": avg_num_trades,
-            })
-            
+
+            if self.mlflow_enabled:
+                mlflow.log_params({
+                    "tau_buy": tau_buy,
+                    "tau_sell": tau_sell,
+                    "lstm_units_1": lstm_units_1,
+                    "lstm_units_2": lstm_units_2,
+                    "dropout": dropout,
+                    "learning_rate": learning_rate,
+                    "batch_size": batch_size,
+                    "trial_number": trial.number,
+                })
+
+                mlflow.log_metrics({
+                    "ic_mean": ic_mean,
+                    "ic_median": ic_median,
+                    "ic_std": ic_std,
+                    "sharpe_mean": sharpe_mean,
+                    "sharpe_median": sharpe_median,
+                    "sharpe_std": sharpe_std,
+                    "profit_factor_mean": profit_factor_mean,
+                    "cagr_mean": cagr_mean,
+                    "ic_positive_pct": ic_positive_pct,
+                    "sharpe_positive_pct": sharpe_positive_pct,
+                    "profit_factor_above_1_pct": profit_factor_above_1_pct,
+                    "tickers_with_trades": tickers_with_trades,
+                    "avg_num_trades": avg_num_trades,
+                })
+
             # Guardar tabla de resultados como artifact
             results_path = out_dir / "trial_results.csv"
-            df_results.to_csv(results_path, index=False)
-            mlflow.log_artifact(str(results_path))
-            
+            try:
+                self._safe_write_file(results_path, lambda f: df_results.to_csv(f, index=False))
+            except Exception as write_exc:
+                print(f"  ⚠️  No se pudo escribir trial_results.csv: {write_exc}")
+            if self.mlflow_enabled:
+                try:
+                    mlflow.log_artifact(str(results_path))
+                except Exception as art_exc:
+                    print(f"  ⚠️  MLflow artifact no guardado: {art_exc}")
+
             # 6. DEFINIR MÉTRICA OBJETIVO
-            
+
             # Para E2 (moderada): balance entre Sharpe, Profit Factor y CAGR
             # Penalizar si pocos tickers generan trades
             trade_penalty = 0 if tickers_with_trades >= len(self.tickers) * 0.5 else -5
-            
+
             # Objetivo combinado: 40% Sharpe + 30% Profit Factor + 30% CAGR
-            objective_value = (
-                0.4 * sharpe_mean + 
+            objective_raw = (
+                0.4 * sharpe_mean +
                 0.3 * min(profit_factor_mean, 3.0) +  # Cap profit factor en 3 para evitar outliers
-                0.3 * cagr_mean * 10 +  # Escalar CAGR (típicamente 0.1-0.3)
-                trade_penalty
+                0.3 * cagr_mean * 10  # Escalar CAGR (típicamente 0.1-0.3)
             )
-            
-            # Registrar métrica objetivo
-            mlflow.log_metric("objective_value", objective_value)
-            
-            print(f"\nTrial {trial.number}:")
-            print(f"  tau_buy={tau_buy:.3f}, tau_sell={tau_sell:.3f}")
-            print(f"  lstm_units=[{lstm_units_1}, {lstm_units_2}], dropout={dropout:.2f}")
-            print(f"  rsi14=[{rsi14_min}, {rsi14_max}], lr={learning_rate:.6f}")
-            print(f"  IC mean={ic_mean:.4f}, Sharpe mean={sharpe_mean:.4f}")
-            print(f"  PF mean={profit_factor_mean:.4f}, CAGR mean={cagr_mean:.4f}")
-            print(f"  Tickers with trades: {tickers_with_trades}/{len(self.tickers)}")
-            print(f"  → Objective: {objective_value:.4f}")
-            
+            objective_value = objective_raw + trade_penalty
+
+            # Guardar en user_attrs para poder graficar la evolución sin la penalización
+            trial.set_user_attr("objective_raw", float(objective_raw))
+            trial.set_user_attr("trade_penalty", float(trade_penalty))
+
+            if self.mlflow_enabled:
+                mlflow.log_metric("objective_value", objective_value)
+                mlflow.log_metric("objective_raw", objective_raw)
+                mlflow.log_metric("trade_penalty", trade_penalty)
+                mlflow.log_metric("trial_duration_seconds", time.perf_counter() - trial_start)
+
+            trial_seconds = time.perf_counter() - trial_start
+            print(
+                f"[Trial {trial.number:04d}] obj={objective_value:+.4f} "
+                f"sharpe={sharpe_mean:+.4f} pf={profit_factor_mean:.4f} cagr={cagr_mean:+.4f} "
+                f"ic={ic_mean:+.4f} trades={tickers_with_trades}/{len(self.tickers)} "
+                f"time={trial_seconds:.1f}s | "
+                f"tau=({tau_buy:.3f},{tau_sell:.3f}) "
+                f"lstm=[{lstm_units_1},{lstm_units_2}] do={dropout:.2f} "
+                f"lr={learning_rate:.6f} bs={batch_size}"
+            )
+
             return objective_value
-    
+
     def optimize(
         self,
         n_trials: int = 50,
-        study_name: str = "e2_hyperparameter_optimization",
+        study_name: str = "e2_hyperparameter_optimization_timesplit",
         timeout: Optional[int] = None,
     ) -> optuna.Study:
         """
         Ejecuta optimización de hiperparámetros.
-        
+
         Args:
             n_trials: Número de trials a ejecutar
             study_name: Nombre del estudio (para continuar optimización)
             timeout: Timeout en segundos (None = sin límite)
-            
+
         Returns:
             Estudio de Optuna con resultados
         """
-        
+
         print(f"\n{'='*80}")
         print(f"OPTIMIZACIÓN DE HIPERPARÁMETROS E2")
         print(f"{'='*80}")
@@ -493,7 +586,10 @@ class E2HyperparameterOptimizer:
         print(f"Tickers: {len(self.tickers)}")
         print(f"Study: {study_name}")
         print(f"{'='*80}\n")
-        
+
+        # Reducir ruido de logs INFO de Optuna
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+
         # Crear o cargar estudio
         study = optuna.create_study(
             study_name=study_name,
@@ -502,7 +598,10 @@ class E2HyperparameterOptimizer:
             load_if_exists=True,  # Continuar si existe
             sampler=optuna.samplers.TPESampler(seed=42),  # Reproducibilidad
         )
-        
+
+        existing_numbers = [trial.number for trial in study.trials]
+        self.current_run_min_trial_number = (max(existing_numbers) + 1) if existing_numbers else 0
+
         # Ejecutar optimización
         study.optimize(
             self.objective,
@@ -510,9 +609,37 @@ class E2HyperparameterOptimizer:
             timeout=timeout,
             show_progress_bar=True,
         )
-        
+
         return study
-    
+
+    @staticmethod
+    def _safe_write_file(path: Path, write_fn, *, retries: int = 3, delay: float = 2.0) -> None:
+        """Write a file with retry logic to handle iCloud/file-provider timeouts.
+
+        Writes to a temp file first, then renames to avoid partial writes.
+        """
+        for attempt in range(1, retries + 1):
+            try:
+                tmp_fd, tmp_path = tempfile.mkstemp(
+                    dir=str(path.parent), suffix=path.suffix,
+                )
+                with os.fdopen(tmp_fd, "w") as f:
+                    write_fn(f)
+                shutil.move(tmp_path, str(path))
+                return
+            except (TimeoutError, OSError) as exc:
+                try:
+                    Path(tmp_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+                if attempt < retries:
+                    print(f"  ⚠️  Timeout escribiendo {path.name}, reintentando ({attempt}/{retries})...")
+                    time.sleep(delay)
+                else:
+                    raise RuntimeError(
+                        f"No se pudo escribir {path} después de {retries} intentos: {exc}"
+                    ) from exc
+
     def save_results(
         self,
         study: optuna.Study,
@@ -520,193 +647,326 @@ class E2HyperparameterOptimizer:
     ) -> None:
         """
         Guarda resultados de optimización.
-        
+
         Args:
             study: Estudio de Optuna
             output_dir: Directorio de salida
         """
-        
+
         output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         print(f"\n{'='*80}")
         print("GUARDANDO RESULTADOS")
         print(f"{'='*80}\n")
-        
-        # 1. Mejores parámetros en YAML
-        
-        best_params = study.best_params
-        best_value = study.best_value
-        
-        best_params_yaml = {
-            "optimization": {
-                "study_name": study.study_name,
-                "n_trials": len(study.trials),
-                "best_value": float(best_value),
-                "best_trial": study.best_trial.number,
-            },
-            "best_params": {k: float(v) if isinstance(v, (int, float)) else v 
-                           for k, v in best_params.items()},
-        }
-        
-        yaml_path = output_dir / "best_params_e2.yaml"
-        with open(yaml_path, "w") as f:
-            yaml.dump(best_params_yaml, f, default_flow_style=False, sort_keys=False)
-        
-        print(f"✓ Mejores parámetros guardados: {yaml_path}")
-        
+
+        completed_trials = [
+            t for t in study.trials if t.state == TrialState.COMPLETE and t.value is not None
+        ]
+        has_completed_trials = len(completed_trials) > 0
+
+        best_params: Dict = {}
+        best_value: Optional[float] = None
+        best_trial_number: Optional[int] = None
+
+        if has_completed_trials:
+            best_params = study.best_params
+            best_value = float(study.best_value)
+            best_trial_number = study.best_trial.number
+
+            best_params_yaml = {
+                "optimization": {
+                    "study_name": study.study_name,
+                    "n_trials": len(study.trials),
+                    "n_completed_trials": len(completed_trials),
+                    "best_value": best_value,
+                    "best_trial": best_trial_number,
+                },
+                "best_params": {
+                    k: float(v) if isinstance(v, (int, float)) else v
+                    for k, v in best_params.items()
+                },
+            }
+
+            yaml_path = output_dir / "best_params_e2.yaml"
+            self._safe_write_file(yaml_path, lambda f: yaml.dump(best_params_yaml, f, default_flow_style=False, sort_keys=False))
+
+            print(f"✓ Mejores parámetros guardados: {yaml_path}")
+        else:
+            print(
+                "⚠️  No hay trials completos aún; se omite best_params_e2.yaml "
+                "(se guardan trials y resumen parcial)."
+            )
+
         # 2. Todos los trials en CSV
-        
+
         df_trials = study.trials_dataframe()
         csv_path = output_dir / "e2_all_trials.csv"
-        df_trials.to_csv(csv_path, index=False)
-        
+        self._safe_write_file(csv_path, lambda f: df_trials.to_csv(f, index=False))
+
         print(f"✓ Todos los trials guardados: {csv_path}")
-        
+
         # 3. Visualizaciones
-        
+
         figures_dir = output_dir / "figures"
         figures_dir.mkdir(exist_ok=True)
-        
-        def save_figure(fig, name: str, description: str):
-            """Guarda figura en PNG (o HTML si kaleido falla)."""
-            png_path = figures_dir / f"{name}.png"
-            html_path = figures_dir / f"{name}.html"
-            
-            try:
-                # Intentar PNG primero
-                fig.write_image(str(png_path), width=1200, height=600)
-                print(f"✓ Gráfico PNG: {name}.png")
-            except Exception as e_png:
-                try:
-                    # Fallback a HTML interactivo
-                    fig.write_html(str(html_path))
-                    print(f"✓ Gráfico HTML: {name}.html (PNG falló: kaleido no disponible)")
-                except Exception as e_html:
-                    print(f"⚠️  Error generando {description}: {e_png}")
-        
-        # Optimization history
+
+        # Trials de la corrida actual (evita mezclar historia vieja del estudio)
+        if self.current_run_min_trial_number is not None:
+            df_run = df_trials[df_trials["number"] >= self.current_run_min_trial_number].copy()
+        else:
+            df_run = df_trials.copy()
+        df_run_complete = df_run[df_run["state"] == "COMPLETE"].copy()
+
+        run_csv_path = output_dir / "e2_run_trials.csv"
+        self._safe_write_file(run_csv_path, lambda f: df_run.to_csv(f, index=False))
+
+        df_all_complete = df_trials[df_trials["state"] == "COMPLETE"].copy()
+
+        # Optimization history (historial completo, objetivo penalizado)
         try:
-            fig = plot_optimization_history(study)
-            save_figure(fig, "e2_optimization_history", "optimization_history")
+            import plotly.graph_objects as go
+
+            hist_df = df_all_complete.sort_values("number")
+            fig = go.Figure()
+            fig.add_trace(
+                go.Scatter(
+                    x=hist_df["number"],
+                    y=hist_df["value"],
+                    mode="lines+markers",
+                    name="objective_value",
+                )
+            )
+            fig.update_layout(
+                title="Optimization History (Full Study) - Penalized Objective",
+                xaxis_title="Trial",
+                yaxis_title="Objective Value",
+                template="plotly_white",
+            )
+            fig.write_image(str(figures_dir / "e2_optimization_history.png"), width=1200, height=600)
+            print(f"✓ Gráfico: e2_optimization_history.png")
         except Exception as e:
             print(f"⚠️  Error generando optimization_history: {e}")
-        
-        # Parameter importances
+
+        # Optimization history (solo corrida actual)
         try:
-            fig = plot_param_importances(study)
-            save_figure(fig, "e2_param_importances", "param_importances")
+            import plotly.graph_objects as go
+
+            hist_df = df_run_complete.sort_values("number")
+            fig = go.Figure()
+            fig.add_trace(
+                go.Scatter(
+                    x=hist_df["number"],
+                    y=hist_df["value"],
+                    mode="lines+markers",
+                    name="objective_value",
+                )
+            )
+            fig.update_layout(
+                title="Optimization History (Current Run) - Penalized Objective",
+                xaxis_title="Trial",
+                yaxis_title="Objective Value",
+                template="plotly_white",
+            )
+            fig.write_image(str(figures_dir / "e2_optimization_history_current_run.png"), width=1200, height=600)
+            print(f"✓ Gráfico: e2_optimization_history_current_run.png")
+        except Exception as e:
+            print(f"⚠️  Error generando optimization_history_current_run: {e}")
+
+        # Optimization history sin penalización (historial completo)
+        try:
+            import plotly.graph_objects as go
+
+            hist_df = df_all_complete.sort_values("number")
+            raw_col = "user_attrs_objective_raw"
+            raw_values = hist_df[raw_col] if raw_col in hist_df.columns else hist_df["value"]
+
+            fig = go.Figure()
+            fig.add_trace(
+                go.Scatter(
+                    x=hist_df["number"],
+                    y=raw_values,
+                    mode="lines+markers",
+                    name="objective_raw",
+                )
+            )
+            fig.update_layout(
+                title="Optimization History (Full Study) - Raw Objective",
+                xaxis_title="Trial",
+                yaxis_title="Objective Raw (0.4*Sharpe + 0.3*PF + 0.3*CAGR*10)",
+                template="plotly_white",
+            )
+            fig.write_image(str(figures_dir / "e2_optimization_history_raw.png"), width=1200, height=600)
+            print(f"✓ Gráfico: e2_optimization_history_raw.png")
+        except Exception as e:
+            print(f"⚠️  Error generando optimization_history_raw: {e}")
+
+        # Optimization history sin penalización (solo corrida actual)
+        try:
+            import plotly.graph_objects as go
+
+            hist_df = df_run_complete.sort_values("number")
+            raw_col = "user_attrs_objective_raw"
+            raw_values = hist_df[raw_col] if raw_col in hist_df.columns else hist_df["value"]
+
+            fig = go.Figure()
+            fig.add_trace(
+                go.Scatter(
+                    x=hist_df["number"],
+                    y=raw_values,
+                    mode="lines+markers",
+                    name="objective_raw",
+                )
+            )
+            fig.update_layout(
+                title="Optimization History (Current Run) - Raw Objective",
+                xaxis_title="Trial",
+                yaxis_title="Objective Raw (0.4*Sharpe + 0.3*PF + 0.3*CAGR*10)",
+                template="plotly_white",
+            )
+            fig.write_image(str(figures_dir / "e2_optimization_history_raw_current_run.png"), width=1200, height=600)
+            print(f"✓ Gráfico: e2_optimization_history_raw_current_run.png")
+        except Exception as e:
+            print(f"⚠️  Error generando optimization_history_raw_current_run: {e}")
+
+        # Parameter importances (mostrar todos los hiperparámetros del espacio actual)
+        try:
+            import plotly.graph_objects as go
+
+            try:
+                importances = optuna.importance.get_param_importances(
+                    study,
+                    params=OPTIMIZED_PARAM_KEYS,
+                )
+            except Exception:
+                importances = {}
+
+            full_importances = {k: float(importances.get(k, 0.0)) for k in OPTIMIZED_PARAM_KEYS}
+
+            # Fallback: si todo quedó en cero, estimar importancia por correlación
+            if sum(full_importances.values()) == 0.0 and not df_run_complete.empty:
+                target_series = pd.to_numeric(df_run_complete["value"], errors="coerce")
+                for key in OPTIMIZED_PARAM_KEYS:
+                    col = f"params_{key}"
+                    if col not in df_run_complete.columns:
+                        continue
+                    param_series = df_run_complete[col]
+                    if param_series.dtype == object:
+                        codes, _ = pd.factorize(param_series)
+                        param_values = pd.Series(codes, index=param_series.index, dtype=float)
+                    else:
+                        param_values = pd.to_numeric(param_series, errors="coerce")
+
+                    valid = (~param_values.isna()) & (~target_series.isna())
+                    if valid.sum() < 3 or param_values[valid].nunique() <= 1:
+                        full_importances[key] = 0.0
+                        continue
+                    corr = param_values[valid].corr(target_series[valid], method="spearman")
+                    full_importances[key] = float(abs(corr)) if pd.notna(corr) else 0.0
+
+            fig = go.Figure(
+                go.Bar(
+                    x=list(full_importances.values()),
+                    y=list(full_importances.keys()),
+                    orientation="h",
+                )
+            )
+            fig.update_layout(
+                title="Parameter Importances (Current Search Space)",
+                xaxis_title="Importance",
+                yaxis_title="Hyperparameter",
+                template="plotly_white",
+            )
+            fig.write_image(str(figures_dir / "e2_param_importances.png"), width=1200, height=700)
+            print(f"✓ Gráfico: e2_param_importances.png")
         except Exception as e:
             print(f"⚠️  Error generando param_importances: {e}")
-        
+
         # Parallel coordinate
         try:
             fig = plot_parallel_coordinate(study)
-            # Parallel coordinate necesita más ancho
-            png_path = figures_dir / "e2_parallel_coordinate.png"
-            html_path = figures_dir / "e2_parallel_coordinate.html"
-            
-            try:
-                fig.write_image(str(png_path), width=1400, height=800)
-                print(f"✓ Gráfico PNG: e2_parallel_coordinate.png")
-            except Exception:
-                fig.write_html(str(html_path))
-                print(f"✓ Gráfico HTML: e2_parallel_coordinate.html (PNG falló: kaleido no disponible)")
+            fig.write_image(str(figures_dir / "e2_parallel_coordinate.png"), width=1400, height=800)
+            print(f"✓ Gráfico: e2_parallel_coordinate.png")
         except Exception as e:
             print(f"⚠️  Error generando parallel_coordinate: {e}")
-        
+
         # 4. Resumen en texto
-        
+
         summary_path = output_dir / "e2_optimization_summary.txt"
-        with open(summary_path, "w") as f:
+
+        def _write_summary(f):
             f.write("="*80 + "\n")
             f.write("OPTIMIZACIÓN DE HIPERPARÁMETROS E2 - RESUMEN\n")
             f.write("="*80 + "\n\n")
-            
             f.write(f"Study name: {study.study_name}\n")
             f.write(f"Total trials: {len(study.trials)}\n")
-            f.write(f"Best trial: #{study.best_trial.number}\n")
-            f.write(f"Best value: {best_value:.6f}\n\n")
-            
-            f.write("Mejores parámetros:\n")
-            f.write("-" * 40 + "\n")
-            for key, value in best_params.items():
-                f.write(f"  {key}: {value}\n")
-            
+            f.write(f"Completed trials: {len(completed_trials)}\n")
+
+            if has_completed_trials:
+                f.write(f"Best trial: #{best_trial_number}\n")
+                f.write(f"Best value: {best_value:.6f}\n\n")
+                f.write("Mejores parámetros:\n")
+                f.write("-" * 40 + "\n")
+                for key, value in best_params.items():
+                    f.write(f"  {key}: {value}\n")
+            else:
+                f.write("Best trial: N/A\n")
+                f.write("Best value: N/A\n\n")
+                f.write(
+                    "No se detectaron trials en estado COMPLETE. "
+                    "Ejecutar más trials o revisar interrupciones/errores.\n"
+                )
+
             f.write("\n" + "="*80 + "\n")
             f.write("TOP 10 TRIALS\n")
             f.write("="*80 + "\n\n")
-            
-            df_top = df_trials.nlargest(10, "value")
-            f.write(df_top.to_string(index=False))
-        
+
+            if "value" in df_trials.columns and not df_trials["value"].dropna().empty:
+                df_top = df_trials.nlargest(10, "value")
+                f.write(df_top.to_string(index=False))
+            else:
+                f.write("No hay valores objetivo disponibles aún.\n")
+
+        self._safe_write_file(summary_path, _write_summary)
+
         print(f"✓ Resumen guardado: {summary_path}")
-        
+
         print(f"\n{'='*80}")
         print("RESULTADOS GUARDADOS EXITOSAMENTE")
         print(f"{'='*80}\n")
 
 
-def optimize_per_ticker(
-    config_path: Path,
-    tickers: List[str],
-    n_trials_per_ticker: int,
-    mlflow_uri: str,
-    optuna_db: str,
-    output_dir: Path,
-) -> Dict[str, Dict]:
-    """
-    Ejecuta optimización independiente para cada ticker.
-    
-    Returns:
-        Dict con mejores parámetros por ticker
-    """
-    
-    print(f"\n{'='*80}")
-    print("OPTIMIZACIÓN POR TICKER (E2)")
-    print(f"{'='*80}")
-    print(f"Tickers: {len(tickers)}")
-    print(f"Trials por ticker: {n_trials_per_ticker}")
-    print(f"{'='*80}\n")
-    
-    results_by_ticker = {}
-    
-    for i, ticker in enumerate(tickers, 1):
-        print(f"\n[{i}/{len(tickers)}] Optimizando {ticker}...")
-        print("-" * 60)
-        
-        optimizer = E2HyperparameterOptimizer(
-            config_path=config_path,
-            tickers=[ticker],  # Un solo ticker
-            mlflow_tracking_uri=mlflow_uri,
-            optuna_db_path=optuna_db,
-        )
-        
-        study = optimizer.optimize(
-            n_trials=n_trials_per_ticker,
-            study_name=f"e2_optimization_{ticker}",
-        )
-        
-        # Guardar mejores parámetros (incluir TODOS los params de Optuna)
-        best_params = study.best_params.copy()
-        
-        # Asegurar que n_folds e internal_val_fraction estén presentes
-        if "n_folds" not in best_params:
-            best_params["n_folds"] = 5  # Fallback al default
-        if "internal_val_fraction" not in best_params:
-            best_params["internal_val_fraction"] = 0.15  # Fallback al default
-        
-        results_by_ticker[ticker] = best_params
-        
-        print(f"✓ {ticker} completado - Best value: {study.best_value:.4f}")
-    
-    # Guardar YAML con overrides por ticker
-    tuned_params_path = output_dir / "e2_tuned_params_by_ticker.yaml"
-    with open(tuned_params_path, "w") as f:
-        yaml.dump(results_by_ticker, f, default_flow_style=False, sort_keys=True)
-    
-    print(f"\n✓ Parámetros optimizados por ticker guardados: {tuned_params_path}")
-    
-    return results_by_ticker
+def _best_params_to_e2_tuned_schema(best_params: Dict) -> Dict:
+    """Convierte best_params flat de Optuna al esquema nested consumido por E2."""
+    schema: Dict[str, Dict] = {
+        "thresholds": {},
+        "model": {},
+    }
+
+    if "tau_buy" in best_params:
+        schema["thresholds"]["tau_buy"] = float(best_params["tau_buy"])
+    if "tau_sell" in best_params:
+        schema["thresholds"]["tau_sell"] = float(best_params["tau_sell"])
+
+    lstm_units = []
+    if "lstm_units_1" in best_params:
+        lstm_units.append(int(best_params["lstm_units_1"]))
+    if "lstm_units_2" in best_params:
+        lstm_units.append(int(best_params["lstm_units_2"]))
+    if lstm_units:
+        schema["model"]["lstm_units"] = lstm_units
+
+    if "dropout" in best_params:
+        schema["model"]["dropout"] = float(best_params["dropout"])
+    if "learning_rate" in best_params:
+        schema["model"]["learning_rate"] = float(best_params["learning_rate"])
+    if "batch_size" in best_params:
+        schema["model"]["batch_size"] = int(best_params["batch_size"])
+    if "early_stopping_patience" in best_params:
+        schema["model"]["early_stopping_patience"] = int(best_params["early_stopping_patience"])
+
+    return {
+        k: v for k, v in schema.items() if v
+    }
 
 
 def main():
@@ -728,8 +988,8 @@ def main():
     parser.add_argument(
         "--study_name",
         type=str,
-        default="e2_hyperparameter_optimization",
-        help="Nombre del estudio Optuna (default: e2_hyperparameter_optimization)",
+        default="e2_hyperparameter_optimization_timesplit",
+        help="Nombre del estudio Optuna (default: e2_hyperparameter_optimization_timesplit)",
     )
     parser.add_argument(
         "--ticker",
@@ -763,7 +1023,7 @@ def main():
         "--mlflow_uri",
         type=str,
         default="local",
-        help="MLflow tracking URI (default: local, use http://localhost:5050 for Docker)",
+        help="URI de MLflow tracking server (default: 'local' para SQLite)",
     )
     parser.add_argument(
         "--optuna_db",
@@ -775,14 +1035,8 @@ def main():
         "--output_dir",
         type=str,
         default="reports/hyperparameter_optimization",
-        help="Directorio de salida (default: reports/hyperparameter_optimization)",
+        help="Directorio de salida para resultados",
     )
-    
-    # ============================================================================
-    # Overrides del espacio de búsqueda (opcionales)
-    # ============================================================================
-    
-    # Thresholds de trading
     parser.add_argument(
         "--tau_buy_min",
         type=float,
@@ -807,8 +1061,6 @@ def main():
         default=None,
         help="Máximo para tau_sell (default: 0.01)",
     )
-    
-    # Arquitectura LSTM
     parser.add_argument(
         "--lstm_units_1_min",
         type=int,
@@ -833,8 +1085,6 @@ def main():
         default=None,
         help="Máximo para la segunda capa LSTM (default: 128)",
     )
-    
-    # Regularización
     parser.add_argument(
         "--dropout_min",
         type=float,
@@ -847,8 +1097,6 @@ def main():
         default=None,
         help="Máximo para dropout (default: 0.4)",
     )
-    
-    # Entrenamiento
     parser.add_argument(
         "--learning_rate_min",
         type=float,
@@ -865,188 +1113,162 @@ def main():
         "--batch_sizes",
         type=str,
         default=None,
-        help="Lista de batch sizes a probar (ej: '32,64,128')",
+        help="Lista de batch sizes separados por coma (default: 32,64,128)",
     )
-    
-    # Filtros RSI (específico E2)
-    parser.add_argument(
-        "--rsi14_min_min",
-        type=int,
-        default=None,
-        help="Mínimo para rsi14_min (default: 25)",
-    )
-    parser.add_argument(
-        "--rsi14_min_max",
-        type=int,
-        default=None,
-        help="Máximo para rsi14_min (default: 40)",
-    )
-    parser.add_argument(
-        "--rsi14_max_min",
-        type=int,
-        default=None,
-        help="Mínimo para rsi14_max (default: 60)",
-    )
-    parser.add_argument(
-        "--rsi14_max_max",
-        type=int,
-        default=None,
-        help="Máximo para rsi14_max (default: 75)",
-    )
-    
-    # Walk-forward validation
-    parser.add_argument(
-        "--n_folds_min",
-        type=int,
-        default=None,
-        help="Mínimo número de folds (default: 3)",
-    )
-    parser.add_argument(
-        "--n_folds_max",
-        type=int,
-        default=None,
-        help="Máximo número de folds (default: 7)",
-    )
-    parser.add_argument(
-        "--internal_val_fraction_min",
-        type=float,
-        default=None,
-        help="Mínimo fracción validación interna (default: 0.10)",
-    )
-    parser.add_argument(
-        "--internal_val_fraction_max",
-        type=float,
-        default=None,
-        help="Máximo fracción validación interna (default: 0.25)",
-    )
-    
+
     args = parser.parse_args()
-    
-    # Configurar paths
+
     root = project_root()
     config_path = root / args.config
-    output_dir = root / args.output_dir
-    
-    # ============================================================================
-    # Construir overrides del espacio de búsqueda desde CLI
-    # ============================================================================
-    
-    search_overrides: Dict[str, Dict[str, float]] = {}
-    
-    # Trading thresholds
-    if args.tau_buy_min is not None or args.tau_buy_max is not None:
-        search_overrides["tau_buy"] = {}
-        if args.tau_buy_min is not None:
-            search_overrides["tau_buy"]["min"] = args.tau_buy_min
-        if args.tau_buy_max is not None:
-            search_overrides["tau_buy"]["max"] = args.tau_buy_max
-    
-    if args.tau_sell_min is not None or args.tau_sell_max is not None:
-        search_overrides["tau_sell"] = {}
-        if args.tau_sell_min is not None:
-            search_overrides["tau_sell"]["min"] = args.tau_sell_min
-        if args.tau_sell_max is not None:
-            search_overrides["tau_sell"]["max"] = args.tau_sell_max
-    
-    # Arquitectura LSTM
-    if args.lstm_units_1_min is not None or args.lstm_units_1_max is not None:
-        search_overrides["lstm_units_1"] = {}
-        if args.lstm_units_1_min is not None:
-            search_overrides["lstm_units_1"]["min"] = args.lstm_units_1_min
-        if args.lstm_units_1_max is not None:
-            search_overrides["lstm_units_1"]["max"] = args.lstm_units_1_max
-    
-    if args.lstm_units_2_min is not None or args.lstm_units_2_max is not None:
-        search_overrides["lstm_units_2"] = {}
-        if args.lstm_units_2_min is not None:
-            search_overrides["lstm_units_2"]["min"] = args.lstm_units_2_min
-        if args.lstm_units_2_max is not None:
-            search_overrides["lstm_units_2"]["max"] = args.lstm_units_2_max
-    
-    # Regularización
-    if args.dropout_min is not None or args.dropout_max is not None:
-        search_overrides["dropout"] = {}
-        if args.dropout_min is not None:
-            search_overrides["dropout"]["min"] = args.dropout_min
-        if args.dropout_max is not None:
-            search_overrides["dropout"]["max"] = args.dropout_max
-    
-    # Entrenamiento
-    if args.learning_rate_min is not None or args.learning_rate_max is not None:
-        search_overrides["learning_rate"] = {}
-        if args.learning_rate_min is not None:
-            search_overrides["learning_rate"]["min"] = args.learning_rate_min
-        if args.learning_rate_max is not None:
-            search_overrides["learning_rate"]["max"] = args.learning_rate_max
-    
-    # Filtros RSI
-    if args.rsi14_min_min is not None or args.rsi14_min_max is not None:
-        search_overrides["rsi14_min"] = {}
-        if args.rsi14_min_min is not None:
-            search_overrides["rsi14_min"]["min"] = args.rsi14_min_min
-        if args.rsi14_min_max is not None:
-            search_overrides["rsi14_min"]["max"] = args.rsi14_min_max
-    
-    if args.rsi14_max_min is not None or args.rsi14_max_max is not None:
-        search_overrides["rsi14_max"] = {}
-        if args.rsi14_max_min is not None:
-            search_overrides["rsi14_max"]["min"] = args.rsi14_max_min
-        if args.rsi14_max_max is not None:
-            search_overrides["rsi14_max"]["max"] = args.rsi14_max_max
-    
-    # Walk-forward validation
-    if args.n_folds_min is not None or args.n_folds_max is not None:
-        search_overrides["n_folds"] = {}
-        if args.n_folds_min is not None:
-            search_overrides["n_folds"]["min"] = args.n_folds_min
-        if args.n_folds_max is not None:
-            search_overrides["n_folds"]["max"] = args.n_folds_max
-    
-    if args.internal_val_fraction_min is not None or args.internal_val_fraction_max is not None:
-        search_overrides["internal_val_fraction"] = {}
-        if args.internal_val_fraction_min is not None:
-            search_overrides["internal_val_fraction"]["min"] = args.internal_val_fraction_min
-        if args.internal_val_fraction_max is not None:
-            search_overrides["internal_val_fraction"]["max"] = args.internal_val_fraction_max
-    
-    # Batch sizes
-    batch_sizes_list = None
-    if args.batch_sizes:
-        batch_sizes_list = [int(b.strip()) for b in args.batch_sizes.split(",")]
-    
-    # Determinar tickers
-    if args.ticker:
-        tickers = [args.ticker]
-    elif args.tickers:
-        tickers = [t.strip() for t in args.tickers.split(",")]
-    else:
-        config = load_yaml(config_path)
-        tickers = list(
-            config.get("universe", {})
-            .get("tickers_by_strategy", {})
-            .get("e2_moderate", [])
-        )
-        
+
+    # Tickers
+    tickers = None
+    if args.tickers:
+        tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
+        tickers = list(dict.fromkeys(tickers))
+        if not tickers:
+            tickers = None
+        else:
+            print(f"✓ Override manual de tickers: {tickers}")
         if args.quick:
-            # Modo rápido: solo 3 tickers aleatorios
-            import random
-            random.seed(42)
-            tickers = random.sample(tickers, min(3, len(tickers)))
-            print(f"Modo rápido: usando {len(tickers)} tickers aleatorios")
-    
-    # Ejecutar optimización
+            print("⚠️  Ignorando --quick porque --tickers fue proporcionado")
+    elif args.ticker:
+        tickers = [args.ticker]
+    elif args.quick:
+        config = load_yaml(config_path)
+        all_tickers = config.get("universe", {}).get("tickers_by_strategy", {}).get("e2_moderate", [])
+        import random
+        random.seed(42)
+        tickers = random.sample(all_tickers, min(3, len(all_tickers)))
+        print(f"🚀 Modo rápido: usando {tickers}")
+
+    # Overrides del espacio de búsqueda
+    search_overrides: Dict[str, Dict[str, float]] = {}
+
+    def maybe_add_override(name: str, min_value: Optional[float], max_value: Optional[float]) -> None:
+        if min_value is None and max_value is None:
+            return
+        search_overrides[name] = {}
+        if min_value is not None:
+            search_overrides[name]["min"] = min_value
+        if max_value is not None:
+            search_overrides[name]["max"] = max_value
+
+    maybe_add_override("tau_buy", args.tau_buy_min, args.tau_buy_max)
+    maybe_add_override("tau_sell", args.tau_sell_min, args.tau_sell_max)
+    maybe_add_override("dropout", args.dropout_min, args.dropout_max)
+    maybe_add_override("learning_rate", args.learning_rate_min, args.learning_rate_max)
+    maybe_add_override("lstm_units_1", args.lstm_units_1_min, args.lstm_units_1_max)
+    maybe_add_override("lstm_units_2", args.lstm_units_2_min, args.lstm_units_2_max)
+
+    if search_overrides:
+        print(f"✓ Overrides de espacio de búsqueda: {search_overrides}")
+
+    batch_sizes_list: Optional[List[int]] = None
+    if args.batch_sizes:
+        try:
+            batch_sizes_list = [int(x.strip()) for x in args.batch_sizes.split(",") if x.strip()]
+        except ValueError as exc:
+            raise ValueError("--batch_sizes debe contener enteros separados por coma") from exc
+        if not batch_sizes_list:
+            batch_sizes_list = None
+        else:
+            print(f"✓ Batch sizes personalizados: {batch_sizes_list}")
+
+    # Crear optimizador
+    output_dir = root / args.output_dir
+
+    def _study_name_for_ticker(base_study_name: str, ticker_name: str) -> str:
+        suffix = f"__{ticker_name}"
+        return base_study_name if base_study_name.endswith(suffix) else f"{base_study_name}{suffix}"
+
+    t_start = time.time()
+
     if args.per_ticker:
-        # Optimización por ticker (genera YAML con overrides)
-        optimize_per_ticker(
-            config_path=config_path,
-            tickers=tickers,
-            n_trials_per_ticker=args.n_trials,
-            mlflow_uri=args.mlflow_uri,
-            optuna_db=args.optuna_db,
-            output_dir=output_dir,
+        # Resolver tickers si no se especificaron (usa universo E2)
+        if tickers is None:
+            cfg = load_yaml(config_path)
+            tickers = list(
+                cfg.get("universe", {})
+                .get("tickers_by_strategy", {})
+                .get("e2_moderate", [])
+            )
+        if not tickers:
+            raise ValueError("No hay tickers para optimizar (--tickers o config universo)")
+
+        per_ticker_dir = output_dir / "by_ticker"
+        per_ticker_dir.mkdir(parents=True, exist_ok=True)
+
+        overrides_by_ticker: Dict[str, Dict[str, Dict[str, object]]] = {}
+        meta_by_ticker: Dict[str, Dict[str, object]] = {}
+
+        for t in tickers:
+            print(f"\n{'='*80}")
+            print(f"OPTIMIZACIÓN POR TICKER: {t}")
+            print(f"{'='*80}\n")
+
+            optimizer = E2HyperparameterOptimizer(
+                config_path=config_path,
+                tickers=[t],
+                mlflow_tracking_uri=args.mlflow_uri,
+                optuna_db_path=args.optuna_db,
+                search_space_overrides=search_overrides or None,
+                batch_size_choices=batch_sizes_list,
+            )
+
+            study_name = _study_name_for_ticker(args.study_name, t)
+            study = optimizer.optimize(
+                n_trials=args.n_trials,
+                study_name=study_name,
+                timeout=args.timeout,
+            )
+
+            out_ticker = per_ticker_dir / t
+            optimizer.save_results(study, out_ticker)
+
+            bp = study.best_params
+            overrides_by_ticker[t] = _best_params_to_e2_tuned_schema(bp)
+            meta_by_ticker[t] = {
+                "study_name": study.study_name,
+                "best_value": float(study.best_value),
+                "best_trial": int(study.best_trial.number),
+                "n_trials": int(len(study.trials)),
+            }
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        tuned_path = output_dir / "e2_tuned_params_by_ticker.meta.yaml"
+        meta_payload = {
+            "strategy": "e2_moderate",
+            "generated_at": pd.Timestamp.utcnow().isoformat(),
+            "meta": meta_by_ticker,
+            "tickers": overrides_by_ticker,
+        }
+        E2HyperparameterOptimizer._safe_write_file(
+            tuned_path,
+            lambda f: yaml.dump(meta_payload, f, default_flow_style=False, sort_keys=False),
         )
+
+        tuned_compact_path = output_dir / "e2_tuned_params_by_ticker.yaml"
+        E2HyperparameterOptimizer._safe_write_file(
+            tuned_compact_path,
+            lambda f: yaml.dump(overrides_by_ticker, f, default_flow_style=False, sort_keys=False),
+        )
+
+        print(f"\n✓ YAML de tuned params por ticker (con meta): {tuned_path}")
+        print(f"✓ YAML consumible por training: {tuned_compact_path}")
+        print("Para usarlo en training: export E2_TUNED_PARAMS_PATH=<ruta_al_yaml>")
+
     else:
-        # Optimización global (mejores parámetros para todos)
+        study_name = args.study_name
+        if tickers and len(tickers) == 1:
+            single_ticker = tickers[0]
+            ticker_scoped_study_name = _study_name_for_ticker(args.study_name, single_ticker)
+            if ticker_scoped_study_name != args.study_name:
+                print(
+                    f"✓ Modo single-ticker: usando study aislado por ticker: {ticker_scoped_study_name}"
+                )
+            study_name = ticker_scoped_study_name
+
         optimizer = E2HyperparameterOptimizer(
             config_path=config_path,
             tickers=tickers,
@@ -1055,51 +1277,167 @@ def main():
             search_space_overrides=search_overrides or None,
             batch_size_choices=batch_sizes_list,
         )
-        
-        study = optimizer.optimize(
-            n_trials=args.n_trials,
-            study_name=args.study_name,
-            timeout=args.timeout,
-        )
-        
+
+        study = None
+        try:
+            study = optimizer.optimize(
+                n_trials=args.n_trials,
+                study_name=study_name,
+                timeout=args.timeout,
+            )
+        except KeyboardInterrupt:
+            print("\n⚠️  Optimización interrumpida por usuario. Guardando resultados parciales...")
+            study = optuna.load_study(study_name=study_name, storage=args.optuna_db)
+
+        if study is None:
+            study = optuna.load_study(study_name=study_name, storage=args.optuna_db)
+
         optimizer.save_results(study, output_dir)
 
-        # Si se optimiza un único ticker sin --per_ticker, guardar también en by_ticker
-        if len(tickers) == 1:
-            ticker = tickers[0]
-            by_ticker_dir = output_dir / "by_ticker" / ticker
-            by_ticker_dir.mkdir(parents=True, exist_ok=True)
+        completed_trials = [
+            trial for trial in study.trials if trial.state == TrialState.COMPLETE and trial.value is not None
+        ]
+        has_completed_trials = len(completed_trials) > 0
+        converted: Dict[str, Dict] = {}
 
-            per_ticker_path = by_ticker_dir / "best_params_e2.yaml"
-            with open(per_ticker_path, "w") as f:
-                yaml.dump(study.best_params, f, default_flow_style=False, sort_keys=False)
+        if tickers and has_completed_trials:
+            bp = study.best_params
+            converted = _best_params_to_e2_tuned_schema(bp)
 
-            # Actualizar YAML agregado por ticker
-            agg_path = output_dir / "e2_tuned_params_by_ticker.yaml"
+            # Sincronización por defecto: aplicar best global a todos los tickers evaluados.
+            agg_compact_path = output_dir / "e2_tuned_params_by_ticker.yaml"
             try:
-                with open(agg_path, "r") as f:
-                    agg_data = yaml.safe_load(f) or {}
+                with open(agg_compact_path, "r") as f:
+                    agg_compact = yaml.safe_load(f) or {}
             except FileNotFoundError:
-                agg_data = {}
+                agg_compact = {}
 
-            agg_data[ticker] = study.best_params
-            with open(agg_path, "w") as f:
-                yaml.dump(agg_data, f, default_flow_style=False, sort_keys=False)
+            for ticker_name in tickers:
+                agg_compact[ticker_name] = converted
 
-            print(f"✓ Parámetros por ticker guardados en: {per_ticker_path}")
-            print(f"✓ YAML agregado actualizado: {agg_path}")
-        
+            E2HyperparameterOptimizer._safe_write_file(
+                agg_compact_path,
+                lambda f: yaml.dump(agg_compact, f, default_flow_style=False, sort_keys=False),
+            )
+
+            agg_meta_path = output_dir / "e2_tuned_params_by_ticker.meta.yaml"
+            try:
+                with open(agg_meta_path, "r") as f:
+                    agg_meta = yaml.safe_load(f) or {}
+            except FileNotFoundError:
+                agg_meta = {}
+
+            if not agg_meta:
+                agg_meta = {
+                    "strategy": "e2_moderate",
+                    "generated_at": pd.Timestamp.utcnow().isoformat(),
+                    "meta": {},
+                    "tickers": {},
+                }
+
+            for ticker_name in tickers:
+                agg_meta.setdefault("meta", {})[ticker_name] = {
+                    "study_name": study.study_name,
+                    "best_value": float(study.best_value),
+                    "best_trial": int(study.best_trial.number),
+                    "n_trials": int(len(study.trials)),
+                }
+                agg_meta.setdefault("tickers", {})[ticker_name] = converted
+
+            agg_meta["generated_at"] = pd.Timestamp.utcnow().isoformat()
+            E2HyperparameterOptimizer._safe_write_file(
+                agg_meta_path,
+                lambda f: yaml.dump(agg_meta, f, default_flow_style=False, sort_keys=False),
+            )
+
+            print(f"\n✓ YAML por ticker sincronizado (best global): {agg_compact_path}")
+            print(f"✓ YAML meta sincronizado: {agg_meta_path}")
+        elif tickers:
+            print("\n⚠️  No hay trials completos; no se sincronizó YAML por ticker.")
+
+        # Si solo hay un ticker y no se usó --per_ticker, guardar también en by_ticker
+        if tickers and len(tickers) == 1 and has_completed_trials:
+            t = tickers[0]
+            per_ticker_dir = output_dir / "by_ticker" / t
+            per_ticker_dir.mkdir(parents=True, exist_ok=True)
+
+            per_ticker_path = per_ticker_dir / "best_params_e2.yaml"
+            E2HyperparameterOptimizer._safe_write_file(
+                per_ticker_path,
+                lambda f: yaml.dump(converted, f, default_flow_style=False, sort_keys=False),
+            )
+
+            # Actualizar agregados compactos
+            agg_compact_path = output_dir / "e2_tuned_params_by_ticker.yaml"
+            try:
+                with open(agg_compact_path, "r") as f:
+                    agg_compact = yaml.safe_load(f) or {}
+            except FileNotFoundError:
+                agg_compact = {}
+            agg_compact[t] = converted
+            E2HyperparameterOptimizer._safe_write_file(
+                agg_compact_path,
+                lambda f: yaml.dump(agg_compact, f, default_flow_style=False, sort_keys=False),
+            )
+
+            # Actualizar meta
+            agg_meta_path = output_dir / "e2_tuned_params_by_ticker.meta.yaml"
+            try:
+                with open(agg_meta_path, "r") as f:
+                    agg_meta = yaml.safe_load(f) or {}
+            except FileNotFoundError:
+                agg_meta = {}
+            if not agg_meta:
+                agg_meta = {"strategy": "e2_moderate", "generated_at": pd.Timestamp.utcnow().isoformat(), "meta": {}, "tickers": {}}
+            agg_meta.setdefault("meta", {})[t] = {
+                "study_name": study.study_name,
+                "best_value": float(study.best_value),
+                "best_trial": int(study.best_trial.number),
+                "n_trials": int(len(study.trials)),
+            }
+            agg_meta.setdefault("tickers", {})[t] = converted
+            agg_meta["generated_at"] = pd.Timestamp.utcnow().isoformat()
+            E2HyperparameterOptimizer._safe_write_file(
+                agg_meta_path,
+                lambda f: yaml.dump(agg_meta, f, default_flow_style=False, sort_keys=False),
+            )
+
+            print(f"\n✓ Parámetros por ticker guardados en: {per_ticker_path}")
+            print(f"✓ YAML agregados actualizados: {agg_compact_path} y {agg_meta_path}")
+
         # Mostrar resumen final
+
+        print(f"\n{'='*80}")
+        print("MEJORES PARÁMETROS ENCONTRADOS")
+        print(f"{'='*80}\n")
+
+        if completed_trials:
+            displayed = False
+            for key in DISPLAY_PARAM_KEYS:
+                if key in study.best_params:
+                    print(f"  {key}: {study.best_params[key]}")
+                    displayed = True
+            if not displayed:
+                for key, value in study.best_params.items():
+                    print(f"  {key}: {value}")
+
+            print(f"\nMejor valor objetivo: {study.best_value:.6f}")
+            print(f"Trial #{study.best_trial.number}")
+        else:
+            print("No hay trials completos; se guardó resumen parcial.")
+
         print(f"\n{'='*80}")
         print("OPTIMIZACIÓN COMPLETADA")
-        print(f"{'='*80}")
-        print(f"Best trial: #{study.best_trial.number}")
-        print(f"Best value: {study.best_value:.6f}")
-        print("\nMejores parámetros:")
-        for key, value in study.best_params.items():
-            print(f"  {key}: {value}")
-        print(f"\nResultados guardados en: {output_dir}")
         print(f"{'='*80}\n")
+
+        print(f"📊 Resultados en: {output_dir}")
+        print(f"📈 MLflow UI: {args.mlflow_uri}")
+        print(f"🔍 Optuna Dashboard: optuna-dashboard {args.optuna_db}")
+
+        elapsed = time.time() - t_start
+        hours, remainder = divmod(int(elapsed), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        print(f"\n⏱  Tiempo total de optimización: {hours:02d}h {minutes:02d}m {seconds:02d}s ({elapsed:.1f}s)")
 
 
 if __name__ == "__main__":

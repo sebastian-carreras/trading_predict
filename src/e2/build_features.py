@@ -150,8 +150,10 @@ def compute_e2_features(df: pd.DataFrame) -> pd.DataFrame:
     # ── Riesgo / Asimetría (1 feature) ────────────────────────────────
 
     # skew_ret_20d: Asimetría de retornos en ventana de 20 días
-    # Positivo → cola derecha (más subidas extremas), negativo → cola izquierda (más caídas)
-    # Útil para detectar regímenes de riesgo y anticipar cambios de tendencia
+    # Skewness = 0 — perfectamente simétrica, como la normal (aqui no pasa)
+    # Skewness > 0 — cola más larga hacia la derecha, hay más valores extremos positivos (rallies grandes)
+    # Skewness < 0 — cola más larga hacia la izquierda, hay más valores extremos negativos (crashes)
+
     out["skew_ret_20d"] = out["ret_1d"].rolling(20).skew()
 
     return out

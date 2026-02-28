@@ -7,8 +7,7 @@ project:
   seed: 42
 
 universe:
-  benchmark: "SPY"
-  # Universo global (para descarga/limpieza). Es la unión de E1 + E2 (+ benchmark).
+  # Universo global (para descarga/limpieza). Es la unión de E1 + E2.
   tickers:
     - "YPFD.BA"
     - "GGAL.BA"

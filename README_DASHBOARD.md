@@ -18,8 +18,14 @@ mlflow ui --backend-store-uri sqlite:///runs/mlflow_local/mlflow.db --port 5050
 # 3. Ver dashboard en navegador
 open http://localhost:5050
 
-# 4. Generar reporte de alertas
+# 4. Generar reporte de alertas (vista summary)
 python -m src.dashboard.checker
+
+# 5. Vista per-ticker de una estrategia
+python -m src.dashboard.checker --view ticker --strategy e1_conservative
+
+# 6. Historial de un ticker específico
+python -m src.dashboard.checker --view history --strategy e1_conservative --ticker AAPL
 ```
 
 > **Nota:** No es necesario tener MLflow server corriendo para entrenar.
@@ -42,37 +48,6 @@ open http://localhost:9001   # user: minio / pass: minio123
 python -m src.dashboard.checker
 ```
 
-**Output del checker:**
-
-```
-======================================================================
-  E1 Simple
-  GRU 1 capa, time split, horizon 90d
-======================================================================
-
-  ⏱ Timing
-  ────────────────────────────────────────────────────────────────
-  Metric                            Avg     Last  Alert
-  ────────────────────────────────────────────────────────────────
-  train_seconds                    45.2     42.1  🟢
-  predict_seconds                   0.3      0.2  🟢
-
-  🤖 ML
-  ────────────────────────────────────────────────────────────────
-  ml_mae                         0.0280   0.0250  🟢
-  ml_rmse                        0.0420   0.0380  🟢
-  ml_ic                          0.0650   0.0720  🟢
-  ml_directional_accuracy        0.5600   0.5800  🟢
-
-  📈 Trading
-  ────────────────────────────────────────────────────────────────
-  bt_sharpe                      0.8500   1.0200  🟢
-  bt_cagr                        0.0900   0.1100  🟢
-  bt_max_drawdown                0.1200   0.1400  🟢
-
-✓ Report saved: reports/dashboard/dashboard_report_20260207_120000.csv
-```
-
 ---
 
 ## Arquitectura
@@ -92,8 +67,10 @@ python -m src.dashboard.checker
        │
        ▼
 ┌──────────────┐
-│   Checker    │──── reports/dashboard/dashboard_report_*.csv
-│   CLI        │
+│   Checker    │──── reports/dashboard/
+│   CLI        │     ├── dashboard_report_*.csv
+│              │     ├── ticker_report_*.csv
+│              │     └── history_report_*.csv
 └──────────────┘
 ```
 
@@ -119,8 +96,11 @@ python -m src.dashboard.checker
 | 🤖 ML | `ml_ic` | Information Coefficient (Spearman) |
 | 🤖 ML | `ml_directional_accuracy` | % aciertos de dirección |
 | 📈 Trading | `bt_sharpe` | Sharpe ratio |
+| 📈 Trading | `bt_sortino` | Sortino ratio |
 | 📈 Trading | `bt_cagr` | Retorno anualizado compuesto |
 | 📈 Trading | `bt_max_drawdown` | Máxima caída desde pico |
+| 📈 Trading | `bt_calmar` | Calmar ratio (CAGR / Max DD) |
+| 📈 Trading | `bt_profit_factor` | Profit factor (gross profit / gross loss) |
 
 ### Estadísticas Mostradas
 
@@ -134,32 +114,34 @@ Para cada métrica se muestra:
 
 ## Umbrales de Alerta por Estrategia
 
-### E1 Simple
+### E1 Simple / E1 Conservative
+
+Umbrales calibrados con distribución real de métricas (feb 2026).
 
 | Métrica | 🟢 Verde | 🟡 Amarillo | 🔴 Rojo |
 |---------|----------|-------------|---------|
-| MAE | ≤ 0.03 | 0.03–0.06 | > 0.06 |
-| RMSE | ≤ 0.05 | 0.05–0.08 | > 0.08 |
-| IC | ≥ 0.05 | 0.02–0.05 | < 0.02 |
+| MAE | ≤ 0.15 | 0.15–0.35 | > 0.35 |
+| RMSE | ≤ 0.20 | 0.20–0.45 | > 0.45 |
+| IC | ≥ 0.10 | -0.05–0.10 | < -0.05 |
 | Dir. Accuracy | ≥ 55% | 50–55% | < 50% |
-| Sharpe | ≥ 1.0 | 0.5–1.0 | < 0.5 |
-| CAGR | ≥ 8% | 0–8% | < 0% |
-| Max Drawdown | ≤ 15% | 15–25% | > 25% |
-| Train time | ≤ 2 min | 2–5 min | > 5 min |
+| Sharpe | ≥ 1.0 | 0.3–1.0 | < 0.3 |
+| Sortino | ≥ 1.2 | 0.3–1.2 | < 0.3 |
+| CAGR (Simple) | ≥ 8% | 0–8% | < 0% |
+| CAGR (Conservative) | ≥ 0% | -5%–0% | < -5% |
+| Max Drawdown | ≤ 30% | 30–55% | > 55% |
+| Calmar | ≥ 0.5 | 0.1–0.5 | < 0.1 |
+| Profit Factor | ≥ 1.3 | 1.0–1.3 | < 1.0 |
+| Train time (Simple) | ≤ 2 min | 2–5 min | > 5 min |
+| Train time (Conservative) | ≤ 10 min | 10–20 min | > 20 min |
 
-### E1 Conservative
-
-| Métrica | 🟢 Verde | 🟡 Amarillo | 🔴 Rojo |
-|---------|----------|-------------|---------|
-| Sharpe | ≥ 0.6 | 0.3–0.6 | < 0.3 |
-| Max Drawdown | ≤ 15% | 15–25% | > 25% |
-| Train time | ≤ 10 min | 10–20 min | > 20 min |
-
-### E2 Simple / Moderate
+### E2 Simple / E2 Moderate
 
 | Métrica | 🟢 Verde | 🟡 Amarillo | 🔴 Rojo |
 |---------|----------|-------------|---------|
 | MAE | ≤ 0.02 | 0.02–0.04 | > 0.04 |
+| RMSE | ≤ 0.03 | 0.03–0.06 | > 0.06 |
+| IC | ≥ 0.05 | 0.02–0.05 | < 0.02 |
+| Dir. Accuracy | ≥ 55% | 50–55% | < 50% |
 | Sharpe | ≥ 0.8 | 0.4–0.8 | < 0.4 |
 | Max Drawdown | ≤ 15% | 15–20% | > 20% |
 
@@ -167,6 +149,10 @@ Para cada métrica se muestra:
 
 | Métrica | 🟢 Verde | 🟡 Amarillo | 🔴 Rojo |
 |---------|----------|-------------|---------|
+| MAE | ≤ 0.001 | 0.001–0.003 | > 0.003 |
+| RMSE | ≤ 0.002 | 0.002–0.005 | > 0.005 |
+| IC | ≥ 0.03 | 0.01–0.03 | < 0.01 |
+| Dir. Accuracy | ≥ 52% | 48–52% | < 48% |
 | Profit Factor | ≥ 1.4 | 1.0–1.4 | < 1.0 |
 | Max DD Intraday | ≤ 3% | 3–5% | > 5% |
 
@@ -177,8 +163,148 @@ Para cada métrica se muestra:
 | Sharpe | ≥ 1.0 | 0.5–1.0 | < 0.5 |
 | Max Drawdown | ≤ 10% | 10–20% | > 20% |
 | Win Rate | ≥ 55% | 45–55% | < 45% |
+| Total Return | ≥ 5% | 0–5% | < 0% |
 
 > Los umbrales se configuran en [`src/config/dashboard_thresholds.yaml`](src/config/dashboard_thresholds.yaml)
+
+---
+
+## Checker CLI
+
+El checker tiene 3 vistas: **summary**, **ticker** y **history**.
+
+### Vista Summary (default)
+
+Promedio y último valor por estrategia, con alertas.
+
+```bash
+# Todas las estrategias
+python -m src.dashboard.checker
+
+# Una estrategia específica
+python -m src.dashboard.checker --strategy e1_conservative
+```
+
+**Output:**
+
+```
+======================================================================
+  E1 Conservative
+  GRU 2 capas, walk-forward 5 folds, horizon 90d
+======================================================================
+
+  ⏱ Timing
+  ────────────────────────────────────────────────────────────────
+  Metric                            Avg     Last  Alert
+  ────────────────────────────────────────────────────────────────
+  train_seconds                    45.2     42.1  🟢
+  predict_seconds                   0.3      0.2  🟢
+
+  🤖 ML
+  ────────────────────────────────────────────────────────────────
+  ml_mae                         0.0280   0.0250  🟢
+  ml_rmse                        0.0420   0.0380  🟢
+  ml_ic                          0.0650   0.0720  🟢
+  ml_directional_accuracy        0.5600   0.5800  🟢
+
+  📈 Trading
+  ────────────────────────────────────────────────────────────────
+  bt_sharpe                      0.8500   1.0200  🟢
+  bt_cagr                        0.0900   0.1100  🟢
+  bt_max_drawdown                0.1200   0.1400  🟢
+```
+
+### Vista Ticker — Per-ticker
+
+Muestra métricas del último entrenamiento (o promedio de los últimos N) para cada ticker de una estrategia. Incluye **score compuesto** y alertas separadas por categoría (ML y Trading).
+
+```bash
+# Último entrenamiento por ticker
+python -m src.dashboard.checker --view ticker --strategy e1_conservative
+
+# Promedio de últimos 3 entrenamientos por ticker
+python -m src.dashboard.checker --view ticker --strategy e1_conservative --last 3
+```
+
+**Output:**
+
+```
+================================================================================
+  E1 Conservative — Per-Ticker (último entrenamiento)
+  Score = 40% bt_sharpe + 30% bt_cagr + 30% bt_max_drawdown
+================================================================================
+
+  🤖 ML
+  ──────────────────────────────────────────────────────────────────────────
+  Ticker              MAE       RMSE         IC    Dir Acc
+  ──────────────────────────────────────────────────────────────────────────
+  AAPL             0.0820     0.1050     0.2100     0.5800  🟢
+  GGAL.BA          0.1240     0.1680    -0.0300     0.4900  🟡
+
+  📈 Trading
+  ──────────────────────────────────────────────────────────────────────────
+  Ticker           Sharpe    Sortino       CAGR     Max DD   Score
+  ──────────────────────────────────────────────────────────────────────────
+  AAPL             1.2300     1.8100     0.1500     0.1200  0.5640  🟢
+  GGAL.BA          0.4500     0.5200     0.0200     0.3800  0.1820  🟡
+
+  📊 Resumen ML:      1🟢 1🟡 0🔴 de 2 tickers
+  📊 Resumen Trading: 1🟢 1🟡 0🔴 de 2 tickers
+  📊 US avg Score: 0.5640 | AR avg Score: 0.1820
+```
+
+El **score** se calcula con los mismos pesos configurados en `src/config/base.yaml` (sección `lifecycle.promotion.scoring_weights`).
+
+### Vista History — Historial de un ticker
+
+Muestra los últimos N entrenamientos de un ticker con tendencia del score.
+
+```bash
+# Últimos 10 entrenamientos (default)
+python -m src.dashboard.checker --view history --strategy e1_conservative --ticker AAPL
+
+# Últimos 5 entrenamientos
+python -m src.dashboard.checker --view history --strategy e1_conservative --ticker AAPL --last 5
+```
+
+**Output:**
+
+```
+================================================================================
+  E1 Conservative — AAPL (últimos 5 entrenamientos)
+  Score = 40% bt_sharpe + 30% bt_cagr + 30% bt_max_drawdown
+================================================================================
+
+  ────────────────────────────────────────────────────────────────────────────────
+  Fecha            MAE     RMSE       IC  Dir Acc  Sharpe  Sortino     CAGR   Max DD    Score  ML  Trad
+  ────────────────────────────────────────────────────────────────────────────────
+  2026-02-25    0.0820   0.1050   0.2100   0.5800  1.2300   1.8100   0.1500   0.1200   0.5640  🟢 🟢
+  2026-02-20    0.0900   0.1150   0.1800   0.5600  1.1000   1.6500   0.1200   0.1400   0.5120  🟢 🟢
+  2026-02-15    0.1100   0.1400   0.0800   0.5300  0.8500   1.2000   0.0600   0.2200   0.3680  🟢 🟡
+  2026-02-10    0.1250   0.1600   0.0500   0.5100  0.6200   0.8800   0.0300   0.2800   0.2560  🟡 🟡
+  2026-02-05    0.1400   0.1800   0.0200   0.5000  0.4000   0.5500   0.0100   0.3500   0.1520  🟡 🟡
+
+  📈 Tendencia score: 0.1520 → 0.5640 (+271.1%) ↑
+```
+
+### Referencia de argumentos CLI
+
+| Argumento | Descripción | Default |
+|-----------|-------------|---------|
+| `--view` | Vista: `summary`, `ticker`, `history` | `summary` |
+| `--strategy` | Clave de estrategia (ej: `e1_conservative`). Requerido para ticker/history. | Todas |
+| `--ticker` | Ticker (ej: `AAPL`). Requerido para history. | — |
+| `--last` | ticker: promedia últimos N. history: cantidad de runs. | ticker: 1, history: 10 |
+| `--save` | Guardar CSV | `True` |
+| `--quiet` | Suprimir output a consola | `False` |
+
+### Output
+
+- **stdout:** tabla formateada con alertas
+- **CSV summary:** `reports/dashboard/dashboard_report_latest.csv`
+- **CSV ticker:** `reports/dashboard/ticker_report_{strategy}_latest.csv`
+- **CSV history:** `reports/dashboard/history_report_{strategy}_{ticker}_latest.csv`
+- **CSV histórico:** `reports/dashboard/dashboard_report_YYYYMMDD_HHMMSS.csv`
 
 ---
 
@@ -250,42 +376,11 @@ timing_predict_seconds     = 0.3
 
 ---
 
-## Checker CLI
-
-### Todas las estrategias
-```bash
-python -m src.dashboard.checker
-```
-
-### Una estrategia específica
-```bash
-python -m src.dashboard.checker --strategy e1_simple
-```
-
-### Solo guardar CSV (sin output a consola)
-```bash
-python -m src.dashboard.checker --quiet
-```
-
-### Output
-- **stdout:** tabla formateada con alertas
-- **CSV:** `reports/dashboard/dashboard_report_latest.csv`
-- **CSV histórico:** `reports/dashboard/dashboard_report_YYYYMMDD_HHMMSS.csv`
-
----
-
 ## Integración en Pipelines
 
-### E1 Simple (ya integrado)
+### Context manager (recomendado)
 
-El pipeline `train_e1_simple_pipeline.py` ya registra:
-1. Tags de dashboard al inicio del run
-2. Tiempos de entrenamiento y predicción
-3. Alertas por métrica al finalizar
-
-### Otros Pipelines — Integración rápida
-
-Para integrar en E2/E3/E4, usar el context manager:
+Para integrar en cualquier pipeline, usar el context manager:
 
 ```python
 from src.dashboard.integration import with_dashboard_logging
@@ -300,7 +395,7 @@ with mlflow.start_run(run_name=f"E2Simple_{ticker}_{ts}"):
 
 El context manager registra automáticamente:
 - Tags de estrategia y ticker
-- Tiempos de entrenamiento/predicción
+- Tiempos de entrenamiento/predicción (fallback a wall-clock si no se setean)
 - Alertas por umbral para cada métrica
 
 ---
@@ -382,12 +477,14 @@ Para escalar a un entorno compartido o cloud:
 ```
 src/
 ├── config/
-│   ├── base.yaml                      # Config principal
+│   ├── base.yaml                      # Config principal (incluye scoring_weights)
 │   └── dashboard_thresholds.yaml      # Umbrales de alerta por estrategia
 ├── dashboard/
 │   ├── __init__.py                    # Helpers: tags, timing, alerts
-│   ├── checker.py                     # CLI: genera reporte de salud
+│   ├── checker.py                     # CLI: genera reporte de salud (3 vistas)
 │   └── integration.py                 # Context manager para pipelines
+├── lifecycle/
+│   └── promotion.py                   # compute_score() — usado por vista ticker
 runs/
 └── mlflow_local/
     ├── mlflow.db                      # SQLite — backend store local (single source of truth)
@@ -396,7 +493,9 @@ reports/
 ├── timing/
 │   └── timing_log.jsonl               # Log de tiempos (JSONL)
 └── dashboard/
-    ├── dashboard_report_latest.csv    # Último reporte
+    ├── dashboard_report_latest.csv    # Último reporte summary
+    ├── ticker_report_*_latest.csv     # Último reporte per-ticker
+    ├── history_report_*_latest.csv    # Último reporte historial
     └── dashboard_report_*.csv         # Histórico
 ```
 
@@ -423,10 +522,24 @@ tags.dashboard.alert.overall = "🔴"
 
 Usar el checker CLI:
 ```bash
-python -m src.dashboard.checker --strategy e1_simple
+python -m src.dashboard.checker --strategy e1_conservative
 ```
 
-O en MLflow UI: seleccionar runs y usar "Compare".
+### ¿Cómo veo métricas por ticker?
+
+```bash
+python -m src.dashboard.checker --view ticker --strategy e1_conservative
+```
+
+### ¿Cómo veo la evolución de un ticker?
+
+```bash
+python -m src.dashboard.checker --view history --strategy e1_conservative --ticker AAPL
+```
+
+### ¿Qué es el score compuesto?
+
+Es un promedio ponderado de métricas de trading, configurado en `src/config/base.yaml` bajo `lifecycle.promotion.scoring_weights`. Se usa tanto para la vista ticker como para la lógica de promoción champion/challenger.
 
 ### ¿Los umbrales son editables?
 
@@ -457,5 +570,5 @@ Los pipelines y el checker usan la misma cascada de fallback:
 
 ---
 
-**Última actualización:** Febrero 26, 2026
-**Versión:** 1.1
+**Última actualización:** Febrero 27, 2026
+**Versión:** 2.0

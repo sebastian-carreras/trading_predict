@@ -199,9 +199,6 @@ def train_e1_with_mlflow(**context):
     
     raw_dir = root / "data/raw/daily"
     
-    # Benchmark deshabilitado
-    benchmark_df = None
-    
     # Output dir con timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = root / "runs/e1_conservative" / timestamp
@@ -253,7 +250,6 @@ def train_e1_with_mlflow(**context):
                     ticker=ticker,
                     raw_dir=raw_dir,
                     out_dir=out_dir,
-                    benchmark_df=benchmark_df,
                 )
                 
                 # Log métricas ML a MLflow

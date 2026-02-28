@@ -77,7 +77,6 @@ docker compose exec -T airflow-scheduler airflow dags trigger \
 
 ## Notas
 
-- SPY (benchmark) siempre se descarga automáticamente
 - Solo entrena tickers válidos de E1 en `base.yaml`
 - Cada ticker = 1 run en MLflow
 - Run de resumen con métricas agregadas (IC mean, median, etc.)
@@ -150,7 +149,6 @@ docker compose exec -T airflow-scheduler airflow dags trigger \
 ### Notas
 
 - Descarga y limpieza pueden omitirse con `skip_*` para acelerar iteraciones
-- SPY (benchmark) se carga desde `data/clean` y, si no existe, desde `data/raw/daily`
 - Artifacts por ticker: `models/`, `predictions/`, `backtest/` bajo `runs/e1_simple/<timestamp>/<ticker>/`
 - Run de resumen: `summary_all.csv` y métricas agregadas (IC, Decision Score)
 

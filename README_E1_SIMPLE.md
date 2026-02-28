@@ -165,8 +165,6 @@ Las features están optimizadas para predicción a largo plazo (horizon=90 días
 |---------|-------------|-----------------|
 | `adx_14` | Average Directional Index | Fuerza de tendencia (no dirección) |
 
-**Nota:** Features de benchmark fueron removidas para evitar leakage temporal.
-
 ---
 
 ## Uso

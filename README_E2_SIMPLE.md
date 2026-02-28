@@ -68,7 +68,7 @@ Mismos features que E2 Moderate (ver [README_E2.md](README_E2.md) para detalle c
 - **Core**: Retornos (1d, 5d, 20d, 60d), volatilidad, rango, ATR, volume z-score
 - **Momentum**: RSI(14), Stochastic, ROC, MACD, histograma
 - **Tendencia**: SMA(50, 200), EMA(50), distancia a SMA(200), Bollinger %B, ancho
-- **Contexto**: Benchmark (SPY) retornos
+- **Contexto**: FX, sentimiento (opcional)
 
 ## Lógica de Señales de Trading
 

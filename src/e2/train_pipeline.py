@@ -132,6 +132,121 @@ def save_walkforward_plot(
     plt.close(fig)
 
 
+def _load_tuned_params(path: str) -> dict:
+    if not path:
+        return {}
+    resolved = Path(path)
+    if not resolved.exists():
+        return {}
+    try:
+        data = load_yaml(resolved)
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def _normalize_e2_tuned_entry(per_ticker: dict) -> dict:
+    if not isinstance(per_ticker, dict):
+        return {}
+
+    if any(k in per_ticker for k in ("thresholds", "model", "splits")):
+        return per_ticker
+
+    thresholds: dict = {}
+    model: dict = {}
+    splits: dict = {}
+
+    if per_ticker.get("tau_buy") is not None:
+        thresholds["tau_buy"] = per_ticker.get("tau_buy")
+    if per_ticker.get("tau_sell") is not None:
+        thresholds["tau_sell"] = per_ticker.get("tau_sell")
+
+    lstm_units = []
+    if per_ticker.get("lstm_units_1") is not None:
+        lstm_units.append(per_ticker.get("lstm_units_1"))
+    if per_ticker.get("lstm_units_2") is not None:
+        lstm_units.append(per_ticker.get("lstm_units_2"))
+    if lstm_units:
+        model["lstm_units"] = lstm_units
+
+    if per_ticker.get("dropout") is not None:
+        model["dropout"] = per_ticker.get("dropout")
+    if per_ticker.get("learning_rate") is not None:
+        model["learning_rate"] = per_ticker.get("learning_rate")
+    if per_ticker.get("batch_size") is not None:
+        model["batch_size"] = per_ticker.get("batch_size")
+    if per_ticker.get("early_stopping_patience") is not None:
+        model["early_stopping_patience"] = per_ticker.get("early_stopping_patience")
+
+    if per_ticker.get("n_folds") is not None:
+        splits["folds"] = per_ticker.get("n_folds")
+    if per_ticker.get("internal_val_fraction") is not None:
+        splits["internal_val_fraction"] = per_ticker.get("internal_val_fraction")
+
+    normalized: dict = {}
+    if thresholds:
+        normalized["thresholds"] = thresholds
+    if model:
+        normalized["model"] = model
+    if splits:
+        normalized["splits"] = splits
+    return normalized
+
+
+def _apply_tuned_overrides(*, config: dict, ticker: str) -> dict:
+    tuned_path = os.getenv("E2_TUNED_PARAMS_PATH", "").strip()
+    if not tuned_path:
+        return config
+
+    resolved = Path(tuned_path)
+    if not resolved.is_absolute():
+        try:
+            resolved = project_root() / resolved
+        except Exception:
+            pass
+
+    all_tuned = _load_tuned_params(str(resolved))
+    if not all_tuned:
+        print(f"  ⚠️  E2 tuned params no encontrados o vacíos: {resolved}")
+        return config
+
+    per_ticker_raw = all_tuned.get(ticker)
+    if not isinstance(per_ticker_raw, dict):
+        return config
+
+    per_ticker = _normalize_e2_tuned_entry(per_ticker_raw)
+    if not per_ticker:
+        return config
+
+    strat = config.setdefault("strategies", {}).setdefault("e2_moderate", {})
+    applied_sections: list[str] = []
+
+    thresholds = per_ticker.get("thresholds")
+    if isinstance(thresholds, dict):
+        strat.setdefault("thresholds", {}).update(thresholds)
+        applied_sections.append("thresholds")
+
+    model = per_ticker.get("model")
+    if isinstance(model, dict):
+        strat.setdefault("model", {}).update(model)
+        applied_sections.append("model")
+
+    splits = per_ticker.get("splits")
+    if isinstance(splits, dict):
+        config.setdefault("splits", {}).update(splits)
+        applied_sections.append("splits")
+
+    if applied_sections:
+        print(
+            f"  ✓ Optuna overrides E2 para {ticker}: "
+            f"{', '.join(applied_sections)} ({resolved.name})"
+        )
+
+    return config
+
+
 # ---------------------------------------------------------------------------
 # Walk-forward LSTM
 # ---------------------------------------------------------------------------
@@ -555,6 +670,7 @@ def run_e2_for_ticker(
     """Entrena y evalúa la estrategia E2 (LSTM) para un ticker."""
 
     config = copy.deepcopy(config)
+    config = _apply_tuned_overrides(config=config, ticker=ticker)
 
     require_model_save = os.getenv(
         "REQUIRE_MODEL_SAVE", "1",
@@ -579,7 +695,11 @@ def run_e2_for_ticker(
     horizon_days = int(e2.get("horizon_days", 20))
 
     model_cfg = e2.get("model", {})
-    lstm_units = list(model_cfg.get("units", [128, 64]))
+    lstm_units_raw = model_cfg.get("lstm_units", model_cfg.get("units", [128, 64]))
+    if isinstance(lstm_units_raw, (list, tuple)):
+        lstm_units = [int(x) for x in lstm_units_raw]
+    else:
+        lstm_units = [int(lstm_units_raw)]
     dropout = float(model_cfg.get("dropout", 0.2))
     dense_units = int(model_cfg.get("dense_units", 32))
     lr = float(model_cfg.get("learning_rate", 1e-3))

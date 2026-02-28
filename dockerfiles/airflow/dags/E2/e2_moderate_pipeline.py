@@ -128,7 +128,7 @@ def train_e2_with_mlflow(**context):
     from pathlib import Path
     import pandas as pd
     
-    mlflow.set_experiment("E2_Moderate_Strategy")
+    mlflow.set_experiment("E2_Moderate")
     
     root = Path("/opt/airflow")
     config = load_yaml(root / "src/config/base.yaml")
@@ -165,9 +165,6 @@ def train_e2_with_mlflow(**context):
             .get("tickers_by_strategy", {})
             .get("e2_moderate", [])
         )
-    
-    # Benchmark deshabilitado
-    benchmark_df = None
     
     # Directorio de salida con timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -231,7 +228,6 @@ def train_e2_with_mlflow(**context):
                     ticker=ticker,
                     raw_dir=raw_dir,
                     out_dir=ticker_out,
-                    benchmark_df=benchmark_df,
                 )
                 
                 # Log métricas ML a MLflow

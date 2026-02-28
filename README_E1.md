@@ -10,7 +10,7 @@ Predicción de retornos logarítmicos acumulados a 90 días usando arquitectura 
 
 | Versión | Archivo | Validación | Uso Recomendado |
 |---------|---------|------------|-----------------|
-| **E1 Baseline** | `src/e1/train_baseline.py`  | Time split (70/15/15)  |  Benchmark académico, comparación de valor incremental |
+| **E1 Baseline** | `src/e1/train_baseline.py`  | Time split (70/15/15)  |  Baseline académico, comparación de valor incremental |
 | **E1 Conservative** | `train_e1_pipeline.py`  | Walk-forward (5 folds) | Producción, validación robusta |
 | **E1 Simple** | `train_e1_simple_pipeline.py` | Time split (70/15/15)  | Desarrollo, experimentación |
 
@@ -30,7 +30,7 @@ python -m src.e1.train_all --tickers AAPL,MSFT
 python -m src.e1.train_pipeline 
 python -m src.e1.train_pipeline --tickers AAPL
 
-# E1 Baseline (regresión lineal, benchmark)
+# E1 Baseline (regresión lineal)
 python -m src.e1.train_baseline --tickers AAPL
 
 # E1 Simple (desarrollo rápido)
@@ -133,7 +133,7 @@ Dense(16, relu)
 Output(1) - Predicción retorno 90d
 ```
 
-### E1 Baseline (Benchmark)
+### E1 Baseline
 
 ```
 Input: (360 días, ~15 features)
@@ -153,7 +153,7 @@ Output(1) - Predicción retorno 90d
 
 ## Features (15 indicadores optimizados)
 
-Las features están optimizadas para predicción a largo plazo (horizon=90 días). Se eliminaron features de benchmark para evitar leakage temporal.
+Las features están optimizadas para predicción a largo plazo (horizon=90 días).
 
 ### Precio/Retorno (5 features)
 | Feature | Descripción | Uso estratégico |
@@ -193,8 +193,6 @@ Las features están optimizadas para predicción a largo plazo (horizon=90 días
 | Feature | Descripción | Uso estratégico |
 |---------|-------------|-----------------|
 | `adx_14` | Average Directional Index | Fuerza de tendencia (no dirección) |
-
-**Nota:** Features de benchmark fueron removidas para evitar leakage temporal.
 
 ---
 
@@ -396,7 +394,7 @@ costs:
 | **Validación** | Walk-forward (5 folds) | Walk-forward (5 folds) | Time split (70/15/15) |
 | **Modelo** | LinearRegression | GRU 2 capas (64→32) | GRU 1 capa (64) |
 | **Capta no-linealidad temporal** | No | Sí | Parcial |
-| **Uso ideal** | Benchmark / control académico | Producción, validación robusta | Desarrollo, experimentación |
+| **Uso ideal** | Baseline / control académico | Producción, validación robusta | Desarrollo, experimentación |
 | **Robustez temporal** | Alta (múltiples períodos) | Alta (múltiples períodos) | Media (un solo período) |
 | **Paper académico** | Sí (baseline obligatorio) | Sí | No |
 

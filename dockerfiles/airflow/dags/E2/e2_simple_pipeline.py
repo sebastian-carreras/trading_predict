@@ -218,9 +218,6 @@ def train_e2_simple_with_mlflow(**context):
     if not tickers:
         return "No tickers to train for E2 Simple strategy"
     
-    # Benchmark deshabilitado
-    benchmark_df = None
-    
     # Directorio de salida con timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = root / "runs" / "e2_simple" / timestamp
@@ -275,7 +272,6 @@ def train_e2_simple_with_mlflow(**context):
                     ticker=ticker,
                     raw_dir=raw_dir,
                     out_dir=ticker_out,
-                    benchmark_df=benchmark_df,
                 )
                 
                 # Log métricas ML a MLflow (sanitizadas)

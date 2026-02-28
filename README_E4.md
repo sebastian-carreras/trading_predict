@@ -26,7 +26,7 @@ Arbitraje estadístico basado en cointegración y procesos mean-reverting para t
 
 ### k-NN + Cointegración + Ornstein-Uhlenbeck
 
-**Justificación**: El arbitraje estadístico basado en cointegración y procesos mean-reverting (OU) es el método estándar en pairs trading. Algoritmos k-NN con aprendizaje local de series interdependientes han demostrado superar modelos AR y Granger en backtesting de pares benchmark (KO-PEP).
+**Justificación**: El arbitraje estadístico basado en cointegración y procesos mean-reverting (OU) es el método estándar en pairs trading. Algoritmos k-NN con aprendizaje local de series interdependientes han demostrado superar modelos AR y Granger en backtesting de pares clásicos (KO-PEP).
 
 ### Componentes
 
@@ -338,7 +338,7 @@ La estrategia E4 ha sido completamente implementada siguiendo las especificacion
 - AAPL - MSFT (mega-caps tech)
 
 **Bebidas**:
-- KO - PEP (Coca-Cola - Pepsi, benchmark clásico)
+- KO - PEP (Coca-Cola - Pepsi, par clásico)
 
 ---
 

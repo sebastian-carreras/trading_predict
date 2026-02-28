@@ -216,7 +216,7 @@ AAPL,2045,1700,5,0.173,-0.254,0.635,0.581,...
 ### Métricas ML
 
 **Information Coefficient (IC):**
-- **IC > 0.05**: Capacidad predictiva positiva (benchmark mínimo)
+- **IC > 0.05**: Capacidad predictiva positiva (umbral mínimo)
 - **IC > 0.10**: Buena capacidad predictiva
 - **IC < 0**: Señal de overfitting o modelo sin capacidad predictiva
 

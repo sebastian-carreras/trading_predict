@@ -19,7 +19,7 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 
 DAG_ID = "e2_optuna_hyperparameter_tuning"
-SCRIPT_REL_PATH = Path("scripts/optimize_e2_hyperparameters.py")
+SCRIPT_REL_PATH = Path("scripts/optimization/optimize_e2_hyperparameters.py")
 
 
 def resolve_project_root() -> Path:
@@ -64,7 +64,7 @@ DEFAULT_PARAMS: Dict[str, Optional[str]] = {
     # Configuración general
     "config_path": "src/config/base.yaml",
     "n_trials": "20",
-    "study_name": "e2_hyperparameter_optimization",
+    "study_name": "e2_hyperparameter_optimization_timesplit",
     "per_ticker": "False",
     
     # Tickers (universo E2 moderado)
@@ -97,18 +97,6 @@ DEFAULT_PARAMS: Dict[str, Optional[str]] = {
     "learning_rate_min": "5e-5",
     "learning_rate_max": "5e-3",
     "batch_sizes": "32,64,128",
-    
-    # --- Filtros RSI (específico E2) ---
-    "rsi14_min_min": "25",
-    "rsi14_min_max": "40",
-    "rsi14_max_min": "60",
-    "rsi14_max_max": "75",
-    
-    # --- Walk-forward validation ---
-    "n_folds_min": "3",
-    "n_folds_max": "7",
-    "internal_val_fraction_min": "0.10",
-    "internal_val_fraction_max": "0.25",
     
     # Argumentos CLI extra
     "extra_cli_args": "",
@@ -216,16 +204,6 @@ def run_optuna_tuning(**context) -> str:
         # Entrenamiento
         "learning_rate_min",
         "learning_rate_max",
-        # Filtros RSI
-        "rsi14_min_min",
-        "rsi14_min_max",
-        "rsi14_max_min",
-        "rsi14_max_max",
-        # Walk-forward
-        "n_folds_min",
-        "n_folds_max",
-        "internal_val_fraction_min",
-        "internal_val_fraction_max",
     )
 
     for override in override_args:

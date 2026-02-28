@@ -91,7 +91,7 @@ reports/
 ### ¿Por qué Regresión Lineal?
 ✅ Simple y rápida de entrenar
 ✅ Interpretable (pesos lineales)
-✅ Benchmark clásico en ML
+✅ Baseline clásico en ML
 ✅ Sin riesgo de overfitting por arquitectura compleja
 ✅ Demuestra si patrones no-lineales/temporales valen la pena
 

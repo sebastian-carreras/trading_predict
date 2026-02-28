@@ -201,7 +201,6 @@ def train_baseline_with_mlflow(**context):
                     ticker=ticker,
                     raw_dir=raw_dir,
                     out_dir=out_dir / ticker,
-                    benchmark_df=None,
                 )
                 
                 # Log métricas ML a MLflow

@@ -53,7 +53,6 @@ python scripts/e1_simple_iol_live_trade.py \
 
 3. **Descargar Datos Recientes**
    - Últimos 365 días del ticker via yfinance
-   - Benchmark (SPY) si está disponible
 
 4. **Calcular Features y Predecir**
    - Calcula 27 features (momentum, tendencia, volumen)

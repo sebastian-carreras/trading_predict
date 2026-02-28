@@ -258,7 +258,7 @@ Este documento define una especificación **implementable** (datos → features 
 Para poder implementar y evaluar de punta a punta sin bloquearse por disponibilidad de datos, se fijan los siguientes supuestos. Si luego cambiás el mercado (ARG vs USA vs crypto), se ajustan costos y features “contexto”, pero la estructura queda igual.
 
 **Universo de activos (cierre)**
-- Estrategias 1 y 2 (diarias): acciones/ETFs líquidos (p. ej. universo de 20–50 tickers) + benchmark SPY.
+- Estrategias 1 y 2 (diarias): acciones/ETFs líquidos (p. ej. universo de 20–50 tickers).
 - Estrategia 4 (pairs): pares dentro del mismo sector/universo anterior (p. ej. 20–100 candidatos, seleccionar top pares por cointegración).
 - Estrategia 3 (intradía): OHLCV 5-min consistente. Implementación base con Yahoo Finance (vía `yfinance`, historial típico ~60 días) y universo definido en `base.yaml`.
 
@@ -302,8 +302,8 @@ Para poder implementar y evaluar de punta a punta sin bloquearse por disponibili
 - Incorporar al menos: comisión + slippage (p. ej. 5–20 bps según mercado y horizonte).
 - Medir métricas “offline” (MAE/RMSE) y métricas “de trading” (CAGR, Sharpe, MaxDD, Profit Factor, turnover). Un buen MAE no garantiza PnL.
 
-**Benchmarks obligatorios (por estrategia)**
-- Buy & Hold del activo/benchmark.
+**Comparaciones obligatorias (por estrategia)**
+- Buy & Hold del activo.
 - Reglas técnicas simples (SMA crossover, RSI/MACD) con mismos costos.
 - Para pairs: Z-score estático y Z-score con umbral dinámico.
 
@@ -345,7 +345,6 @@ Para poder implementar y evaluar de punta a punta sin bloquearse por disponibili
    - ADX(14) (si lo incluís, ayuda a filtrar “mercado lateral”)
 
 - **Contexto de mercado (sin leakage)**
-   - Retornos de benchmark (SPY / índice local): $r^{bench}_t$ y $\sum r^{bench}_{t-20}$
    - FX (si aplica) retorno y volatilidad rolling
    - Tasa libre de riesgo (si está disponible) y *term spread* (si aplica)
 
@@ -444,7 +443,7 @@ Output (1): predicción de retorno a H días
 - Tendencia corta/media: SMA(7), SMA(20), EMA(12), EMA(26), distancia $Close/EMA(26)-1$
 - Volatilidad: ATR(14), Bollinger bandwidth (20,2), $\sigma_{20}$
 - Volumen: OBV, Volume ROC(10), *volume z-score* (20)
-- Contexto: retornos del benchmark y FX (mejor que “close” crudo)
+- Contexto: FX (mejor que “close” crudo)
 - Sentimiento: si existe, usarlo con ventana cerrada diaria y/o agregación horaria (sin mirar futuro)
 
 **Arquitectura de red (LSTM, alineada con target retorno)**```
@@ -599,7 +598,7 @@ Opcional: weighted average con pesos por performance reciente (validación rolli
 
 ### Arquitectura: k-NN + Cointegración con Ornstein-Uhlenbeck
 
-**Justificación técnica**: El arbitraje estadístico basado en cointegración y procesos mean-reverting (OU) es el método estándar en pairs trading. Algoritmos k-NN con aprendizaje local de series interdependientes han demostrado superar modelos AR y Granger en backtesting de pares benchmark (KO-PEP).[8]
+**Justificación técnica**: El arbitraje estadístico basado en cointegración y procesos mean-reverting (OU) es el método estándar en pairs trading. Algoritmos k-NN con aprendizaje local de series interdependientes han demostrado superar modelos AR y Granger en backtesting de pares clásicos (KO-PEP).[8]
 
 ### Configuración del Modelo
 
@@ -712,7 +711,7 @@ Para la fase de diseño (15h), deberás:[1]
 
 > Nota: en esta entrega se implementan y evalúan E1/E2/E3/E4 (E3 intradía con OHLCV 5-min).
 
-4. **Establecer benchmarks**: Buy & Hold + reglas técnicas simples + (pairs) z-score estándar.
+4. **Establecer baselines**: Buy & Hold + reglas técnicas simples + (pairs) z-score estándar.
 
 5. **Diseñar métricas**: además de MAE/RMSE, incluir Sharpe, Sortino, Calmar, MaxDD, hit rate, Profit Factor, turnover, exposición, slippage.
 
@@ -720,7 +719,7 @@ Para la fase de diseño (15h), deberás:[1]
 
 7. **Plan de gestión de riesgo**: stop-loss/take-profit, límites por activo, límite de pérdida diaria (intradía), y control de correlación entre estrategias.
 
-Esta arquitectura modular te permite entrenar y evaluar cada modelo independientemente (sin multitask ni híbridos), y comparar su aporte incremental contra benchmarks en backtesting con costos.[2][6][8][1]
+Esta arquitectura modular te permite entrenar y evaluar cada modelo independientemente (sin multitask ni híbridos), y comparar su aporte incremental contra baselines en backtesting con costos.[2][6][8][1]
 
 ## Checklist de implementación (E1/E2/E3/E4)
 
@@ -731,7 +730,7 @@ La idea de esta checklist es que cada punto se pueda “tildar” con un entrega
 **Objetivo**: tener un dataset diario limpio y reproducible para un universo fijo de tickers.
 
 - [ ] Definir universo final (lista de tickers) y período total (mínimo 5–8 años si se puede; si no, lo máximo disponible).
-- [ ] Descargar OHLCV ajustado (si aplica) + benchmark SPY.
+- [ ] Descargar OHLCV ajustado (si aplica).
 - [ ] (E3) Descargar OHLCV 5-min (p. ej. Yahoo Finance) para el universo intradía y guardar en `data/raw/intraday/`.
 - [ ] Estandarizar calendario: solo días de mercado; tratar faltantes (forward-fill solo donde tenga sentido, nunca en el target).
 - [ ] Guardar “raw” y “clean” con versionado (parquet/csv + checksum + fecha de descarga).
@@ -816,7 +815,7 @@ La idea de esta checklist es que cada punto se pueda “tildar” con un entrega
 - [ ] Reportar métricas netas: CAGR, Sharpe/Sortino, MaxDD, Calmar, hit rate, Profit Factor, turnover.
 
 **Criterio de aceptación**
-- Backtest benchmark (Buy&Hold + SMA crossover) disponible para comparación en el mismo framework.
+- Backtest de referencia (Buy&Hold + SMA crossover) disponible para comparación en el mismo framework.
 
 ### 8) Reporte final (capítulo de resultados)
 
@@ -994,7 +993,7 @@ Según la planificación del proyecto y la literatura especializada en predicci�
 ### Datos base comunes
 
 **Fuentes de datos históricas (cierre Opción A)**
-- Diario (E1/E2/E4): OHLCV (idealmente *adjusted*), benchmark (SPY) y calendario de trading.
+- Diario (E1/E2/E4): OHLCV (idealmente *adjusted*) y calendario de trading.
 - Intradía (E3): OHLCV 5-min vía Yahoo Finance (vía `yfinance`), con historial típico ~60 días.
 
 **Split y validación (cierre)**

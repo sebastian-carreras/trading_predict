@@ -195,6 +195,20 @@ class E1HyperparameterOptimizer:
         try:
             # set_experiment crea o reutiliza experimento por nombre.
             mlflow.set_experiment(experiment_name)
+
+            # Verificar si el artifact_location del experimento existente es accesible.
+            # Si fue creado desde Docker (ej: /opt/airflow/...), log_artifact fallará localmente.
+            exp = mlflow.get_experiment_by_name(experiment_name)
+            if exp and exp.artifact_location:
+                _art_loc = exp.artifact_location
+                if _art_loc.startswith("/opt/") or _art_loc.startswith("file:///opt/"):
+                    print(f"⚠️  Experimento '{experiment_name}' tiene artifact_location de Docker: {_art_loc}")
+                    print(f"   Recreando experimento con artifact_location local...")
+                    mlflow.delete_experiment(exp.experiment_id)
+                    mlflow.create_experiment(experiment_name, artifact_location=artifact_location)
+                    mlflow.set_experiment(experiment_name)
+                    print(f"✓ Experimento recreado con artifacts locales: {artifact_location}")
+
             # Validar conexión con un test run
             _test_run = mlflow.start_run(run_name="_init_test")
             mlflow.end_run()
@@ -1160,6 +1174,8 @@ def main():
         suffix = f"__{ticker_name}"
         return base_study_name if base_study_name.endswith(suffix) else f"{base_study_name}{suffix}"
 
+    t_start = time.time()
+
     if args.per_ticker:
         # Resolver tickers si no se especificaron (usa universo E1)
         if tickers is None:
@@ -1277,13 +1293,18 @@ def main():
 
         optimizer.save_results(study, output_dir)
 
-        # Si solo hay un ticker y no se usó --per_ticker, guardar también en by_ticker
-        if tickers and len(tickers) == 1:
-            t = tickers[0]
-            per_ticker_dir = output_dir / "by_ticker" / t
-            per_ticker_dir.mkdir(parents=True, exist_ok=True)
-
+        has_completed_trials = True
+        try:
             bp = study.best_params
+            best_value = float(study.best_value)
+            best_trial_number = int(study.best_trial.number)
+        except Exception:
+            has_completed_trials = False
+            bp = {}
+            best_value = None
+            best_trial_number = None
+
+        if tickers and has_completed_trials:
             converted = {
                 "thresholds": {
                     "tau_buy": float(bp.get("tau_buy")),
@@ -1298,6 +1319,63 @@ def main():
                     "early_stopping_patience": 10,
                 },
             }
+
+            # Sincronización por defecto: aplicar best global a todos los tickers evaluados.
+            agg_compact_path = output_dir / "e1_tuned_params_by_ticker.yaml"
+            try:
+                with open(agg_compact_path, "r") as f:
+                    agg_compact = yaml.safe_load(f) or {}
+            except FileNotFoundError:
+                agg_compact = {}
+
+            for ticker_name in tickers:
+                agg_compact[ticker_name] = converted
+
+            E1HyperparameterOptimizer._safe_write_file(
+                agg_compact_path,
+                lambda f: yaml.dump(agg_compact, f, default_flow_style=False, sort_keys=False),
+            )
+
+            agg_meta_path = output_dir / "e1_tuned_params_by_ticker.meta.yaml"
+            try:
+                with open(agg_meta_path, "r") as f:
+                    agg_meta = yaml.safe_load(f) or {}
+            except FileNotFoundError:
+                agg_meta = {}
+
+            if not agg_meta:
+                agg_meta = {
+                    "strategy": "e1_conservative",
+                    "generated_at": pd.Timestamp.utcnow().isoformat(),
+                    "meta": {},
+                    "tickers": {},
+                }
+
+            for ticker_name in tickers:
+                agg_meta.setdefault("meta", {})[ticker_name] = {
+                    "study_name": study.study_name,
+                    "best_value": best_value,
+                    "best_trial": best_trial_number,
+                    "n_trials": int(len(study.trials)),
+                }
+                agg_meta.setdefault("tickers", {})[ticker_name] = converted
+
+            agg_meta["generated_at"] = pd.Timestamp.utcnow().isoformat()
+            E1HyperparameterOptimizer._safe_write_file(
+                agg_meta_path,
+                lambda f: yaml.dump(agg_meta, f, default_flow_style=False, sort_keys=False),
+            )
+
+            print(f"\n✓ YAML por ticker sincronizado (best global): {agg_compact_path}")
+            print(f"✓ YAML meta sincronizado: {agg_meta_path}")
+        elif tickers:
+            print("\n⚠️  No hay trials completos; no se sincronizó YAML por ticker.")
+
+        # Si solo hay un ticker y no se usó --per_ticker, guardar también en by_ticker
+        if tickers and len(tickers) == 1 and has_completed_trials:
+            t = tickers[0]
+            per_ticker_dir = output_dir / "by_ticker" / t
+            per_ticker_dir.mkdir(parents=True, exist_ok=True)
 
             # best_params_e1.yaml por ticker
             per_ticker_path = per_ticker_dir / "best_params_e1.yaml"
@@ -1350,18 +1428,21 @@ def main():
         print("MEJORES PARÁMETROS ENCONTRADOS")
         print(f"{'='*80}\n")
 
-        displayed = False
-        for key in DISPLAY_PARAM_KEYS:
-            if key in study.best_params:
-                print(f"  {key}: {study.best_params[key]}")
-                displayed = True
-        if not displayed:
-            # Fallback para estudios con estructura distinta (compatibilidad retroactiva).
-            for key, value in study.best_params.items():
-                print(f"  {key}: {value}")
+        if has_completed_trials:
+            displayed = False
+            for key in DISPLAY_PARAM_KEYS:
+                if key in study.best_params:
+                    print(f"  {key}: {study.best_params[key]}")
+                    displayed = True
+            if not displayed:
+                # Fallback para estudios con estructura distinta (compatibilidad retroactiva).
+                for key, value in study.best_params.items():
+                    print(f"  {key}: {value}")
 
-        print(f"\nMejor valor objetivo: {study.best_value:.6f}")
-        print(f"Trial #{study.best_trial.number}")
+            print(f"\nMejor valor objetivo: {study.best_value:.6f}")
+            print(f"Trial #{study.best_trial.number}")
+        else:
+            print("No hay trials completos; se guardó resumen parcial.")
 
         print(f"\n{'='*80}")
         print("OPTIMIZACIÓN COMPLETADA")
@@ -1370,6 +1451,11 @@ def main():
         print(f"📊 Resultados en: {output_dir}")
         print(f"📈 MLflow UI: {args.mlflow_uri}")
         print(f"🔍 Optuna Dashboard: optuna-dashboard {args.optuna_db}")
+
+        elapsed = time.time() - t_start
+        hours, remainder = divmod(int(elapsed), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        print(f"\n⏱  Tiempo total de optimización: {hours:02d}h {minutes:02d}m {seconds:02d}s ({elapsed:.1f}s)")
 
 
 if __name__ == "__main__":
