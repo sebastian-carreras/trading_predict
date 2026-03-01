@@ -438,7 +438,7 @@ Si `MLFLOW_TRACKING_URI` está configurado, el pipeline registra:
 | Archivo | Propósito |
 |---------|-----------|
 | `src/e1/train_baseline.py` | Pipeline E1 Baseline (LinearRegression + walk-forward) |
-| `src/e1/baseline_linear.py` | Implementación del modelo baseline y métricas asociadas |
+| `src/e1/train_baseline.py` | Implementación del modelo baseline y métricas asociadas |
 | `src/lifecycle/promotion.py` | Lógica de scoring y decisión de promoción champion/challenger |
 | `scripts/evaluation/promote_candidate.py` | CLI para evaluar y promover candidatos manualmente |
 | `src/train_e1_pipeline.py` | Pipeline E1 Conservative (walk-forward) |

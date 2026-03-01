@@ -156,10 +156,10 @@ runs/e2_moderate/<timestamp>/
 python -m src.data.download_daily
 
 # Entrenar E2 para tickers específicos
-python -m src.train_e2_pipeline --tickers NVDA GOOGL AMZN
+python -m src.e2.train_pipeline --tickers NVDA GOOGL AMZN
 
 # Todos los tickers E2
-python -m src.train_e2_pipeline
+python -m src.e2.train_pipeline
 
 # Ver resultados
 cat runs/e2_moderate/*/summary_all.csv

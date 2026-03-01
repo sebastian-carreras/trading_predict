@@ -180,6 +180,85 @@ strategies:
         critical_above: 30
 
   # ----------------------------------------------------------
+  # E2 Baseline — Referencia fija (Ridge Regression)
+  # ----------------------------------------------------------
+  e2_baseline:
+    display_name: "E2 Baseline"
+    experiment_name: "E2_Baseline"
+    description: "Ridge Regression (α=1.0), walk-forward, horizon 20d — referencia fija"
+
+    metrics:
+      # Umbrales calibrados con métricas reales del baseline (feb 2026)
+      # Más permisivos que e2_moderate (es un modelo lineal simple)
+      ml_mae:
+        direction: "lower_is_better"
+        green_max: 0.30       # baseline típico ~0.35, verde si mejora
+        red_min: 0.50         # muy pobre para un baseline
+        unit: ""
+
+      ml_rmse:
+        direction: "lower_is_better"
+        green_max: 0.40       # baseline típico ~0.53
+        red_min: 0.70
+        unit: ""
+
+      ml_ic:
+        direction: "higher_is_better"
+        green_min: 0.0        # cualquier correlación positiva es buena
+        red_max: -0.15        # anticorrelación fuerte
+        unit: ""
+
+      ml_directional_accuracy:
+        direction: "higher_is_better"
+        green_min: 0.52       # apenas mejor que azar
+        red_max: 0.45
+        unit: "%"
+
+      bt_sharpe:
+        direction: "higher_is_better"
+        green_min: 0.3        # baseline con sharpe > 0.3 ya es decente
+        red_max: 0.0
+        unit: ""
+
+      bt_sortino:
+        direction: "higher_is_better"
+        green_min: 0.3
+        red_max: 0.0
+        unit: ""
+
+      bt_cagr:
+        direction: "higher_is_better"
+        green_min: 0.05
+        red_max: 0.0
+        unit: "%"
+
+      bt_max_drawdown:
+        direction: "lower_is_better"
+        green_max: 0.50       # baseline típico ~0.44
+        red_min: 0.75
+        unit: "%"
+
+      bt_calmar:
+        direction: "higher_is_better"
+        green_min: 0.15
+        red_max: 0.03
+        unit: ""
+
+      bt_profit_factor:
+        direction: "higher_is_better"
+        green_min: 1.05       # baseline apenas rentable ya es ok
+        red_max: 1.0
+        unit: ""
+
+    timing:
+      train_seconds:
+        warn_above: 10      # Ridge es muy rápido (~0.3s)
+        critical_above: 30
+      predict_seconds:
+        warn_above: 2
+        critical_above: 10
+
+  # ----------------------------------------------------------
   # E2 Simple — Swing trading simplificado
   # ----------------------------------------------------------
   e2_simple:

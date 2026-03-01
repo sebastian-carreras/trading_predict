@@ -62,13 +62,10 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
     # OPTIMIZADO PARA LARGO PLAZO: Una sola medida de volatilidad mensual (más estable)
     
     # vol_4w: Volatilidad (std de retornos) últimos 20 días (~4 semanas)
-    # Propósito: Medir riesgo mensual (más relevante para horizon=90 días que volatilidad diaria)
-    # Estrategia: 
-    #   - vol_4w alta → Mayor riesgo/oportunidad. Predicciones menos confiables, reducir tamaño de posición
-    #   - vol_4w baja → Mercado estable. Predicciones más confiables, posible squeeze (breakout inminente)
-    #   - Cambios en vol_4w indican cambios de régimen (calma → tormenta o viceversa)
-    out["vol_4w"] = log_close.diff().rolling(20).std()
-    
+    # ELIMINADA como feature por alta multicolinealidad con bb_bandwidth (r=0.85) y atr_14 (r=0.72).
+    # Se mantiene el cálculo interno porque vol_regime depende de ella.
+    vol_4w = log_close.diff().rolling(20).std()
+
     # vol_regime: Cambio de volatilidad (vol_4w actual vs vol_4w hace 4 semanas)
     # Propósito: Detectar expansión o contracción de volatilidad
     # Estrategia:
@@ -76,8 +73,8 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
     #   - vol_regime < -0.3 → Volatilidad CONTRACCIÓN (reducción >30%) → Mercado calmándose, possible squeeze
     #   - vol_regime ~ 0 → Volatilidad estable
     # IMPORTANTE: Cambios bruscos de volatilidad predicen reversiones de tendencia
-    vol_4w_lag = out["vol_4w"].shift(20)
-    out["vol_regime"] = (out["vol_4w"] / (vol_4w_lag + 1e-12)) - 1.0
+    vol_4w_lag = vol_4w.shift(20)
+    out["vol_regime"] = (vol_4w / (vol_4w_lag + 1e-12)) - 1.0
 
     # Rango intradía y ATR (Average True Range)
     # Estrategia: Medir la amplitud real de movimiento (más robusto que solo high-low)
@@ -128,10 +125,10 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
     out["sma_50"] = close.rolling(50).mean()
     
     # sma_200: Simple Moving Average de 200 días
-    # Propósito: Tendencia de largo plazo (filtro fundamental)
-    # Estrategia: Si close > sma_200 → mercado alcista estructural. Muchos traders NO compran si close < sma_200
-    out["sma_200"] = close.rolling(200).mean()
-    
+    # ELIMINADA como feature por alta multicolinealidad con sma_50 (r=0.99).
+    # Se mantiene el cálculo interno porque sma50_sma200_ratio depende de ella.
+    sma_200 = close.rolling(200).mean()
+
     # sma50_sma200_ratio: Relación entre SMA(50) y SMA(200)
     # Propósito: Detectar Golden Cross / Death Cross y medir fuerza de tendencia
     # Estrategia:
@@ -141,15 +138,10 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
     #   - ratio muy positivo (ej. +0.05 = +5%) → tendencia alcista MUY fuerte
     #   - ratio muy negativo (ej. -0.05 = -5%) → tendencia bajista MUY fuerte
     # IMPORTANTE: Esta feature captura la señal técnica más seguida por inversores institucionales
-    out["sma50_sma200_ratio"] = (out["sma_50"] / out["sma_200"]) - 1.0
-    
-    # close_sma200_dist: Distancia relativa entre precio actual y SMA(200)
-    # Propósito: Medir cuán "estirado" está el precio respecto a su tendencia de largo plazo
-    # Estrategia:
-    #   - Muy positivo (ej. +0.2 = +20%) → posible sobrecompra, candidato a corrección
-    #   - Muy negativo (ej. -0.2 = -20%) → posible sobreventa, candidato a rebote
-    #   - Cerca de 0 → precio en línea con tendencia de largo plazo (zona "justa")
-    out["close_sma200_dist"] = (close / out["sma_200"]) - 1.0
+    out["sma50_sma200_ratio"] = (out["sma_50"] / sma_200) - 1.0
+
+    # close_sma200_dist: ELIMINADA por alta multicolinealidad con sma50_sma200_ratio (r=0.78)
+    # y ret_13w (r=0.79). La señal de "distancia al largo plazo" ya está capturada por ambos.
 
     # Eliminado por ser redundante con sma50 y sma50_sma200_ratio
     # ema_50: Exponential Moving Average de 50 días
