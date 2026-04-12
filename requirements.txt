@@ -9,3 +9,4 @@ torch>=2.0
 matplotlib>=3.7
 mlflow>=2.10
 pytest>=8.0
+alpaca-py>=0.20   # Datos históricos intradiarios para E3 (US stocks, 2+ años de 5-min)

@@ -115,8 +115,10 @@ def run_for_ticker(config: dict, ticker: str, raw_dir: Path, out_dir: Path) -> d
     # Configuración del modelo ensemble
     model_cfg = e3.get("model", {})  # Config modelo
     ensemble_members = int(model_cfg.get("ensemble_members", 3))    # Número de miembros en ensemble
-    hidden_size = int(model_cfg.get("lstm_hidden_size", 64))        # Unidades LSTM
+    hidden_size = int(model_cfg.get("lstm_hidden_size", 128))       # Unidades LSTM
     num_layers = int(model_cfg.get("lstm_num_layers", 2))           # Capas LSTM
+    dense_units = model_cfg.get("dense_units", None)                # Capa densa opcional
+    dense_units = int(dense_units) if dense_units is not None else None
     dropout = float(model_cfg.get("dropout", 0.2))                  # Regularización
     lr = float(model_cfg.get("learning_rate", 1e-3))                # Velocidad de aprendizaje
     batch_size = int(model_cfg.get("batch_size", 256))              # Tamaño de batch
@@ -185,6 +187,7 @@ def run_for_ticker(config: dict, ticker: str, raw_dir: Path, out_dir: Path) -> d
             input_size=X_train_s.shape[-1],  # Input size
             hidden_size=hidden_size,  # Hidden
             num_layers=num_layers,  # Capas
+            dense_units=dense_units,  # Capa densa opcional
             dropout=dropout,  # Dropout
             seed=seed,  # Seed
         )  # Fin init

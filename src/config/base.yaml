@@ -71,7 +71,12 @@ universe:
       - "EDN.BA"
       - "TGSU2.BA"
       - "LOMA.BA"
-    # e3, e4: tickers se definirán cuando se reconstruyan las estrategias
+    e3_intraday:
+      - "SPY"
+      - "AAPL"
+      - "NVDA"
+      - "QQQ"
+    # e4: tickers se definirán cuando se reconstruya la estrategia
 
 costs:
   # Costos round-trip (entrada+salida). Usar en backtest neto.
@@ -165,9 +170,47 @@ strategies:
       max_position: 1.0
 
   e3_intraday:
-    enabled: false  # TODO: rebuild from scratch
+    enabled: false  # Habilitar después del baseline + EDA
     frequency: "5min"
-    horizon_bars: 6
+    lookback_bars: 96    # 8 horas de historia (12 barras/hora × 8h)
+    horizon_bars: 6      # 30 minutos hacia adelante (6 barras × 5min)
+
+    thresholds:
+      tau_buy: 0.001     # Señal compra: retorno predicho >= 0.1%
+      tau_sell: 0.001    # Señal venta/short: retorno predicho <= -0.1%
+
+    # Split temporal para baseline (simple, sin walk-forward)
+    # Walk-forward se reserva para el LSTM donde tiene más valor
+    splits:
+      train_frac: 0.70
+      val_frac: 0.15
+      # test_frac implícito: 0.15
+
+    baseline:
+      model: Ridge
+      alpha: 1.0
+
+    model:
+      type: "LSTM"
+      ensemble_members: 3      # Promedia N modelos con distintas semillas → predicciones más estables
+      lstm_hidden_size: 128    # Aumentado de 64 → 128 (2+ años de datos disponibles via Alpaca)
+      lstm_num_layers: 2       # 2 capas apiladas internamente por PyTorch nn.LSTM
+      dense_units: 32          # Capa densa intermedia: LSTM → Dense(ReLU) → Linear(1)
+      dropout: 0.2
+      optimizer: "adamw"       # Consistente con E1/E2 (AdamW = Adam + weight decay desacoplado)
+      learning_rate: 1e-3
+      weight_decay: 0.0
+      batch_size: 256
+      max_epochs: 50           # Aumentado de 30 → 50 (más datos, más épocas necesarias)
+      early_stopping_patience: 7
+      clipnorm: 1.0            # Gradient clipping (consistente con E1/E2)
+      loss: "huber"
+      huber_delta: 1.0
+
+    backtest:
+      execution_delay_bars: 1
+      allow_short: true
+      max_position: 1.0
 
   e4_pairs:
     enabled: false  # TODO: rebuild from scratch
@@ -228,7 +271,13 @@ lifecycle:
           ml_ic: 0.20
           ml_directional_accuracy: 0.30
           bt_calmar: 0.20
-      # e3: {}   # TODO: definir al reconstruir E3 (intradía, métricas como profit_factor/win_rate)
+      e3:
+        # E3 intradiario: horizonte corto (30min), mayor peso a profit_factor y directional_accuracy
+        scoring_weights:
+          bt_sharpe: 0.30
+          ml_ic: 0.20
+          ml_directional_accuracy: 0.25
+          bt_calmar: 0.25
       # e4: {}   # TODO: definir al reconstruir E4 (pairs trading, métricas de spread/cointegración)
 
   retirement:

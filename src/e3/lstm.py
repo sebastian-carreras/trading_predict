@@ -27,8 +27,9 @@ class LSTMRegressor:
     def __init__(
         self,
         input_size: int,
-        hidden_size: int = 64,
+        hidden_size: int = 128,
         num_layers: int = 2,
+        dense_units: Optional[int] = 32,
         dropout: float = 0.2,
         seed: int = 42,
         device: Optional[str] = None,
@@ -54,7 +55,14 @@ class LSTMRegressor:
                     batch_first=True,
                     dropout=dropout if num_layers > 1 else 0.0,
                 )
-                self.head = torch.nn.Linear(hidden_size, 1)
+                if dense_units:
+                    self.head = torch.nn.Sequential(
+                        torch.nn.Linear(hidden_size, dense_units),
+                        torch.nn.ReLU(),
+                        torch.nn.Linear(dense_units, 1),
+                    )
+                else:
+                    self.head = torch.nn.Linear(hidden_size, 1)
 
             def forward(self, x):
                 out, _ = self.lstm(x)
@@ -72,9 +80,11 @@ class LSTMRegressor:
         y_val: np.ndarray,
         *,
         learning_rate: float = 1e-3,
+        weight_decay: float = 0.0,
         batch_size: int = 256,
         max_epochs: int = 30,
         early_stopping_patience: int = 5,
+        clipnorm: float = 1.0,
         loss: str = "huber",
         huber_delta: float = 1.0,
         verbose: bool = True,
@@ -95,7 +105,7 @@ class LSTMRegressor:
             # Huber (SmoothL1) with beta ~= delta
             criterion = torch.nn.SmoothL1Loss(beta=huber_delta)
 
-        optim = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
+        optim = torch.optim.AdamW(self.model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
         best_val = float("inf")
         best_state = None
@@ -113,7 +123,7 @@ class LSTMRegressor:
                 pred = self.model(xb)
                 l = criterion(pred, yb)
                 l.backward()
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=clipnorm)
                 optim.step()
                 train_losses.append(float(l.item()))
 

@@ -415,6 +415,81 @@ strategies:
         critical_above: 30
 
   # ----------------------------------------------------------
+  # E3 Baseline — Referencia fija (Ridge Regression 5-min)
+  # ----------------------------------------------------------
+  e3_baseline:
+    display_name: "E3 Baseline"
+    experiment_name: "E3_Baseline"
+    description: "Ridge Regression, split 70/15/15, 5-min bars, horizon 6 bars — referencia fija"
+
+    metrics:
+      # --- ML Metrics ---
+      # Umbrales permisivos — Ridge sobre 960 features aplanadas es un floor intencional
+      ml_mae:
+        direction: "lower_is_better"
+        green_max: 0.002       # MAE intraday bajo (retornos ~0.001–0.005)
+        red_min: 0.005         # MAE muy alto = modelo sin señal
+        unit: ""
+
+      ml_rmse:
+        direction: "lower_is_better"
+        green_max: 0.003
+        red_min: 0.008
+        unit: ""
+
+      ml_ic:
+        direction: "higher_is_better"
+        green_min: 0.01        # cualquier correlación positiva
+        red_max: -0.05         # anticorrelación
+        unit: ""
+
+      ml_directional_accuracy:
+        direction: "higher_is_better"
+        green_min: 0.51        # apenas mejor que azar
+        red_max: 0.45
+        unit: "%"
+
+      # --- Trading Metrics ---
+      # Baseline esperado con Sharpe muy negativo (~-20 a -60); umbrales calibrados como floor
+      bt_sharpe:
+        direction: "higher_is_better"
+        green_min: -1.0        # cualquier sharpe > -1 es "aceptable para un baseline"
+        red_max: -10.0         # sharpe < -10 = señal invertida / costos > ganancia
+        unit: ""
+
+      bt_cagr:
+        direction: "higher_is_better"
+        green_min: 0.0
+        red_max: -0.5
+        unit: "%"
+
+      bt_max_drawdown:
+        direction: "lower_is_better"
+        green_max: 0.50
+        red_min: 0.90
+        unit: "%"
+
+      bt_calmar:
+        direction: "higher_is_better"
+        green_min: 0.0
+        red_max: -0.5
+        unit: ""
+
+      bt_profit_factor:
+        direction: "higher_is_better"
+        green_min: 1.0         # break even
+        red_max: 0.70
+        unit: ""
+
+    timing:
+      train_seconds:
+        warn_above: 120        # Ridge sobre 100K barras ~30-60s; >2min = lento
+        critical_above: 300
+      predict_seconds:
+        warn_above: 10
+        critical_above: 30
+
+  # ----------------------------------------------------------
   # E3 Intraday — Intraday 5-min bars
   # ----------------------------------------------------------
   e3_intraday:

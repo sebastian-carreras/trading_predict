@@ -974,6 +974,7 @@ def run_e1_for_ticker(
                     metrics=summary, strategy="e1", ticker=ticker,
                     run_dir=out_dir, variant="e1_conservative",
                     log_path=root / "models" / "metrics_log.jsonl",
+                    feature_names=list(feat_names),
                 )
                 passed, errors = validate_candidate(run_dir=out_dir, ticker=ticker)
                 if passed:
@@ -983,6 +984,7 @@ def run_e1_for_ticker(
                         strategy="e1", ticker=ticker,
                         run_dir=str(out_dir.relative_to(root)),
                         metrics=summary, variant="e1_conservative",
+                        feature_names=list(feat_names),
                     )
                     print(f"  ✓ Registered {ticker} as candidate in lifecycle registry")
 
@@ -1254,6 +1256,7 @@ def run_e1_for_ticker(
                 metrics=summary, strategy="e1", ticker=ticker,
                 run_dir=out_dir, variant="e1_conservative",
                 log_path=root / "models" / "metrics_log.jsonl",
+                feature_names=list(feat_names),
             )
             passed, errors = validate_candidate(run_dir=out_dir, ticker=ticker)
             if passed:
@@ -1262,6 +1265,7 @@ def run_e1_for_ticker(
                     strategy="e1", ticker=ticker,
                     run_dir=str(out_dir.relative_to(root)),
                     metrics=summary, variant="e1_conservative",
+                    feature_names=list(feat_names),
                 )
                 print(f"  ✓ Registered {ticker} as candidate in lifecycle registry")
 
@@ -1305,6 +1309,11 @@ def main() -> None:
         "--auto-promote",  # Flag de auto-promoción
         action="store_true",  # Booleano
         help="Automatically promote candidate to champion if it beats the current champion",
+    )
+    parser.add_argument(
+        "--refresh-data",
+        action="store_true",
+        help="Descargar y limpiar datos antes de entrenar (por defecto usa datos existentes)",
     )
     args = parser.parse_args()  # Parseo de argumentos
 
@@ -1351,6 +1360,38 @@ def main() -> None:
             print(f"⚠️  E1_TUNED_PARAMS_PATH configurado pero archivo no existe: {resolved}")
 
     raw_dir = root / "data" / "raw" / "daily"  # Directorio raw diario
+    clean_dir = root / "data" / "clean"  # Directorio de datos limpios
+
+    # ------------------------------------------------------------------
+    # Descarga y limpieza de datos
+    # ------------------------------------------------------------------
+    if args.refresh_data:
+        print("\nDescargando datos...")
+        try:
+            from ..data.download_daily import download_daily_ohlcv
+            written = download_daily_ohlcv(
+                tickers, out_dir=raw_dir, period="10y",
+                skip_existing=True, min_days_fresh=1,
+            )
+            print(f"✓ Descargados/actualizados {len(written)} archivos\n")
+        except Exception as exc:
+            print(f"⚠️  Descarga: {exc}\n")
+
+        print("Limpiando datos...")
+        try:
+            from ..data.clean_daily import process_daily_data_with_cleaning
+            reports = process_daily_data_with_cleaning(
+                raw_dir=raw_dir, clean_dir=clean_dir,
+                strategy="forward_fill", min_days=252,
+                remove_zero_volume=True, verbose=False,
+                tickers=list(dict.fromkeys(tickers)),
+            )
+            cleaned = sum(1 for r in reports.values() if r.get("status") == "cleaned")
+            print(f"✓ Limpiados: {cleaned}\n")
+        except Exception as exc:
+            print(f"⚠️  Limpieza: {exc}\n")
+    else:
+        print("\nUsando datos existentes (--refresh-data para actualizar)\n")
 
     out_base = root / "runs" / "e1_conservative" / datetime.now().strftime("%Y%m%d_%H%M%S")  # Output run
     ensure_dir(out_base)  # Crear folder de salida

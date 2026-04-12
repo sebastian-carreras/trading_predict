@@ -36,6 +36,7 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 from src.lifecycle.registry import ModelRegistry  # noqa: E402
 from src.lifecycle.promotion import (  # noqa: E402
     _DEFAULT_LOG_PATH,
+    PromotionDecision,
     evaluate_and_promote_all,
     get_strategy_promotion_config,
     print_promotion_summary,
@@ -102,8 +103,8 @@ def main() -> None:
     parser.add_argument(
         "--strategy",
         type=str,
-        default="e1",
-        help="Strategy key in registry (default: e1)",
+        default="",
+        help="Strategy prefix(es) in registry (e.g. e1 or e1,e2). If omitted, evaluates e1,e2,e3,e4.",
     )
     parser.add_argument(
         "--tickers",
@@ -171,70 +172,114 @@ def main() -> None:
 
     registry = ModelRegistry(registry_path)
 
-    # Determine tickers
-    if args.tickers:
-        tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
+    # Determine strategy prefixes to evaluate.
+    default_strategy_prefixes = ["e1", "e2", "e3", "e4"]
+    if args.strategy:
+        requested_prefixes = [s.strip() for s in args.strategy.split(",") if s.strip()]
+        strategy_prefixes = requested_prefixes or default_strategy_prefixes
     else:
-        # Find all tickers with a pending candidate
-        all_candidates = registry.list_all(strategy=args.strategy, stage="candidate")
-        tickers = [c["ticker"] for c in all_candidates]
+        strategy_prefixes = default_strategy_prefixes
 
-    if not tickers:
-        print(f"No pending candidates found for strategy '{args.strategy}'.")
+    configured_tickers = [t.strip() for t in args.tickers.split(",") if t.strip()] if args.tickers else []
+    strategy_keys = list(registry.data.get("strategies", {}).keys())
+
+    # Preserve registry order and match full key or prefix (e.g. e1 or e1_*).
+    selected_strategies: list[str] = []
+    for key in strategy_keys:
+        if any(key == prefix or key.startswith(f"{prefix}_") for prefix in strategy_prefixes):
+            selected_strategies.append(key)
+
+    if not selected_strategies:
+        joined = ", ".join(strategy_prefixes)
+        print(f"No strategies found in registry for: {joined}")
         sys.exit(0)
 
-    # Header
-    resolved_cfg = get_strategy_promotion_config(promo_cfg, args.strategy)
+    log_path = _PROJECT_ROOT / "models" / "promotion_log.jsonl"
     mode = "DRY-RUN" if dry_run else "EXECUTE"
     force_label = " (FORCE)" if args.force else ""
-    print(f"\n{'='*60}")
-    print(f"Model Promotion — {mode}{force_label}")
-    print(f"Strategy: {args.strategy} | Tickers: {len(tickers)}")
-    print(f"Min improvement: {resolved_cfg.get('min_improvement', 0.05):.0%}")
-    weights = resolved_cfg.get("scoring_weights", {})
-    if weights:
-        print(f"Scoring weights: {weights}")
-    print(f"{'='*60}\n")
+    overall_decisions: dict[str, dict[str, PromotionDecision]] = {}
 
-    # Run evaluation
-    log_path = _PROJECT_ROOT / "models" / "promotion_log.jsonl"
-    decisions = evaluate_and_promote_all(
-        registry,
-        strategy=args.strategy,
-        tickers=tickers,
-        config=promo_cfg,
-        dry_run=dry_run,
-        force=args.force,
-        log_path=log_path,
-    )
+    for strategy_key in selected_strategies:
+        if configured_tickers:
+            tickers = configured_tickers
+        else:
+            all_candidates = registry.list_all(strategy=strategy_key, stage="candidate")
+            tickers = [c["ticker"] for c in all_candidates]
 
-    # Print summary table
-    print_promotion_summary(decisions, strategy=args.strategy)
+        if not tickers:
+            print(f"No pending candidates found for strategy '{strategy_key}'.")
+            continue
 
-    # Verbose detail
-    if args.verbose:
+        # Header
+        resolved_cfg = get_strategy_promotion_config(promo_cfg, strategy_key)
         print(f"\n{'='*60}")
-        print("Detailed breakdown per ticker:")
-        print(f"{'='*60}")
-        for ticker, d in decisions.items():
-            print(f"\n  {ticker}:")
-            print(f"    Champion variant: {d.champion_variant or '-'}")
-            print(f"    Candidate variant: {d.candidate_variant or '-'}")
-            print(f"    Candidate score: {d.candidate_score:.6f}")
-            print(f"    Champion score:  {d.champion_score:.6f}")
-            print(f"    Improvement:     {d.improvement_pct:.2%}")
-            if d.detail:
-                print("    Per-metric contributions:")
-                for k, v in sorted(d.detail.items()):
-                    print(f"      {k}: {v:.6f}")
+        print(f"Model Promotion — {mode}{force_label}")
+        print(f"Strategy: {strategy_key} | Tickers: {len(tickers)}")
+        print(f"Min improvement: {resolved_cfg.get('min_improvement', 0.05):.0%}")
+        weights = resolved_cfg.get("scoring_weights", {})
+        if weights:
+            print(f"Scoring weights: {weights}")
+        print(f"{'='*60}\n")
 
-    # Summary line
-    promoted = sum(1 for d in decisions.values() if d.promoted)
-    if dry_run and any(d.should_promote for d in decisions.values()):
-        would_promote = sum(1 for d in decisions.values() if d.should_promote)
-        print(f"\n💡 {would_promote} ticker(s) would be promoted. Run with --execute to apply.")
-    elif promoted > 0:
-        print(f"\n✓ {promoted} ticker(s) promoted to champion.")
+        # Run evaluation
+        decisions = evaluate_and_promote_all(
+            registry,
+            strategy=strategy_key,
+            tickers=tickers,
+            config=promo_cfg,
+            dry_run=dry_run,
+            force=args.force,
+            log_path=log_path,
+        )
+        overall_decisions[strategy_key] = decisions
+
+        # Print summary table
+        print_promotion_summary(decisions, strategy=strategy_key)
+
+        # Verbose detail
+        if args.verbose:
+            print(f"\n{'='*60}")
+            print(f"Detailed breakdown per ticker ({strategy_key}):")
+            print(f"{'='*60}")
+            for ticker, d in decisions.items():
+                print(f"\n  {ticker}:")
+                print(f"    Champion variant: {d.champion_variant or '-'}")
+                print(f"    Candidate variant: {d.candidate_variant or '-'}")
+                print(f"    Candidate score: {d.candidate_score:.6f}")
+                print(f"    Champion score:  {d.champion_score:.6f}")
+                print(f"    Improvement:     {d.improvement_pct:.2%}")
+                if d.detail:
+                    print("    Per-metric contributions:")
+                    for k, v in sorted(d.detail.items()):
+                        print(f"      {k}: {v:.6f}")
+
+    if not overall_decisions:
+        sys.exit(0)
+
+    # Global summary lines
+    promoted_total = 0
+    would_promote_total = 0
+    total_tickers = 0
+    for decisions in overall_decisions.values():
+        promoted_total += sum(1 for d in decisions.values() if d.promoted)
+        would_promote_total += sum(1 for d in decisions.values() if d.should_promote)
+        total_tickers += len(decisions)
+
+    if dry_run and would_promote_total > 0:
+        print(
+            f"\n💡 {would_promote_total} ticker(s) would be promoted across "
+            f"{len(overall_decisions)} strategy(ies). Run with --execute to apply."
+        )
+    elif promoted_total > 0:
+        print(
+            f"\n✓ {promoted_total} ticker(s) promoted to champion across "
+            f"{len(overall_decisions)} strategy(ies)."
+        )
+    else:
+        print(
+            f"\nNo promotions for {total_tickers} ticker(s) across "
+            f"{len(overall_decisions)} strategy(ies)."
+        )
 
 
 if __name__ == "__main__":

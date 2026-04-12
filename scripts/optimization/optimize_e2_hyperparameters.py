@@ -58,8 +58,10 @@ import io
 import logging
 import os
 import shutil
+import socket
 import sys
 import tempfile
+from urllib.parse import urlparse
 import time
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -158,88 +160,127 @@ class E2HyperparameterOptimizer:
                 .get("e2_moderate", [])
             )
 
-        # MLflow - Configurar tracking URI
-        self.mlflow_enabled = True
-        mlflow_dir = self.root / "runs/mlflow_local"
-        mlflow_dir.mkdir(parents=True, exist_ok=True)
-        mlflow_db = mlflow_dir / "mlflow.db"
-        local_tracking_uri = f"sqlite:///{mlflow_db}"
-
-        if mlflow_tracking_uri == "local":
-            tracking_uri = local_tracking_uri
-            print(f"✓ Usando MLflow local (SQLite): {mlflow_db}")
-        else:
-            tracking_uri = mlflow_tracking_uri
-            print(f"✓ Conectando a MLflow server: {tracking_uri}")
-
-        mlflow.set_tracking_uri(tracking_uri)
-
-        # Configurar experimento
+        # MLflow - Configurar tracking URI con cascade fallback robusto:
+        # remoto (MLFLOW_TRACKING_URI) → SQLite local (runs/mlflow_local/mlflow.db) → file store
+        # El SQLite local es el mismo archivo que monta Docker (up_transparent_mlflow.sh),
+        # así que los runs registrados offline son visibles cuando el servidor se levanta.
+        self.mlflow_enabled = False
         experiment_name = "E2_Hyperparameter_Optimization"
+        remote_check_timeout_seconds = float(os.getenv("MLFLOW_REMOTE_CHECK_TIMEOUT_SECONDS", "1.5"))
 
-        local_artifacts_dir = self.root / "runs" / "mlflow_local" / "artifacts"
+        local_sqlite_dir = self.root / "runs" / "mlflow_local"
+        local_sqlite_dir.mkdir(parents=True, exist_ok=True)
+        local_sqlite_db = local_sqlite_dir / "mlflow.db"
+        local_artifacts_dir = local_sqlite_dir / "artifacts"
         local_artifacts_dir.mkdir(parents=True, exist_ok=True)
-        artifact_location = local_artifacts_dir.resolve().as_uri()
+        local_sqlite_uri = f"sqlite:///{local_sqlite_db}"
 
-        try:
-            mlflow.set_experiment(experiment_name)
+        # Permitir override del SQLite local via env var
+        fallback_local_tracking_uri = os.getenv("MLFLOW_LOCAL_TRACKING_URI", "").strip()
+        if fallback_local_tracking_uri:
+            local_sqlite_uri = fallback_local_tracking_uri
 
-            # Verificar si el artifact_location del experimento existente es accesible.
-            # Si fue creado desde Docker (ej: /opt/airflow/...), log_artifact fallará localmente.
-            exp = mlflow.get_experiment_by_name(experiment_name)
-            if exp and exp.artifact_location:
-                _art_loc = exp.artifact_location
-                # Detectar paths de Docker/contenedor inaccesibles desde el host
-                if _art_loc.startswith("/opt/") or _art_loc.startswith("file:///opt/"):
-                    print(f"⚠️  Experimento '{experiment_name}' tiene artifact_location de Docker: {_art_loc}")
-                    print(f"   Recreando experimento con artifact_location local...")
-                    # Eliminar experimento viejo (soft delete) y recrear
-                    mlflow.delete_experiment(exp.experiment_id)
-                    mlflow.create_experiment(experiment_name, artifact_location=artifact_location)
+        local_mlruns = str(self.root / "mlruns")
+        isolated_mlruns = str(self.root / "runs" / "e2_moderate" / "mlflow_store")
+        Path(isolated_mlruns).mkdir(parents=True, exist_ok=True)
+
+        base_mlruns_path = Path(local_mlruns)
+        has_malformed_mlruns = False
+        if base_mlruns_path.exists():
+            for _exp_dir in base_mlruns_path.iterdir():
+                if not _exp_dir.is_dir() or not _exp_dir.name.isdigit():
+                    continue
+                if not (_exp_dir / "meta.yaml").exists():
+                    has_malformed_mlruns = True
+                    break
+
+        def _activate_mlflow(
+            uri: str,
+            experiment_artifact_dir: Path | None = None,
+        ) -> tuple[bool, str | None]:
+            """Activa MLflow con la URI dada. Retorna (ok, error_msg)."""
+            try:
+                mlflow.set_tracking_uri(uri)
+                if experiment_artifact_dir is not None:
+                    exp = mlflow.get_experiment_by_name(experiment_name)
+                    if exp is None:
+                        mlflow.create_experiment(
+                            experiment_name,
+                            artifact_location=experiment_artifact_dir.resolve().as_uri(),
+                        )
+                    elif exp.lifecycle_stage == "deleted":
+                        # Restaurar si fue soft-deleted
+                        mlflow.tracking.MlflowClient().restore_experiment(exp.experiment_id)
                     mlflow.set_experiment(experiment_name)
-                    print(f"✓ Experimento recreado con artifacts locales: {artifact_location}")
-
-            _test_run = mlflow.start_run(run_name="_init_test")
-            mlflow.end_run()
-            print(f"✓ MLflow habilitado: {tracking_uri} (experiment={experiment_name})")
-        except Exception as e:
-            error_msg = str(e)
-            print(f"⚠️  Error configurando MLflow: {e}")
-
-            # Fallback automático: si falla remoto, intentar local SQLite
-            if mlflow_tracking_uri != "local":
-                try:
-                    mlflow.set_tracking_uri(local_tracking_uri)
+                else:
+                    exp = mlflow.get_experiment_by_name(experiment_name)
+                    if exp is not None and exp.lifecycle_stage == "deleted":
+                        mlflow.tracking.MlflowClient().restore_experiment(exp.experiment_id)
                     mlflow.set_experiment(experiment_name)
-                    _test_run = mlflow.start_run(run_name="_init_test_local_fallback")
-                    mlflow.end_run()
-                    tracking_uri = local_tracking_uri
-                    print(f"✓ Fallback MLflow local habilitado: {tracking_uri} (experiment={experiment_name})")
-                    error_msg = ""
-                except Exception as fallback_exc:
-                    print(f"⚠️  Falló fallback local de MLflow: {fallback_exc}")
+                return True, None
+            except Exception as exc:
+                return False, str(exc)
 
-            # Si es un error de revisión de Alembic, recrear la base de datos
-            if error_msg and ("Can't locate revision" in error_msg or "alembic" in error_msg.lower()):
-                if mlflow_tracking_uri == "local":
-                    print(f"⚠️  Base de datos MLflow corrupta. Recreando...")
-                    if mlflow_db.exists():
-                        mlflow_db.unlink()
-                    mlflow.set_tracking_uri(tracking_uri)
+        def _is_tracking_uri_reachable(uri: str, timeout_seconds: float) -> tuple[bool, str | None]:
+            """Chequeo rápido de conectividad (solo para URIs http/https)."""
+            parsed = urlparse(uri)
+            if parsed.scheme not in {"http", "https"}:
+                return True, None
+            host = parsed.hostname
+            if not host:
+                return True, None
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            try:
+                with socket.create_connection((host, port), timeout=timeout_seconds):
+                    return True, None
+            except OSError as exc:
+                return False, str(exc)
 
-            # Crear experimento manualmente
-            if error_msg:
-                try:
-                    mlflow.create_experiment(experiment_name, artifact_location=artifact_location)
-                    mlflow.set_experiment(experiment_name)
-                    print(f"✓ Experimento '{experiment_name}' creado")
-                except Exception:
-                    try:
-                        mlflow.set_experiment(experiment_name)
-                        print(f"✓ Experimento '{experiment_name}' configurado")
-                    except Exception as final_exc:
-                        print(f"⚠️  MLflow no disponible, continuando sin tracking: {final_exc}")
-                        self.mlflow_enabled = False
+        _local_uris = [
+            {"uri": local_sqlite_uri, "store_path": str(local_sqlite_db), "artifact_dir": local_artifacts_dir},
+            {"uri": f"file://{isolated_mlruns}", "store_path": isolated_mlruns, "artifact_dir": None},
+            {"uri": f"file://{local_mlruns}", "store_path": local_mlruns, "artifact_dir": None},
+        ] if has_malformed_mlruns else [
+            {"uri": local_sqlite_uri, "store_path": str(local_sqlite_db), "artifact_dir": local_artifacts_dir},
+            {"uri": f"file://{local_mlruns}", "store_path": local_mlruns, "artifact_dir": None},
+            {"uri": f"file://{isolated_mlruns}", "store_path": isolated_mlruns, "artifact_dir": None},
+        ]
+
+        # Leer URI remota del constructor (--mlflow_uri) o de la env var
+        remote_uri = os.getenv("MLFLOW_TRACKING_URI", "").strip()
+        if mlflow_tracking_uri != "local":
+            remote_uri = mlflow_tracking_uri
+
+        if remote_uri:
+            reachable, reach_err = _is_tracking_uri_reachable(remote_uri, remote_check_timeout_seconds)
+            if reachable:
+                ok, err = _activate_mlflow(remote_uri)
+                if ok:
+                    self.mlflow_enabled = True
+                    print(f"✓ MLflow habilitado: {remote_uri} (experiment={experiment_name})")
+                else:
+                    print(f"⚠️  MLflow servidor no disponible ({err})")
+            else:
+                print(
+                    f"⚠️  MLflow remoto no accesible "
+                    f"({remote_uri}, timeout={remote_check_timeout_seconds}s): {reach_err}"
+                )
+
+        if not self.mlflow_enabled:
+            # Cascade local: sqlite → file store
+            for _cfg in _local_uris:
+                ok, err = _activate_mlflow(_cfg["uri"], experiment_artifact_dir=_cfg["artifact_dir"])
+                if ok:
+                    self.mlflow_enabled = True
+                    mode = "local fallback" if remote_uri else "tracking local"
+                    print(f"✓ MLflow habilitado ({mode}, experiment={experiment_name})")
+                    print(f"  → Store URI: {_cfg['store_path']}")
+                    print(f"  → Para visualizar: mlflow ui --backend-store-uri {_cfg['store_path']}")
+                    break
+                print(f"⚠️  Falló MLflow local en {_cfg['store_path']}: {err}")
+
+        if not self.mlflow_enabled:
+            print("⚠️  MLflow no disponible, continuando sin tracking")
 
         # Optuna
         self.optuna_db_path = optuna_db_path
@@ -1305,6 +1346,11 @@ def main():
             converted = _best_params_to_e2_tuned_schema(bp)
 
             # Sincronización por defecto: aplicar best global a todos los tickers evaluados.
+            # Los tickers con estudio independiente propio (by_ticker/) tienen prioridad.
+            per_ticker_tuned = {
+                t for t in tickers
+                if (output_dir / "by_ticker" / t / "best_params_e2.yaml").exists()
+            }
             agg_compact_path = output_dir / "e2_tuned_params_by_ticker.yaml"
             try:
                 with open(agg_compact_path, "r") as f:
@@ -1313,6 +1359,8 @@ def main():
                 agg_compact = {}
 
             for ticker_name in tickers:
+                if ticker_name in per_ticker_tuned:
+                    continue  # Preservar estudio independiente, no sobreescribir con global.
                 agg_compact[ticker_name] = converted
 
             E2HyperparameterOptimizer._safe_write_file(
@@ -1336,6 +1384,8 @@ def main():
                 }
 
             for ticker_name in tickers:
+                if ticker_name in per_ticker_tuned:
+                    continue  # Preservar estudio independiente.
                 agg_meta.setdefault("meta", {})[ticker_name] = {
                     "study_name": study.study_name,
                     "best_value": float(study.best_value),
@@ -1350,7 +1400,12 @@ def main():
                 lambda f: yaml.dump(agg_meta, f, default_flow_style=False, sort_keys=False),
             )
 
+            updated_tickers = [t for t in tickers if t not in per_ticker_tuned]
             print(f"\n✓ YAML por ticker sincronizado (best global): {agg_compact_path}")
+            if updated_tickers:
+                print(f"  Actualizado con best global: {', '.join(updated_tickers)}")
+            if per_ticker_tuned:
+                print(f"  ⏭  Preservados (estudio propio): {', '.join(sorted(per_ticker_tuned))}")
             print(f"✓ YAML meta sincronizado: {agg_meta_path}")
         elif tickers:
             print("\n⚠️  No hay trials completos; no se sincronizó YAML por ticker.")

@@ -1,17 +1,22 @@
 """
 Construcción de features para E2 (Estrategia Moderada).
 
-Horizonte: 20 días | Lookback: 60 días | 16 features
+Horizonte: 20 días | Lookback: 60 días | 12 features
 
 Categorías:
-- Retornos (4): ret_1d, ret_5d, ret_10d, ret_20d
+- Retornos (2): ret_1d, ret_20d
 - Volatilidad (2): vol_20d, atr_14
 - Volumen (1): vol_ratio_20d
-- Tendencia (3): sma50_sma200_ratio, close_sma50_dist, close_sma200_dist
+- Tendencia (2): sma50_sma200_ratio, close_sma50_dist
 - Momentum (2): macd_hist, rsi_14
-- Bollinger (2): bb_pct_b, bb_bandwidth
+- Bollinger (1): bb_pct_b
 - Fuerza tendencia (1): adx_14
 - Riesgo/asimetría (1): skew_ret_20d
+
+Deshabilitados tras EDA §2.2 (correlación):
+- ret_5d, ret_10d: redundantes con ret_1d/ret_20d (r≈0.7-0.85)
+- close_sma200_dist: redundante con sma50_sma200_ratio + close_sma50_dist (r≈0.78)
+- bb_bandwidth: redundante con vol_20d (r≈0.85-0.95)
 """
 
 from __future__ import annotations
@@ -21,13 +26,13 @@ import pandas as pd
 
 
 def compute_e2_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Calcula 16 features para E2 (moderada, medio plazo).
+    """Calcula 12 features para E2 (moderada, medio plazo).
 
     Args:
         df: DataFrame con OHLCV diario (index=timestamp, cols: open/high/low/close/volume)
 
     Returns:
-        DataFrame con 16 features (mismo índice que df)
+        DataFrame con 12 features (mismo índice que df)
     """
     out = pd.DataFrame(index=df.index)
 
@@ -36,7 +41,7 @@ def compute_e2_features(df: pd.DataFrame) -> pd.DataFrame:
     low = df["low"].astype("float64")
     volume = df["volume"].astype("float64")
 
-    # ── Retornos (4 features) ──────────────────────────────────────────
+    # ── Retornos (2 features) ──────────────────────────────────────────
 
     log_close = np.log(close)
 
@@ -44,11 +49,11 @@ def compute_e2_features(df: pd.DataFrame) -> pd.DataFrame:
     # Para H=20, el retorno diario es informativo (a diferencia de H=90 donde es ruido)
     out["ret_1d"] = log_close.diff()
 
-    # ret_5d: Momentum semanal (suma rolling de retornos diarios)
-    out["ret_5d"] = out["ret_1d"].rolling(5).sum()
+    # DESHABILITADO (EDA §2.2): redundante con ret_1d y ret_20d — ventanas solapadas generan r≈0.7-0.85
+    # out["ret_5d"] = out["ret_1d"].rolling(5).sum()
 
-    # ret_10d: Momentum 2 semanas — punto intermedio para H=20
-    out["ret_10d"] = out["ret_1d"].rolling(10).sum()
+    # DESHABILITADO (EDA §2.2): redundante con ret_1d y ret_20d — ventanas solapadas generan r≈0.7-0.85
+    # out["ret_10d"] = out["ret_1d"].rolling(10).sum()
 
     # ret_20d: Momentum mensual — directamente alineado con target H=20
     out["ret_20d"] = out["ret_1d"].rolling(20).sum()
@@ -79,7 +84,7 @@ def compute_e2_features(df: pd.DataFrame) -> pd.DataFrame:
     sma_vol_20 = volume.rolling(20).mean()
     out["vol_ratio_20d"] = volume / (sma_vol_20 + 1e-12)
 
-    # ── Tendencia (3 features) ────────────────────────────────────────
+    # ── Tendencia (2 features) ────────────────────────────────────────
 
     sma_50 = close.rolling(50).mean()
     sma_200 = close.rolling(200).mean()
@@ -92,9 +97,9 @@ def compute_e2_features(df: pd.DataFrame) -> pd.DataFrame:
     # Más reactiva que SMA(200), adecuada para H=20
     out["close_sma50_dist"] = (close / sma_50) - 1.0
 
-    # close_sma200_dist: Desviación del precio vs tendencia de largo plazo
-    # Contexto estructural (bull/bear market)
-    out["close_sma200_dist"] = (close / sma_200) - 1.0
+    # DESHABILITADO (EDA §2.2): redundante con sma50_sma200_ratio + close_sma50_dist (r≈0.78)
+    # Precedente: E1 eliminó este feature por la misma razón
+    # out["close_sma200_dist"] = (close / sma_200) - 1.0
 
     # ── Momentum (2 features) ─────────────────────────────────────────
 
@@ -114,7 +119,7 @@ def compute_e2_features(df: pd.DataFrame) -> pd.DataFrame:
     rs = avg_gain / (avg_loss + 1e-12)
     out["rsi_14"] = 100 - (100 / (1 + rs))
 
-    # ── Bollinger Bands (2 features) ──────────────────────────────────
+    # ── Bollinger Bands (1 feature) ───────────────────────────────────
 
     sma20 = close.rolling(20).mean()
     std20 = close.rolling(20).std()
@@ -125,9 +130,8 @@ def compute_e2_features(df: pd.DataFrame) -> pd.DataFrame:
     # >1 → sobrecompra extrema, <0 → sobreventa extrema
     out["bb_pct_b"] = (close - bb_lower) / (bb_upper - bb_lower + 1e-12)
 
-    # bb_bandwidth: Ancho de bandas normalizado
-    # Bajo → squeeze (posible breakout), alto → mercado activo
-    out["bb_bandwidth"] = (bb_upper - bb_lower) / sma20
+    # DESHABILITADO (EDA §2.2): redundante con vol_20d — ambos miden dispersión 20d, r≈0.85-0.95
+    # out["bb_bandwidth"] = (bb_upper - bb_lower) / sma20
 
     # ── Fuerza de Tendencia (1 feature) ───────────────────────────────
 

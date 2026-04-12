@@ -41,17 +41,21 @@ class ModelRegistry:
         variant: str,
         *,
         mlflow_run_id: str | None = None,
+        feature_names: list[str] | None = None,
     ) -> None:
         """Register a freshly-trained model as *candidate*."""
         tickers = self._ensure_strategy_tickers(strategy)
         entry = tickers.setdefault(ticker, _empty_ticker())
-        entry["candidate"] = {
+        candidate_entry: dict[str, Any] = {
             "variant": variant,
             "run_dir": str(run_dir),
             "registered_at": _now_iso(),
             "mlflow_run_id": mlflow_run_id,
             "metrics": _clean_metrics(metrics),
         }
+        if feature_names is not None:
+            candidate_entry["features"] = list(feature_names)
+        entry["candidate"] = candidate_entry
         self._save()
 
     def register_baseline(
@@ -61,16 +65,21 @@ class ModelRegistry:
         run_dir: str,
         metrics: dict[str, Any],
         variant: str,
+        *,
+        feature_names: list[str] | None = None,
     ) -> None:
         """Register or overwrite the fixed *baseline* for a ticker."""
         tickers = self._ensure_strategy_tickers(strategy)
         entry = tickers.setdefault(ticker, _empty_ticker())
-        entry["baseline"] = {
+        baseline_entry: dict[str, Any] = {
             "variant": variant,
             "run_dir": str(run_dir),
             "registered_at": _now_iso(),
             "metrics": _clean_metrics(metrics),
         }
+        if feature_names is not None:
+            baseline_entry["features"] = list(feature_names)
+        entry["baseline"] = baseline_entry
         self._save()
 
     def promote_to_champion(
@@ -139,6 +148,27 @@ class ModelRegistry:
         if entry is None:
             return None
         return entry.get("candidate")
+
+    def get_model_features(
+        self,
+        strategy: str,
+        ticker: str,
+        stage: str = "champion",
+    ) -> list[str] | None:
+        """Return the feature names for a given model stage, or ``None`` if not tracked."""
+        tickers = self._get_strategy_tickers(strategy)
+        if tickers is None:
+            return None
+        entry = tickers.get(ticker)
+        if entry is None:
+            return None
+        if stage == "retired":
+            retired = entry.get("retired", [])
+            return retired[0].get("features") if retired else None
+        model = entry.get(stage)
+        if model is None:
+            return None
+        return model.get("features")
 
     def retire_champion(
         self,

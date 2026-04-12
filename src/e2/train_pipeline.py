@@ -15,7 +15,7 @@ Flujo:
 
 Uso:
     python -m src.e2.train_pipeline
-    python -m src.e2.train_pipeline --tickers AAPL --skip-download --skip-cleaning
+    python -m src.e2.train_pipeline --tickers AAPL --refresh-data
     python -m src.e2.train_pipeline --tickers NVDA,GOOGL --auto-promote
 """
 
@@ -196,7 +196,10 @@ def _normalize_e2_tuned_entry(per_ticker: dict) -> dict:
 
 
 def _apply_tuned_overrides(*, config: dict, ticker: str) -> dict:
-    tuned_path = os.getenv("E2_TUNED_PARAMS_PATH", "").strip()
+    tuned_path = (
+        os.getenv("E2_TUNED_PARAMS_PATH", "").strip()
+        or os.getenv("TUNED_PARAMS_PATH", "").strip()
+    )
     if not tuned_path:
         return config
 
@@ -794,6 +797,7 @@ def run_e2_for_ticker(
                     metrics=summary, strategy="e2", ticker=ticker,
                     run_dir=out_dir, variant="e2_moderate",
                     log_path=root / "models" / "metrics_log.jsonl",
+                    feature_names=list(feat_names),
                 )
                 passed, errors = validate_candidate(run_dir=out_dir, ticker=ticker)
                 if passed:
@@ -802,6 +806,7 @@ def run_e2_for_ticker(
                         strategy="e2", ticker=ticker,
                         run_dir=str(out_dir.relative_to(root)),
                         metrics=summary, variant="e2_moderate",
+                        feature_names=list(feat_names),
                     )
                     print(f"  ✓ Registered {ticker} as candidate in lifecycle registry")
 
@@ -1036,6 +1041,7 @@ def run_e2_for_ticker(
                 metrics=summary, strategy="e2", ticker=ticker,
                 run_dir=out_dir, variant="e2_moderate",
                 log_path=root / "models" / "metrics_log.jsonl",
+                feature_names=list(feat_names),
             )
             passed, errors = validate_candidate(run_dir=out_dir, ticker=ticker)
             if passed:
@@ -1044,6 +1050,7 @@ def run_e2_for_ticker(
                     strategy="e2", ticker=ticker,
                     run_dir=str(out_dir.relative_to(root)),
                     metrics=summary, variant="e2_moderate",
+                    feature_names=list(feat_names),
                 )
                 print(f"  ✓ Registered {ticker} as candidate in lifecycle registry")
 
@@ -1087,12 +1094,8 @@ def main() -> None:
         help="Auto-promover candidato si supera al champion actual",
     )
     parser.add_argument(
-        "--skip-download", action="store_true",
-        help="Omitir descarga de datos",
-    )
-    parser.add_argument(
-        "--skip-cleaning", action="store_true",
-        help="Omitir limpieza de datos",
+        "--refresh-data", action="store_true",
+        help="Descargar y limpiar datos antes de entrenar (por defecto usa datos existentes)",
     )
     args = parser.parse_args()
 
@@ -1212,7 +1215,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Descarga y limpieza
     # ------------------------------------------------------------------
-    if not args.skip_download:
+    if args.refresh_data:
         print("\nPaso 1/3: Descargando datos...")
         try:
             from ..data.download_daily import download_daily_ohlcv
@@ -1223,10 +1226,7 @@ def main() -> None:
             print(f"✓ Descargados/actualizados {len(written)} archivos\n")
         except Exception as exc:
             print(f"⚠️  Descarga: {exc}\n")
-    else:
-        print("\nPaso 1/3: Descarga omitida\n")
 
-    if not args.skip_cleaning:
         print("Paso 2/3: Limpiando datos...")
         try:
             from ..data.clean_daily import process_daily_data_with_cleaning
@@ -1241,7 +1241,7 @@ def main() -> None:
         except Exception as exc:
             print(f"⚠️  Limpieza: {exc}\n")
     else:
-        print("Paso 2/3: Limpieza omitida\n")
+        print("\nUsando datos existentes (--refresh-data para actualizar)\n")
 
     # ------------------------------------------------------------------
     # Entrenamiento

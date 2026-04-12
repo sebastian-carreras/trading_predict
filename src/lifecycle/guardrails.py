@@ -96,6 +96,7 @@ def log_candidate_metrics(
     variant: str,
     *,
     log_path: str | Path | None = None,
+    feature_names: list[str] | None = None,
 ) -> Path:
     """Append all metrics to JSONL for future threshold calibration.
 
@@ -114,6 +115,9 @@ def log_candidate_metrics(
         "variant": variant,
         "run_dir": str(run_dir),
     }
+
+    if feature_names is not None:
+        entry["feature_names"] = list(feature_names)
 
     # Include all numeric metrics
     for key, value in metrics.items():

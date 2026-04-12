@@ -1,6 +1,4 @@
-# Trading Predict
-
-Sistema de trading automatizado con Machine Learning implementando cuatro estrategias diferenciadas por horizonte temporal y perfil de riesgo.
+# Inteligencia Artificial para la Toma de Decisiones en Compra y Venta de Activos Financieros
 
 ## Objetivo del Proyecto
 
