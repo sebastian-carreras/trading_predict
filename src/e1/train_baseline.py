@@ -37,7 +37,7 @@ from .baseline_linear import (  # Import baseline linear
     compute_baseline_metrics,  # Métricas del baseline
 )  # Fin import baseline linear
 from ..backtest.backtest_daily import backtest_daily_signals, summarize_backtest  # Backtesting diario
-from ..utils import ensure_dir, load_yaml, project_root  # Utilidades comunes
+from ..utils import apply_training_window, ensure_dir, load_yaml, project_root  # Utilidades comunes
 
 
 def run_baseline_for_ticker(  # Ejecutar baseline por ticker
@@ -48,6 +48,7 @@ def run_baseline_for_ticker(  # Ejecutar baseline por ticker
     mlflow_enabled: bool = False,  # MLflow habilitado
     mlflow=None,  # Módulo MLflow
     timestamp: str | None = None,  # Timestamp de ejecución
+    use_latest_data: bool = False,  # Si True, extiende training_window.end a hoy
 ) -> dict:  # Retorna resumen con métricas
     """
     Ejecuta pipeline completo de baseline para un ticker.
@@ -86,7 +87,10 @@ def run_baseline_for_ticker(  # Ejecutar baseline por ticker
     df = pd.read_csv(csv_path)  # Leer CSV
     df["timestamp"] = pd.to_datetime(df["timestamp"], format='ISO8601', utc=True)  # Parsear timestamp
     df = df.sort_values("timestamp").set_index("timestamp")  # Ordenar e indexar
-    
+    df = apply_training_window(
+        df, config, granularity="daily", use_latest=use_latest_data, ticker=ticker,
+    )
+
     # Guardar una copia del DataFrame original para backtesting
     # (antes de cualquier transformación o dropna)
     ohlcv = df.copy()  # Copia para backtest sin alterar
@@ -434,7 +438,15 @@ def main() -> None:  # Entry-point principal
         action="store_true",  # True si se pasa
         help="Cargar y comparar con resultados del GRU",  # Help
     )  # Fin argumento compare
-    
+    parser.add_argument(  # Override training_window
+        "--use-latest-data",
+        action="store_true",
+        help=(
+            "Entrenar con el rango extendido hasta hoy "
+            "(ignora data.training_window.daily.end del config; start se preserva)."
+        ),
+    )
+
     args = parser.parse_args()  # Parsear args
     
     # Cargar config
@@ -587,6 +599,11 @@ def main() -> None:  # Entry-point principal
         print(f"⚠️  MLflow no disponible, continuando sin tracking: {exc}")  # Log error
         mlflow_enabled = False  # Deshabilitar
     
+    # --use-latest-data fuerza descarga y limpieza frescas (ignora los --skip-*).
+    if args.use_latest_data:
+        args.skip_download = False
+        args.skip_cleaning = False
+
     # Paso 1: Descargar datos
     if not args.skip_download:
         print("Paso 1/3: Descargando datos...")
@@ -599,7 +616,6 @@ def main() -> None:  # Entry-point principal
                 out_dir=raw_dir,
                 period="10y",
                 skip_existing=True,
-                min_days_fresh=1,
             )
             print(f"✓ Descargados/actualizados {len(written)} archivos\n")
         except Exception as exc:
@@ -652,6 +668,7 @@ def main() -> None:  # Entry-point principal
                 mlflow_enabled=mlflow_enabled,  # MLflow habilitado
                 mlflow=mlflow,  # Módulo MLflow
                 timestamp=timestamp,  # Timestamp
+                use_latest_data=args.use_latest_data,  # Override de training_window
             )  # Fin ejecución ticker
             summaries.append(summary)  # Guardar resumen
             print(f"✓ {ticker} completado\n")  # Log OK

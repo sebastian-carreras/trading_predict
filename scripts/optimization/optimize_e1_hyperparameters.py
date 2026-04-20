@@ -138,6 +138,9 @@ class E1HyperparameterOptimizer:
         optuna_db_path: str = "sqlite:///runs/optuna_trials/optuna_studies.db",
         search_space_overrides: Optional[Dict[str, Dict[str, float]]] = None,
         batch_size_choices: Optional[List[int]] = None,
+        validation_method: Optional[str] = None,
+        validation_folds: Optional[int] = None,
+        use_latest_data: bool = False,
     ):
         """
         Args:
@@ -147,9 +150,20 @@ class E1HyperparameterOptimizer:
             optuna_db_path: Path a base de datos de Optuna
             search_space_overrides: Overrides opcionales para rangos de búsqueda
             batch_size_choices: Opciones de batch size a evaluar (default: [32, 64, 128])
+            validation_method: "walk_forward" | "time_split" (None = leer de config)
+            validation_folds: Número de folds para walk_forward (None = leer de config)
         """
         self.config = load_yaml(config_path)
         self.root = project_root()
+
+        # Validación: CLI > config > default
+        optuna_val = self.config.get("optuna", {}).get("e1_conservative", {}).get("validation", {})
+        self.validation_method = validation_method or optuna_val.get("method", "walk_forward")
+        self.validation_folds = validation_folds or optuna_val.get("folds", 3)
+
+        # Si es True, cada trial descarga/extiende el rango hasta hoy.
+        # Por defecto (False) usa data.training_window.daily del config.
+        self.use_latest_data = use_latest_data
 
         # Reducir ruido de logs de librerías de infraestructura
         logging.getLogger("alembic").setLevel(logging.WARNING)
@@ -352,12 +366,26 @@ class E1HyperparameterOptimizer:
         
         print(f"✓ Inicializado optimizador para {len(self.tickers)} tickers")
         print(f"  Tickers: {', '.join(self.tickers[:5])}{'...' if len(self.tickers) > 5 else ''}")
+        print(f"  Validación: {self.validation_method}" + (f" ({self.validation_folds} folds)" if self.validation_method == "walk_forward" else ""))
         print(f"  MLflow: {mlflow_tracking_uri}")
         print(f"  Optuna DB: {optuna_db_path}")
     
     @staticmethod
     def _suggest_float(trial: optuna.Trial, name: str, bounds: Dict[str, float]) -> float:
-        # Normaliza tipos y decide la familia de distribución (lineal vs log).
+        """Sugiere un float según el espacio de búsqueda definido en bounds.
+
+        Args:
+            trial: Trial activo de Optuna.
+            name: Nombre del hiperparámetro (clave en el trial).
+            bounds: Dict con min, max y opcionalmente step (uniforme discreta)
+                o log=True (log-uniforme). No se pueden combinar ambos.
+
+        Returns:
+            Valor sugerido por el sampler de Optuna.
+
+        Raises:
+            ValueError: Si se combinan step y log=True (Optuna no lo soporta).
+        """
         low = float(bounds["min"])
         high = float(bounds["max"])
         step = bounds.get("step")
@@ -376,7 +404,16 @@ class E1HyperparameterOptimizer:
 
     @staticmethod
     def _suggest_int(trial: optuna.Trial, name: str, bounds: Dict[str, float]) -> int:
-        # Versión para variables discretas enteras.
+        """Sugiere un entero dentro del rango especificado en bounds.
+
+        Args:
+            trial: Trial activo de Optuna.
+            name: Nombre del hiperparámetro (clave en el trial).
+            bounds: Dict con min, max y opcionalmente step (paso de discretización).
+
+        Returns:
+            Valor entero sugerido por el sampler de Optuna.
+        """
         low = int(bounds["min"])
         high = int(bounds["max"])
         step = bounds.get("step")
@@ -433,11 +470,13 @@ class E1HyperparameterOptimizer:
             # En este caso se sobrescriben claves relevantes, por eso alcanza para el flujo actual.
             config_trial = self.config.copy()
 
-            # Política del proyecto: Optuna solo para selección de hiperparámetros.
-            # Forzamos split temporal liviano durante el tuning para evitar
-            # duplicar costo con walk-forward en cada trial.
+            # Configurar método de validación para el trial.
+            # Por defecto walk_forward (alineado con training) con folds reducidos (3).
+            # Configurable via base.yaml > optuna > e1_conservative > validation o CLI.
             splits_cfg = dict(config_trial.get("splits", {}))
-            splits_cfg["method"] = "time_split"
+            splits_cfg["method"] = self.validation_method
+            if self.validation_method == "walk_forward":
+                splits_cfg["folds"] = self.validation_folds
             config_trial["splits"] = splits_cfg
             
             # Thresholds
@@ -485,6 +524,7 @@ class E1HyperparameterOptimizer:
                                 raw_dir=raw_dir,
                                 out_dir=out_dir,
                                 register_lifecycle=False,
+                                use_latest_data=self.use_latest_data,
                             )
                     finally:
                         if prev_e1_tuned is not None:
@@ -563,6 +603,8 @@ class E1HyperparameterOptimizer:
                     "weight_decay": weight_decay,
                     "batch_size": batch_size,
                     "trial_number": trial.number,
+                    "validation_method": self.validation_method,
+                    "validation_folds": self.validation_folds if self.validation_method == "walk_forward" else 1,
                 })
 
                 mlflow.log_metrics({
@@ -622,9 +664,9 @@ class E1HyperparameterOptimizer:
             
             trial_seconds = time.perf_counter() - trial_start
             print(
-                # Línea compacta por trial: permite escanear rápido rendimiento y configuración.
                 f"[Trial {trial.number:04d}] obj={objective_value:+.4f} "
-                f"ic={ic_mean:+.4f} sharpe={sharpe_mean:+.4f} "
+                f"sharpe={sharpe_mean:+.4f} ic={ic_mean:+.4f} "
+                f"calmar={calmar_mean:+.4f} dir_acc={dir_acc_mean:.4f} "
                 f"trades={tickers_with_trades}/{len(self.tickers)} "
                 f"time={trial_seconds:.1f}s | "
                 f"tau=({tau_buy:.3f},{tau_sell:.3f}) "
@@ -1141,7 +1183,29 @@ def main():
         default=None,
         help="Lista de batch sizes separados por coma (default: 32,64,128)",
     )
-    
+    parser.add_argument(
+        "--validation_method",
+        type=str,
+        choices=["walk_forward", "time_split"],
+        default=None,
+        help="Método de validación en trials (default: leer de base.yaml, walk_forward)",
+    )
+    parser.add_argument(
+        "--optuna_folds",
+        type=int,
+        default=None,
+        help="Folds para walk_forward en Optuna (default: leer de base.yaml, 3)",
+    )
+    parser.add_argument(
+        "--use-latest-data",
+        action="store_true",
+        help=(
+            "Propaga use_latest_data=True a cada trial (entrena sobre el rango "
+            "extendido hasta hoy). Por defecto los trials usan el rango fijo de "
+            "data.training_window.daily."
+        ),
+    )
+
     args = parser.parse_args()
     
     root = project_root()
@@ -1246,6 +1310,9 @@ def main():
                 optuna_db_path=args.optuna_db,
                 search_space_overrides=search_overrides or None,
                 batch_size_choices=batch_sizes_list,
+                validation_method=args.validation_method,
+                validation_folds=args.optuna_folds,
+                use_latest_data=args.use_latest_data,
             )
 
             study_name = _study_name_for_ticker(args.study_name, t)
@@ -1303,7 +1370,7 @@ def main():
 
         print(f"\n✓ YAML de tuned params por ticker (con meta): {tuned_path}")
         print(f"✓ YAML consumible por training: {tuned_compact_path}")
-        print("Para usarlo en training: export E1_TUNED_PARAMS_PATH=<ruta_al_yaml>")
+        print("El path ya está registrado en base.yaml > optuna > e1_conservative > tuned_params_path")
 
     else:
         study_name = args.study_name
@@ -1323,6 +1390,9 @@ def main():
             optuna_db_path=args.optuna_db,
             search_space_overrides=search_overrides or None,
             batch_size_choices=batch_sizes_list,
+            validation_method=args.validation_method,
+            validation_folds=args.optuna_folds,
+            use_latest_data=args.use_latest_data,
         )
 
         study = optimizer.optimize(

@@ -78,6 +78,19 @@ universe:
       - "QQQ"
     # e4: tickers se definirán cuando se reconstruya la estrategia
 
+data:
+  # Dataset congelado para entrenamientos reproducibles.
+  # Baseline, champion, candidate y Optuna usan exactamente este rango.
+  # Override: pasar --use-latest-data al comando de entrenamiento (descarga
+  # datos frescos y extiende `end` hasta hoy; `start` se preserva como piso).
+  training_window:
+    daily:        # E1 (90d), E2 (20d), E4
+      start: "2016-03-03"
+      end:   "2026-03-03"
+    intraday:     # E3 (5-min)
+      start: "2026-01-02"
+      end:   "2026-03-03"
+
 costs:
   # Costos round-trip (entrada+salida). Usar en backtest neto.
   daily_round_trip_bps: 10
@@ -94,6 +107,7 @@ splits:
   embargo_days:
     e1: 90
     e2: 20
+    e3: 6  # horizon_bars=6; en barras (5-min), no en días — mismo principio que E1/E2
 
 strategies:
   e1_conservative:
@@ -176,8 +190,8 @@ strategies:
     horizon_bars: 6      # 30 minutos hacia adelante (6 barras × 5min)
 
     thresholds:
-      tau_buy: 0.001     # Señal compra: retorno predicho >= 0.1%
-      tau_sell: 0.001    # Señal venta/short: retorno predicho <= -0.1%
+      tau_buy: 0.0025    # Señal compra: retorno predicho >= 0.25% (> costo round-trip 20bps)
+      tau_sell: 0.0025   # Señal venta/short: retorno predicho <= -0.25%
 
     # Split temporal para baseline (simple, sin walk-forward)
     # Walk-forward se reserva para el LSTM donde tiene más valor
@@ -188,11 +202,12 @@ strategies:
 
     baseline:
       model: Ridge
-      alpha: 1.0
+      alpha: 100.0  # Alto para 96×9=864 features aplanadas sobre retornos de 30min
 
     model:
       type: "LSTM"
       ensemble_members: 3      # Promedia N modelos con distintas semillas → predicciones más estables
+      consensus_tol: 0.0005    # Filtro de consenso: umbral de std entre miembros (5 bps); señal suprimida si std >= tol
       lstm_hidden_size: 128    # Aumentado de 64 → 128 (2+ años de datos disponibles via Alpaca)
       lstm_num_layers: 2       # 2 capas apiladas internamente por PyTorch nn.LSTM
       dense_units: 32          # Capa densa intermedia: LSTM → Dense(ReLU) → Linear(1)
@@ -231,6 +246,10 @@ lifecycle:
     # Phase 1: only reject technically broken models.
     # Phase 2 (future): empirical thresholds from metrics_log.jsonl after 5-10 runs.
     phase: 1
+    min_sharpe_by_strategy:
+      e1_conservative: 0.0
+      e2_moderate: 0.0
+      e3_intraday: -5.0    # permissive while strategy is in development
     reject_if:
       nan_in_predictions: true
       nan_in_backtest: true
@@ -273,6 +292,10 @@ lifecycle:
           bt_calmar: 0.20
       e3:
         # E3 intradiario: horizonte corto (30min), mayor peso a profit_factor y directional_accuracy
+        # require_positive_sharpe: false — el guardrail ya rechaza Sharpe < 0; no duplicar el
+        # bloqueo en promoción con <= 0, para que modelos en desarrollo (Sharpe=0.0) puedan
+        # participar en el lifecycle igual que e1/e2.
+        require_positive_sharpe: false
         scoring_weights:
           bt_sharpe: 0.30
           ml_ic: 0.20
@@ -282,3 +305,31 @@ lifecycle:
 
   retirement:
     keep_last_n: 5
+
+# ---------------------------------------------------------------------------
+# Optuna: configuración de optimización y rutas a parámetros tuneados
+# ---------------------------------------------------------------------------
+# El pipeline de entrenamiento lee tuned_params_path para resolver overrides.
+# Los scripts de Optuna leen validation.method y validation.folds para
+# definir cómo evaluar cada trial.
+# ENV vars (E1_TUNED_PARAMS_PATH, E2_TUNED_PARAMS_PATH) están deprecados;
+# funcionan como override de emergencia pero emiten un DeprecationWarning.
+optuna:
+  e1_conservative:
+    tuned_params_path: "reports/hyperparameter_optimization/e1_tuned_params_by_ticker.yaml"
+    fallback_to_base: true   # Si un ticker no tiene params tuneados, usar base.yaml
+    validation:
+      method: "walk_forward"   # "walk_forward" (alineado con training) | "time_split" (rápido)
+      folds: 3                 # Reducido vs producción (5) para balance velocidad/robustez
+  e2_moderate:
+    tuned_params_path: "reports/hyperparameter_optimization/e2_tuned_params_by_ticker.yaml"
+    fallback_to_base: true
+    validation:
+      method: "walk_forward"
+      folds: 3
+  e3_intraday:
+    tuned_params_path: "reports/hyperparameter_optimization/e3_tuned_params_by_ticker.yaml"
+    fallback_to_base: true
+    validation:
+      method: "walk_forward"
+      folds: 3

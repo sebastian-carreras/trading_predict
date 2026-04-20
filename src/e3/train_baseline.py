@@ -4,10 +4,13 @@ Pipeline de baseline E3 - Ridge Regression (5-min intradiario).
 Establece el punto de referencia del lifecycle para comparar contra el LSTM intradiario.
 Usa split temporal simple (70% train / 15% val / 15% test) sobre datos de 5-min.
 
+Requiere que los datos 5-min ya existan en data/raw/intraday/.
+Para descargar datos previamente:
+    python -m src.e3.intraday_data --tickers SPY
+
 Uso:
     python -m src.e3.train_baseline --tickers SPY
     python -m src.e3.train_baseline --tickers SPY,AAPL,NVDA
-    python -m src.e3.train_baseline --tickers SPY --skip-download
 """
 
 from __future__ import annotations
@@ -30,15 +33,15 @@ except ImportError:
     pass
 
 from .build_features import compute_intraday_features, make_target_return, make_sequences
-from .intraday_data import download_ohlcv_5m, load_ohlcv_csv
+from .intraday_data import load_ohlcv_csv
 from .intraday_metrics import mae, rmse, directional_accuracy, information_coefficient
 from ..backtest.backtest_intraday import (
     backtest_intraday_signals,
     compute_profit_factor,
     compute_max_drawdown,
 )
-from ..e2.baseline_linear import RidgeBaseline
-from ..utils import ensure_dir, load_yaml, project_root
+from .baseline_linear import IntradayRidgeBaseline
+from ..utils import apply_training_window, ensure_dir, load_yaml, project_root
 
 # 5-min bars per year: 252 trading days × 6.5 trading hours × 12 bars/hour
 _BARS_PER_YEAR = 252 * 78
@@ -96,6 +99,7 @@ def run_baseline_for_ticker(
     mlflow_enabled: bool = False,
     mlflow=None,
     timestamp: str | None = None,
+    use_latest_data: bool = False,
 ) -> dict:
     """
     Ejecuta pipeline de baseline E3 para un ticker.
@@ -113,14 +117,16 @@ def run_baseline_for_ticker(
     # 1. CARGAR DATOS 5-MIN
     csv_path = raw_dir / f"{ticker}_5m.csv"
     if not csv_path.exists():
-        print(f"  Datos no encontrados en {csv_path}, descargando...")
-        download_ohlcv_5m([ticker], out_dir=raw_dir, period="60d", interval="5m")
-
-    if not csv_path.exists():
-        raise FileNotFoundError(f"No existe {csv_path}. Ejecuta sin --skip-download.")
+        raise FileNotFoundError(
+            f"No existe {csv_path}. Descargá los datos primero con:\n"
+            f"  python -m src.e3.intraday_data --tickers {ticker}"
+        )
 
     print(f"  Cargando datos: {csv_path.name}")
     ohlcv = load_ohlcv_csv(csv_path)
+    ohlcv = apply_training_window(
+        ohlcv, config, granularity="intraday", use_latest=use_latest_data, ticker=ticker,
+    )
     print(f"  {len(ohlcv)} barras de 5min ({ohlcv.index[0]} → {ohlcv.index[-1]})")
 
     # Retornos de 1-barra para el backtest
@@ -197,11 +203,14 @@ def run_baseline_for_ticker(
     y_train_z = (y_train - mean_y) / std_y
     y_val_z = (y_val - mean_y) / std_y
 
-    # 6. ENTRENAR RIDGE (alpha=1.0: L2 sobre 96×10=960 features aplanadas)
-    print(f"\nEntrenando Ridge Regression (alpha=1.0)...")
-    model = RidgeBaseline(alpha=1.0, seed=42)
+    # 6. ENTRENAR RIDGE (alpha desde config, default 100.0 para intradía)
+    baseline_cfg = e3_cfg.get("baseline", {})
+    ridge_alpha = float(baseline_cfg.get("alpha", 100.0))
+    print(f"\nEntrenando Ridge Regression (alpha={ridge_alpha})...")
+    model = IntradayRidgeBaseline(alpha=ridge_alpha, seed=42)
     train_result = model.fit(X_train_s, y_train_z, X_val_s, y_val_z)
     print(f"Train R²={train_result.train_score:.4f}, Val R²={train_result.val_score:.4f}")
+    print(f"Features efectivas (post-flatten): {train_result.n_features_effective}")
 
     # 7. PREDICCIONES EN TEST (des-escalar a retornos originales)
     y_pred_z = model.predict(X_test_s)
@@ -286,6 +295,8 @@ def run_baseline_for_ticker(
         "lookback_bars": lookback_bars,
         "horizon_bars": horizon_bars,
         "n_features": len(feature_names),
+        "n_features_effective": train_result.n_features_effective,
+        "ridge_alpha": ridge_alpha,
         "timing_train_seconds": duration,
     }
 
@@ -337,7 +348,8 @@ def run_baseline_for_ticker(
                     "lookback_bars": lookback_bars,
                     "horizon_bars": horizon_bars,
                     "n_features": len(feature_names),
-                    "ridge_alpha": 1.0,
+                    "n_features_effective": train_result.n_features_effective,
+                    "ridge_alpha": ridge_alpha,
                     "tau_buy": tau_buy,
                     "tau_sell": tau_sell,
                     "round_trip_bps": round_trip_bps,
@@ -453,11 +465,14 @@ def main() -> None:
         help="Directorio de salida (auto: runs/e3_baseline/<timestamp>)",
     )
     parser.add_argument(
-        "--skip-download",
+        "--use-latest-data",
         action="store_true",
-        help="Omite descarga de datos (usa archivos existentes)",
+        help=(
+            "Entrenar con el rango extendido hasta hoy "
+            "(ignora data.training_window.intraday.end del config; start se preserva). "
+            "Nota: este script no descarga datos; usá src.e3.intraday_data aparte."
+        ),
     )
-
     args = parser.parse_args()
 
     root = project_root()
@@ -496,18 +511,6 @@ def main() -> None:
     experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "E3_Baseline")
     mlflow_enabled, mlflow = _setup_mlflow(root, experiment_name)
 
-    # Descargar datos faltantes
-    if not args.skip_download:
-        missing = [t for t in tickers if not (raw_dir / f"{t}_5m.csv").exists()]
-        if missing:
-            print(f"\nDescargando datos 5-min para: {', '.join(missing)}...")
-            try:
-                download_ohlcv_5m(missing, out_dir=raw_dir, period="60d", interval="5m")
-            except Exception as exc:
-                print(f"⚠️  Error en descarga: {exc}")
-        else:
-            print("\nTodos los archivos 5-min ya existen, omitiendo descarga.")
-
     # Entrenar un baseline por ticker
     summaries: list[dict] = []
     for ticker in tickers:
@@ -520,6 +523,7 @@ def main() -> None:
                 mlflow_enabled=mlflow_enabled,
                 mlflow=mlflow,
                 timestamp=timestamp,
+                use_latest_data=args.use_latest_data,
             )
             summaries.append(summary)
             print(f"✓ {ticker} completado\n")

@@ -56,7 +56,7 @@ docker-compose --profile all up -d
 |----------|-------|---------|------|--------|
 | E1 Conservative | GRU [64,32] | 90-day | daily | Champion |
 | E2 Moderate | LSTM [128,64] | 20-day | daily | Champion |
-| E3 Intraday | LSTM | 30-min | 5-min | Disabled (TODO) |
+| E3 Intraday | LSTM | 30-min | 5-min | need to rework (TODO) |
 | E4 Pairs Trading | k-NN + OU | — | daily | Disabled (TODO) |
 
 ### Training Pipeline Flow (E1/E2)
@@ -132,5 +132,6 @@ These skills use the model lifecycle system:
 ## Strategies Currently Active
 
 - **E1**: champion = `e1_conservative`, baseline = `e1_baseline`, retired = `e1_simple`
-- **E2**: champion = `e2_moderate`, baseline = `e2_baseline`, retired = `e2_simple`
-- **E3/E4**: disabled — do not attempt to train without first reviewing their config sections
+- **E2**: champion = `e2_moderate`, baseline = `e2_baseline`
+- **E3**: champion = `e3_intraday`, baseline = `e3_baseline`
+- **E4**: Not implemented, out of scope for the moment

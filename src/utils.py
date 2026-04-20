@@ -41,6 +41,97 @@ def get_nested(mapping: dict[str, Any], keys: list[str], default: Any = None) ->
     return cursor
 
 
+def get_training_window(
+    config: dict[str, Any],
+    granularity: str = "daily",
+) -> tuple[Any, Any]:
+    """Return (start_ts, end_ts) as UTC pd.Timestamps from config['data']['training_window'][granularity].
+
+    Returns (None, None) if the section is missing — callers should treat that as "no filter".
+    """
+    import pandas as pd  # local import: utils.py avoids a global pandas dep
+
+    window_cfg = get_nested(config, ["data", "training_window", granularity], default=None)
+    if not isinstance(window_cfg, dict):
+        return None, None
+
+    start_raw = window_cfg.get("start")
+    end_raw = window_cfg.get("end")
+
+    start_ts = pd.Timestamp(start_raw, tz="UTC") if start_raw else None
+    end_ts = pd.Timestamp(end_raw, tz="UTC") if end_raw else None
+    return start_ts, end_ts
+
+
+def apply_training_window(
+    df: "Any",
+    config: dict[str, Any],
+    *,
+    granularity: str = "daily",
+    use_latest: bool = False,
+    ticker: str | None = None,
+):
+    """Filter a DataFrame indexed by UTC timestamp to the configured training window.
+
+    When use_latest is True, end is replaced by today (UTC midnight) so the caller
+    trains on the newest data available. start is preserved either way.
+
+    Logs a single line `[ticker] Training window: start -> end (N rows)` so baseline
+    and champion runs can be verified to use the same slice.
+    """
+    import pandas as pd
+
+    start_ts, end_ts = get_training_window(config, granularity=granularity)
+
+    if use_latest:
+        end_ts = pd.Timestamp.utcnow().normalize()
+
+    if df is None or len(df) == 0:
+        return df
+
+    filtered = df
+    if start_ts is not None:
+        filtered = filtered[filtered.index >= start_ts]
+    if end_ts is not None:
+        filtered = filtered[filtered.index <= end_ts]
+
+    prefix = f"[{ticker}] " if ticker else ""
+    start_disp = start_ts.date() if start_ts is not None else "min"
+    end_disp = end_ts.date() if end_ts is not None else "max"
+    print(
+        f"{prefix}Training window: {start_disp} -> {end_disp} "
+        f"({len(filtered)} rows, granularity={granularity}, use_latest={use_latest})"
+    )
+    return filtered
+
+
+def resolve_lifecycle_paths(
+    config: dict[str, Any],
+    *,
+    root: Path | None = None,
+) -> tuple[Path, Path]:
+    """Resolve lifecycle registry and metrics log paths from config.
+
+    Relative paths are resolved against the project root. If config values are
+    missing, the historical defaults under models/ are used.
+    """
+    resolved_root = root or project_root()
+    lifecycle_cfg = config.get("lifecycle", {}) if isinstance(config, dict) else {}
+
+    registry_raw = lifecycle_cfg.get("registry_path", "models/registry.json")
+    metrics_raw = lifecycle_cfg.get("metrics_log_path", "models/metrics_log.jsonl")
+
+    registry_path = Path(registry_raw)
+    metrics_log_path = Path(metrics_raw)
+
+    if not registry_path.is_absolute():
+        registry_path = resolved_root / registry_path
+    if not metrics_log_path.is_absolute():
+        metrics_log_path = resolved_root / metrics_log_path
+
+    return registry_path, metrics_log_path
+
+
 def log_timing_event(
     *,
     strategy: str,

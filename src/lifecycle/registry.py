@@ -42,6 +42,7 @@ class ModelRegistry:
         *,
         mlflow_run_id: str | None = None,
         feature_names: list[str] | None = None,
+        hyperparams: dict[str, Any] | None = None,
     ) -> None:
         """Register a freshly-trained model as *candidate*."""
         tickers = self._ensure_strategy_tickers(strategy)
@@ -55,6 +56,8 @@ class ModelRegistry:
         }
         if feature_names is not None:
             candidate_entry["features"] = list(feature_names)
+        if hyperparams is not None:
+            candidate_entry["hyperparams"] = hyperparams
         entry["candidate"] = candidate_entry
         self._save()
 

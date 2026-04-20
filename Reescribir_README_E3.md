@@ -159,7 +159,7 @@ python -m src.train_e3_pipeline --mode run
 
 **Qué hace internamente**:
 1. Carga OHLCV 5-min (descarga si no existe)
-2. Calcula 7 features intradía
+2. Calcula 12 features intradía
 3. Crea secuencias (96 barras → predice 6 barras)
 4. Entrena ensemble de 3 LSTM
 5. Genera predicciones out-of-sample

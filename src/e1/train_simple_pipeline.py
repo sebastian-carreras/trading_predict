@@ -676,7 +676,6 @@ def main():
                 out_dir=raw_dir,
                 period="10y",
                 skip_existing=True,
-                min_days_fresh=1,
             )
             print(f"✓ Descargados/actualizados {len(written)} archivos\n")
         except Exception as exc:
@@ -837,7 +836,13 @@ def main():
                     run_dir=ticker_out_dir, variant="e1_simple",
                     log_path=root / "models" / "metrics_log.jsonl",
                 )
-                passed, errors = validate_candidate(run_dir=ticker_out_dir, ticker=ticker)
+                _guardrail_cfg = config.get("lifecycle", {}).get("guardrails", {})
+                _min_sharpe = float(
+                    _guardrail_cfg.get("min_sharpe_by_strategy", {}).get("e1", 0.0)
+                )
+                passed, errors = validate_candidate(
+                    run_dir=ticker_out_dir, ticker=ticker, metrics=summary, min_sharpe=_min_sharpe
+                )
                 if passed:
                     registry = ModelRegistry(registry_path)
                     registry.register_candidate(

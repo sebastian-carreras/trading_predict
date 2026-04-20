@@ -34,7 +34,7 @@ from .build_features import compute_e2_features, make_target_e2
 from ..features.build_sequences_e1e2 import make_sequences, temporal_train_val_split
 from .baseline_linear import RidgeBaseline, compute_baseline_metrics
 from ..backtest.backtest_daily import backtest_daily_signals, summarize_backtest
-from ..utils import ensure_dir, load_yaml, project_root
+from ..utils import apply_training_window, ensure_dir, load_yaml, project_root
 
 
 def run_baseline_for_ticker(
@@ -45,10 +45,11 @@ def run_baseline_for_ticker(
     mlflow_enabled: bool = False,
     mlflow=None,
     timestamp: str | None = None,
+    use_latest_data: bool = False,
 ) -> dict:
     """
     Ejecuta pipeline completo de baseline E2 para un ticker.
-    
+
     Usa Ridge Regression en lugar de LSTM para establecer punto de comparación.
     """
     start_time = time.perf_counter()
@@ -72,7 +73,10 @@ def run_baseline_for_ticker(
     df = pd.read_csv(csv_path)
     df["timestamp"] = pd.to_datetime(df["timestamp"], format='ISO8601', utc=True)
     df = df.sort_values("timestamp").set_index("timestamp")
-    
+    df = apply_training_window(
+        df, config, granularity="daily", use_latest=use_latest_data, ticker=ticker,
+    )
+
     # Copia del DataFrame original para backtesting (antes de transformaciones)
     ohlcv = df.copy()
 
@@ -392,7 +396,15 @@ def main() -> None:
         action="store_true",
         help="Cargar y comparar con resultados del LSTM",
     )
-    
+    parser.add_argument(
+        "--use-latest-data",
+        action="store_true",
+        help=(
+            "Entrenar con el rango extendido hasta hoy "
+            "(ignora data.training_window.daily.end del config; start se preserva)."
+        ),
+    )
+
     args = parser.parse_args()
     
     # Cargar config
@@ -530,6 +542,11 @@ def main() -> None:
         print(f"⚠️  MLflow no disponible, continuando sin tracking: {exc}")
         mlflow_enabled = False
     
+    # --use-latest-data fuerza descarga y limpieza frescas (ignora los --skip-*).
+    if args.use_latest_data:
+        args.skip_download = False
+        args.skip_cleaning = False
+
     # Paso 1: Descargar datos
     if not args.skip_download:
         print("Paso 1/3: Descargando datos...")
@@ -542,7 +559,6 @@ def main() -> None:
                 out_dir=raw_dir,
                 period="10y",
                 skip_existing=True,
-                min_days_fresh=1,
             )
             print(f"✓ Descargados/actualizados {len(written)} archivos\n")
         except Exception as exc:
@@ -593,6 +609,7 @@ def main() -> None:
                 mlflow_enabled=mlflow_enabled,
                 mlflow=mlflow,
                 timestamp=timestamp,
+                use_latest_data=args.use_latest_data,
             )
             summaries.append(summary)
             print(f"✓ {ticker} completado\n")

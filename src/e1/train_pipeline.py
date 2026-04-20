@@ -45,7 +45,14 @@ from .build_features import compute_e1_features, make_target_e1
 from ..features.build_sequences_e1e2 import make_sequences, time_split, temporal_train_val_split
 from .gru import GRURegressor
 from ..backtest.backtest_daily import backtest_daily_signals, summarize_backtest
-from ..utils import ensure_dir, load_yaml, project_root, log_timing_event
+from ..utils import (
+    apply_training_window,
+    ensure_dir,
+    load_yaml,
+    log_timing_event,
+    project_root,
+    resolve_lifecycle_paths,
+)
 
 # Memoriza hasta 8 lecturas de archivos de parámetros tuneados (clave = path_str); 
 # si se consulta el mismo path otra vez, evita re-leer/parsing del YAML.
@@ -63,26 +70,74 @@ def _load_tuned_params(path_str: str) -> dict:
     return data
 
 
-def _apply_tuned_overrides(*, config: dict, strategy_key: str, ticker: str) -> dict:
+_SHARED_PARAMS_WARNED: set = set()
+
+
+def _warn_shared_params(all_tuned: dict, source_path: Path) -> None:
+    """Detecta tickers con parámetros idénticos (posibles YAML anchors residuales)."""
+    cache_key = str(source_path)
+    if cache_key in _SHARED_PARAMS_WARNED:
+        return
+    _SHARED_PARAMS_WARNED.add(cache_key)
+
+    # Agrupar tickers por repr de sus params
+    by_repr: dict[str, list[str]] = {}
+    for ticker, params in all_tuned.items():
+        if not isinstance(params, dict):
+            continue
+        key = repr(sorted(params.items()))
+        by_repr.setdefault(key, []).append(ticker)
+
+    for group in by_repr.values():
+        if len(group) > 1:
+            import warnings
+            warnings.warn(
+                f"Optuna: tickers con params idénticos (posible YAML anchor): "
+                f"{', '.join(group)} en {source_path.name}. "
+                f"Considerar re-correr --per_ticker para optimización individual.",
+                UserWarning,
+                stacklevel=3,
+            )
+            break  # Un solo warning es suficiente
+
+
+def _apply_tuned_overrides(*, config: dict, strategy_key: str, ticker: str) -> tuple[dict, dict]:
     """Aplica overrides de Optuna (por ticker) sobre el config base.
 
-    Busca un YAML con parámetros optimizados por ticker en:
-      1. E1_TUNED_PARAMS_PATH (env var, prioridad alta)
-      2. TUNED_PARAMS_PATH (env var, fallback)
+    Resolución de path con prioridad:
+      1. E1_TUNED_PARAMS_PATH (env var, override de emergencia)
+      2. TUNED_PARAMS_PATH (env var, fallback genérico)
+      3. config["optuna"][strategy_key]["tuned_params_path"] (base.yaml, fuente principal)
 
-    Si el ticker tiene parámetros tuneados, sobreescribe thresholds y model.
+    Returns:
+        (config, hyperparams_info) donde hyperparams_info es un dict con:
+          - source: "optuna" | "base_yaml"
+          - tuned_params_file: path del archivo de overrides (si aplica)
+          - overrides_applied: lista de secciones que se sobreescribieron
     """
-    # Resolución de path con prioridad:
-    # 1) E1_TUNED_PARAMS_PATH: específico para E1 (preferido)
-    # 2) TUNED_PARAMS_PATH: variable genérica (compatibilidad/fallback)
-    # El operador `or` devuelve el primer string no vacío.
-    tuned_path = (
+    hp_info: dict = {"source": "base_yaml", "tuned_params_file": None, "overrides_applied": []}
+
+    # --- Resolver path: ENV var (deprecado) > config ---
+    env_path = (
         os.getenv("E1_TUNED_PARAMS_PATH", "").strip()
         or os.getenv("TUNED_PARAMS_PATH", "").strip()
     )
-    if not tuned_path:
-        # No hay fuente de overrides configurada: continuar con base.yaml.
-        return config
+
+    if env_path:
+        import warnings
+        warnings.warn(
+            "E1_TUNED_PARAMS_PATH / TUNED_PARAMS_PATH están deprecados. "
+            "Usar base.yaml > optuna > e1_conservative > tuned_params_path en su lugar.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        tuned_path = env_path
+    else:
+        # Buscar en config (base.yaml > optuna > strategy_key)
+        optuna_cfg = config.get("optuna", {}).get(strategy_key, {})
+        tuned_path = optuna_cfg.get("tuned_params_path", "")
+        if not tuned_path:
+            return config, hp_info
 
     # Resolver path relativo al root del proyecto
     resolved = Path(tuned_path)
@@ -95,25 +150,32 @@ def _apply_tuned_overrides(*, config: dict, strategy_key: str, ticker: str) -> d
     all_tuned = _load_tuned_params(str(resolved))
     if not all_tuned:
         print(f"  ⚠️  Optuna: archivo no encontrado o vacío: {resolved}")
-        return config
+        return config, hp_info
+
+    # Validar params compartidos entre tickers (detecta YAML anchors residuales)
+    _warn_shared_params(all_tuned, resolved)
 
     per_ticker = all_tuned.get(ticker)
     if not isinstance(per_ticker, dict):
-        # Hay archivo tuneado pero no contiene este ticker específico.
-        return config
+        # Archivo tuneado existe pero no contiene este ticker.
+        fallback = config.get("optuna", {}).get(strategy_key, {}).get("fallback_to_base", True)
+        if fallback:
+            print(f"  ℹ️  Optuna: sin overrides para {ticker} → usando base.yaml")
+        return config, hp_info
 
     # --- Aplica overrides y loguea cuales se aplicaron ---
+    hp_info["source"] = "optuna"
+    hp_info["tuned_params_file"] = str(resolved)
+
     strat = config.setdefault("strategies", {}).setdefault(strategy_key, {})
     overrides_applied: list[str] = []
 
     thresholds = per_ticker.get("thresholds")
     if isinstance(thresholds, dict):
-        # update() pisa solo claves presentes y conserva defaults no tuneados.
         strat.setdefault("thresholds", {}).update(thresholds)
         parts = [f"{k}={v}" for k, v in thresholds.items()]
         overrides_applied.append(f"thresholds({', '.join(parts)})")
 
-    # Cargo el modelo de cada ticker, si es que hay un modelo específico tuneado para ese ticker. Esto permite tener diferentes arquitecturas o hiperparámetros por ticker.
     model = per_ticker.get("model")
     if isinstance(model, dict):
         strat.setdefault("model", {}).update(model)
@@ -131,10 +193,11 @@ def _apply_tuned_overrides(*, config: dict, strategy_key: str, ticker: str) -> d
         if key_params:
             overrides_applied.append(f"model({', '.join(key_params)})")
 
+    hp_info["overrides_applied"] = overrides_applied
     if overrides_applied:
         print(f"  ✓ Optuna overrides para {ticker}: {' | '.join(overrides_applied)}")
 
-    return config
+    return config, hp_info
 
 
 def load_ohlcv_csv(path: Path) -> pd.DataFrame:
@@ -834,12 +897,13 @@ def run_e1_for_ticker(
     out_dir: Path,  # Directorio base de salida
     register_lifecycle: bool = True,  # Registrar en lifecycle (False para Optuna trials)
     auto_promote: bool = False,  # Auto-promover a champion si supera al actual
+    use_latest_data: bool = False,  # Si True, extiende training_window.end a hoy
  ) -> dict:  # Retorna resumen
     """Entrena y evalúa la estrategia E1 para un ticker específico."""
 
     # Copia defensiva para no contaminar el config compartido (Airflow / loops)
     config = copy.deepcopy(config)  # Evita side-effects cuando hay múltiples tickers
-    config = _apply_tuned_overrides(config=config, strategy_key="e1_conservative", ticker=ticker)  # Overrides por ticker
+    config, hp_info = _apply_tuned_overrides(config=config, strategy_key="e1_conservative", ticker=ticker)  # Overrides por ticker
 
     # Flag para exigir guardado del modelo (por defecto sí)
     require_model_save = os.getenv("REQUIRE_MODEL_SAVE", "1").strip().lower() not in {  # Flag guardado
@@ -896,6 +960,9 @@ def run_e1_for_ticker(
         print(f"  ⚠️  Usando datos raw (limpieza no ejecutada): {csv_path.name}")  # Warning
 
     ohlcv = load_ohlcv_csv(csv_path)  # Cargar OHLCV desde CSV
+    ohlcv = apply_training_window(
+        ohlcv, config, granularity="daily", use_latest=use_latest_data, ticker=ticker,
+    )
 
     # Features
     features = compute_e1_features(ohlcv)  # Features E1
@@ -969,14 +1036,21 @@ def run_e1_for_ticker(
                 from ..lifecycle.registry import ModelRegistry
                 from ..lifecycle.guardrails import validate_candidate, log_candidate_metrics
 
-                registry_path = root / "models" / "registry.json"
+                registry_path, metrics_log_path = resolve_lifecycle_paths(config, root=root)
                 log_candidate_metrics(
                     metrics=summary, strategy="e1", ticker=ticker,
                     run_dir=out_dir, variant="e1_conservative",
-                    log_path=root / "models" / "metrics_log.jsonl",
+                    log_path=metrics_log_path,
                     feature_names=list(feat_names),
+                    hyperparams_info=hp_info,
                 )
-                passed, errors = validate_candidate(run_dir=out_dir, ticker=ticker)
+                _guardrail_cfg = config.get("lifecycle", {}).get("guardrails", {})
+                _min_sharpe = float(
+                    _guardrail_cfg.get("min_sharpe_by_strategy", {}).get("e1_conservative", 0.0)
+                )
+                passed, errors = validate_candidate(
+                    run_dir=out_dir, ticker=ticker, metrics=summary, min_sharpe=_min_sharpe
+                )
                 if passed:
                     # Solo registramos candidatos que superan guardrails mínimos de calidad.
                     registry = ModelRegistry(registry_path)
@@ -985,6 +1059,7 @@ def run_e1_for_ticker(
                         run_dir=str(out_dir.relative_to(root)),
                         metrics=summary, variant="e1_conservative",
                         feature_names=list(feat_names),
+                        hyperparams=hp_info,
                     )
                     print(f"  ✓ Registered {ticker} as candidate in lifecycle registry")
 
@@ -1251,14 +1326,21 @@ def run_e1_for_ticker(
             from ..lifecycle.registry import ModelRegistry
             from ..lifecycle.guardrails import validate_candidate, log_candidate_metrics
 
-            registry_path = root / "models" / "registry.json"
+            registry_path, metrics_log_path = resolve_lifecycle_paths(config, root=root)
             log_candidate_metrics(
                 metrics=summary, strategy="e1", ticker=ticker,
                 run_dir=out_dir, variant="e1_conservative",
-                log_path=root / "models" / "metrics_log.jsonl",
+                log_path=metrics_log_path,
                 feature_names=list(feat_names),
+                hyperparams_info=hp_info,
             )
-            passed, errors = validate_candidate(run_dir=out_dir, ticker=ticker)
+            _guardrail_cfg = config.get("lifecycle", {}).get("guardrails", {})
+            _min_sharpe = float(
+                _guardrail_cfg.get("min_sharpe_by_strategy", {}).get("e1_conservative", 0.0)
+            )
+            passed, errors = validate_candidate(
+                run_dir=out_dir, ticker=ticker, metrics=summary, min_sharpe=_min_sharpe
+            )
             if passed:
                 registry = ModelRegistry(registry_path)
                 registry.register_candidate(
@@ -1266,6 +1348,7 @@ def run_e1_for_ticker(
                     run_dir=str(out_dir.relative_to(root)),
                     metrics=summary, variant="e1_conservative",
                     feature_names=list(feat_names),
+                    hyperparams=hp_info,
                 )
                 print(f"  ✓ Registered {ticker} as candidate in lifecycle registry")
 
@@ -1315,6 +1398,14 @@ def main() -> None:
         action="store_true",
         help="Descargar y limpiar datos antes de entrenar (por defecto usa datos existentes)",
     )
+    parser.add_argument(
+        "--use-latest-data",
+        action="store_true",
+        help=(
+            "Descargar datos frescos y entrenar con el rango extendido hasta hoy "
+            "(ignora data.training_window.daily.end del config; start se preserva)."
+        ),
+    )
     args = parser.parse_args()  # Parseo de argumentos
 
     root = project_root()  # Directorio raíz del proyecto
@@ -1337,9 +1428,11 @@ def main() -> None:
         raise ValueError("No tickers for E1")  # Error si no hay tickers
 
     # Informar si hay Optuna tuned params disponibles
+    # Prioridad: ENV var > config (optuna.e1_conservative.tuned_params_path)
     tuned_path = (
         os.getenv("E1_TUNED_PARAMS_PATH", "").strip()
         or os.getenv("TUNED_PARAMS_PATH", "").strip()
+        or config.get("optuna", {}).get("e1_conservative", {}).get("tuned_params_path", "")
     )
     if tuned_path:
         resolved = Path(tuned_path)
@@ -1354,10 +1447,9 @@ def main() -> None:
                 print(f"  Tickers con overrides: {', '.join(matching)}")
             no_match = [t for t in tickers if t not in tuned_tickers]
             if no_match:
-                # Transparencia: estos tickers no tienen tuning y usan parámetros base.
                 print(f"  Tickers sin overrides (usarán base.yaml): {', '.join(no_match)}")
         else:
-            print(f"⚠️  E1_TUNED_PARAMS_PATH configurado pero archivo no existe: {resolved}")
+            print(f"⚠️  Optuna tuned params configurado pero archivo no existe: {resolved}")
 
     raw_dir = root / "data" / "raw" / "daily"  # Directorio raw diario
     clean_dir = root / "data" / "clean"  # Directorio de datos limpios
@@ -1365,13 +1457,13 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Descarga y limpieza de datos
     # ------------------------------------------------------------------
-    if args.refresh_data:
+    if args.refresh_data or args.use_latest_data:
         print("\nDescargando datos...")
         try:
             from ..data.download_daily import download_daily_ohlcv
             written = download_daily_ohlcv(
                 tickers, out_dir=raw_dir, period="10y",
-                skip_existing=True, min_days_fresh=1,
+                skip_existing=False,
             )
             print(f"✓ Descargados/actualizados {len(written)} archivos\n")
         except Exception as exc:
@@ -1391,7 +1483,7 @@ def main() -> None:
         except Exception as exc:
             print(f"⚠️  Limpieza: {exc}\n")
     else:
-        print("\nUsando datos existentes (--refresh-data para actualizar)\n")
+        print("\nUsando datos existentes (--refresh-data o --use-latest-data para actualizar)\n")
 
     out_base = root / "runs" / "e1_conservative" / datetime.now().strftime("%Y%m%d_%H%M%S")  # Output run
     ensure_dir(out_base)  # Crear folder de salida
@@ -1575,6 +1667,7 @@ def main() -> None:
                         raw_dir=raw_dir,  # Raw dir
                         out_dir=ticker_out,  # Output dir
                         auto_promote=args.auto_promote,  # Auto-promoción CLI
+                        use_latest_data=args.use_latest_data,  # Override de training_window
                     )
 
                     # Parámetros: usar hp_ del summary (post-override de Optuna)
@@ -1663,6 +1756,7 @@ def main() -> None:
                 summary = run_e1_for_ticker(
                     config, ticker=ticker, raw_dir=raw_dir, out_dir=ticker_out,
                     auto_promote=args.auto_promote,  # Run sin MLflow
+                    use_latest_data=args.use_latest_data,  # Override de training_window
                 )
             summaries.append(summary)  # Agregar summary
             print(f"✓ {ticker}: MAE={summary['ml_mae']:.4f} IC={summary['ml_ic']:.3f}\n")  # Log ticker OK

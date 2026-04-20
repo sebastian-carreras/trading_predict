@@ -35,22 +35,23 @@ def download_daily_ohlcv(
     period: str = "10y",
     auto_adjust: bool = True,
     skip_existing: bool = True,
-    min_days_fresh: int = 7,
     use_iol_fallback: bool = True,
 ) -> list[Path]:
     """Descarga OHLCV diario usando yfinance con fallback a IOL API.
+
+    Si el CSV ya existe y skip_existing=False, los nuevos datos se acumulan
+    (merge + deduplicación por timestamp) en lugar de sobreescribir.
 
     Args:
         tickers: Lista de símbolos a descargar
         out_dir: Directorio de salida (data/raw/)
         period: Período histórico (10y = 10 años)
         auto_adjust: Si True, ajusta por splits/dividendos
-        skip_existing: Si True, no descarga tickers que ya existen
-        min_days_fresh: Días mínimos para considerar archivo "fresco" (skip si reciente)
+        skip_existing: Si True, omite tickers cuyo CSV ya existe
         use_iol_fallback: Si True, intenta IOL API cuando Yahoo Finance falla (tickers .BA)
 
     Returns:
-        Lista de archivos CSV creados
+        Lista de archivos CSV creados/actualizados
     """
     try:
         import yfinance as yf
@@ -79,21 +80,10 @@ def download_daily_ohlcv(
     for ticker in tickers:
         out_path = out_dir / f"{ticker}_daily.csv"
         
-        # Control: evitar descargar si ya existe y es reciente
         if skip_existing and out_path.exists():
-            from datetime import datetime, timezone
-            
-            file_age_days = (
-                datetime.now(timezone.utc) - 
-                datetime.fromtimestamp(out_path.stat().st_mtime, tz=timezone.utc)
-            ).days
-            
-            if file_age_days < min_days_fresh:
-                print(f"⏭️  {ticker} ya existe ({file_age_days} días) - omitido")
-                skipped.append(ticker)
-                continue
-            else:
-                print(f"♻️  {ticker} existe pero antiguo ({file_age_days} días) - reDescargando...")
+            print(f"⏭️  {ticker} ya existe - omitido (usa --refresh-data para actualizar)")
+            skipped.append(ticker)
+            continue
         
         # Intentar Yahoo Finance primero
         print(f"Descargando {ticker} desde Yahoo Finance...")
@@ -170,6 +160,19 @@ def download_daily_ohlcv(
                             chosen_source = "IOL"
                     except Exception as e:
                         print(f"  ⚠️  IOL comparación falló para {ticker}: {e}")
+
+                if out_path.exists():
+                    existing = pd.read_csv(out_path)
+                    existing["timestamp"] = pd.to_datetime(existing["timestamp"], utc=True)
+                    before = len(existing)
+                    chosen_df = (
+                        pd.concat([existing, chosen_df], ignore_index=True)
+                        .drop_duplicates(subset="timestamp")
+                        .sort_values("timestamp")
+                        .reset_index(drop=True)
+                    )
+                    added = len(chosen_df) - before
+                    print(f"  ↕️  Acumulando: {before} existentes + {added} nuevos = {len(chosen_df)} días")
 
                 chosen_df.to_csv(out_path, index=False)
                 written.append(out_path)
@@ -249,11 +252,10 @@ def main() -> None:
     print(f"Descarga {mode_str} de {len(tickers)} tickers a {out_dir}\n")
 
     written = download_daily_ohlcv(
-        tickers, 
-        out_dir=out_dir, 
+        tickers,
+        out_dir=out_dir,
         period="10y",
         skip_existing=skip_existing,
-        min_days_fresh=7,  # Considerar "fresco" si < 7 días
     )
 
     print(f"\n✓ Descargados {len(written)} archivos nuevos a {out_dir}")

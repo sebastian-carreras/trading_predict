@@ -19,6 +19,8 @@ def validate_candidate(
     ticker: str,
     *,
     baseline_metrics: dict[str, Any] | None = None,
+    metrics: dict[str, Any] | None = None,
+    min_sharpe: float = 0.0,
 ) -> tuple[bool, list[str]]:
     """Run permissive guardrails on a trained model.
 
@@ -71,9 +73,14 @@ def validate_candidate(
     summary_files = list(run_dir.glob("*summary*.csv")) + list(
         run_dir.parent.glob("summary_all.csv")
     )
-    sharpe = _extract_metric(run_dir, ticker, "bt_sharpe", "sharpe")
-    if sharpe is not None and sharpe < 0:
-        errors.append(f"Sharpe ratio {sharpe:.4f} < 0 (model loses money)")
+    if metrics is not None:
+        _raw = metrics.get("bt_sharpe")
+        sharpe = float(_raw) if _raw is not None else None
+    else:
+        sharpe = _extract_metric(run_dir, ticker, "bt_sharpe", "sharpe")
+
+    if sharpe is not None and sharpe < min_sharpe:
+        errors.append(f"Sharpe ratio {sharpe:.4f} < {min_sharpe} threshold")
 
     # 5. Compare against baseline
     if baseline_metrics is not None:
@@ -97,6 +104,7 @@ def log_candidate_metrics(
     *,
     log_path: str | Path | None = None,
     feature_names: list[str] | None = None,
+    hyperparams_info: dict[str, Any] | None = None,
 ) -> Path:
     """Append all metrics to JSONL for future threshold calibration.
 
@@ -118,6 +126,11 @@ def log_candidate_metrics(
 
     if feature_names is not None:
         entry["feature_names"] = list(feature_names)
+
+    if hyperparams_info is not None:
+        entry["hyperparams_source"] = hyperparams_info.get("source", "base_yaml")
+        if hyperparams_info.get("tuned_params_file"):
+            entry["tuned_params_file"] = hyperparams_info["tuned_params_file"]
 
     # Include all numeric metrics
     for key, value in metrics.items():

@@ -1,0 +1,123 @@
+Ready for review
+Select text to add comments on the plan
+Plan: Implementar Optuna para E3 Intraday
+Context
+Se necesita un script de optimizacion de hiperparametros con Optuna para la estrategia E3 (LSTM Ensemble Intraday), siguiendo el mismo patron de E1 y E2. La formula objetivo debe coincidir con los scoring weights del lifecycle en base.yaml: 0.30*Sharpe + 0.20*IC + 0.25*DirAcc + 0.25*Calmar + trade_penalty. MLflow debe ser non-blocking (fallback local si no esta disponible).
+
+Files to Create
+1. scripts/optimization/optimize_e3_hyperparameters.py (NEW - ~1600 lines)
+Basado en optimize_e2_hyperparameters.py como template principal (LSTM, deepcopy, TrialState).
+
+Clase E3HyperparameterOptimizer:
+
+Import: from src.e3.train_pipeline import run_for_ticker as run_e3_for_ticker
+Config key: strategies.e3_intraday (not e1_conservative/e2_moderate)
+Data dir: data/raw/intraday/ (not data/raw/daily/)
+Tickers: universe.tickers_by_strategy.e3_intraday
+MLflow experiment: "E3_Hyperparameter_Optimization"
+Optuna config key: optuna.e3_intraday
+Search Space (10 parameters):
+
+Parameter	Type	Min	Max	Step/Log	Default
+tau_buy	float	0.001	0.005	step=0.0005	0.0025
+tau_sell	float	0.001	0.005	step=0.0005	0.0025
+lstm_hidden_size	int	64	256	step=32	128
+dense_units	int	16	64	step=16	32
+dropout	float	0.10	0.40	step=0.05	0.2
+learning_rate	float	1e-4	5e-3	log=True	1e-3
+weight_decay	float	1e-6	1e-2	log=True	0.0
+batch_size	categorical	[64, 128, 256, 512]	-	-	256
+ensemble_members	int	2	5	step=1	3
+consensus_tol	float	0.0001	0.002	step=0.0001	0.0005
+Objective function:
+
+objective_raw = (
+    0.30 * sharpe_mean +
+    0.20 * ic_mean +
+    0.25 * dir_acc_mean +
+    0.25 * calmar_mean
+)
+trade_penalty = 0 if tickers_with_trades >= len(self.tickers) * 0.5 else -5
+objective_value = objective_raw + trade_penalty
+Config update paths in objective:
+
+config_trial["strategies"]["e3_intraday"]["thresholds"] = {tau_buy, tau_sell}
+config_trial["strategies"]["e3_intraday"]["model"] = spread merge with {lstm_hidden_size, dense_units, dropout, learning_rate, weight_decay, batch_size, ensemble_members, consensus_tol, early_stopping_patience: 7}
+config_trial["splits"] = {method, folds}
+Use copy.deepcopy(self.config) (E2 pattern, prevents leakage between trials)
+Per-ticker training loop:
+
+raw_dir = self.root / "data/raw/intraday"
+out_dir = self.root / "runs/optuna_trials" / f"e3_trial_{trial.number}"
+Pop TUNED_PARAMS_PATH env var before each ticker
+Call run_e3_for_ticker(config=config_trial, ticker=ticker, raw_dir=raw_dir, out_dir=out_dir, register_lifecycle=False, use_latest_data=self.use_latest_data)
+Extract: ml_ic, bt_sharpe, bt_calmar, ml_directional_accuracy, bt_num_trades, bt_win_rate, bt_max_drawdown
+Note on bt_num_trades: E3 summary currently lacks bt_num_trades. We add it to train_pipeline.py (see File #2 above) as int((bt["turnover"] > 0).sum()), matching the daily backtest pattern.
+
+MLflow cascade: Same as E1/E2 (remote → SQLite local → file store → continue without tracking).
+
+Results saving: best_params_e3.yaml, e3_all_trials.csv, e3_run_trials.csv, e3_optimization_summary.txt, Plotly visualizations.
+
+Per-ticker YAML output format:
+
+TICKER:
+  thresholds:
+    tau_buy: ...
+    tau_sell: ...
+  model:
+    lstm_hidden_size: ...
+    dense_units: ...
+    dropout: ...
+    learning_rate: ...
+    weight_decay: ...
+    batch_size: ...
+    ensemble_members: ...
+    consensus_tol: ...
+    early_stopping_patience: 7
+CLI arguments (same as E1/E2 plus E3-specific):
+
+Core: --n_trials, --study_name, --ticker, --tickers, --per_ticker, --quick
+MLflow: --mlflow_uri, --optuna_db, --output_dir
+Validation: --validation_method, --optuna_folds
+Data: --use-latest-data
+Search space overrides: --tau_buy_min/max, --tau_sell_min/max, --lstm_hidden_size_min/max, --dense_units_min/max, --dropout_min/max, --learning_rate_min/max, --weight_decay_min/max, --batch_sizes, --ensemble_members_min/max, --consensus_tol_min/max
+Files to Modify
+2. src/e3/train_pipeline.py — Add bt_num_trades to summaries
+The E3 walk-forward summary and time-split summary lack bt_num_trades, which the optimizer needs for the trade penalty. Add it in both paths:
+
+Walk-forward path (in run_e3_walk_forward, after line ~417 where summary dict is built):
+
+Add: "bt_num_trades": int((bt_all["turnover"] > 0).sum())
+Time-split path (in run_for_ticker, after line ~776 where trading dict is built):
+
+Add: "num_trades": int((bt["turnover"] > 0).sum())
+This matches how backtest_daily.py:354 computes num_trades.
+
+Also add bt_num_trades to per-fold summaries (line ~324-340) for consistency:
+
+Add: "bt_num_trades": int((bt_fold["turnover"] > 0).sum())
+3. src/config/base.yaml — Add optuna.e3_intraday block
+After the existing e2_moderate block (~line 325), add:
+
+  e3_intraday:
+    tuned_params_path: "reports/hyperparameter_optimization/e3_tuned_params_by_ticker.yaml"
+    fallback_to_base: true
+    validation:
+      method: "walk_forward"
+      folds: 3
+Pre-implementation Check
+Before writing the objective function, verify that bt_num_trades exists in the E3 walk-forward summary dict. If it doesn't, we need to either:
+
+(a) Add it to the walk-forward summary in train_pipeline.py, or
+(b) Use a proxy like bt_time_in_market > 0 for the trade penalty check
+Check backtest_intraday_signals() return format and whether bt_num_trades is computed in the walk-forward path.
+
+Verification
+Syntax check: python -c "import scripts.optimization.optimize_e3_hyperparameters"
+Dry run: python scripts/optimization/optimize_e3_hyperparameters.py --n_trials 1 --ticker SPY (single trial, single ticker)
+Verify output files in reports/hyperparameter_optimization/:
+best_params_e3.yaml exists and has correct structure
+e3_all_trials.csv has expected columns
+Verify MLflow fallback: Run without Docker MLflow → should fall back to local SQLite
+Verify objective formula: Check logged objective_value matches 0.30*sharpe + 0.20*ic + 0.25*dir_acc + 0.25*calmar
+Run tests: pytest tests/ to ensure no regressions
