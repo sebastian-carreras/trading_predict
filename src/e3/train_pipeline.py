@@ -366,6 +366,7 @@ def run_e3_walk_forward(  # Walk-forward completo para E3
         if float(np.std(y_pred_all)) > 1e-12 else float("nan")
     )
     mae_all = float(np.mean(np.abs(y_true_all - y_pred_all)))
+    rmse_all = float(rmse(y_true_all, y_pred_all))
     dir_acc_all = float(np.mean(np.sign(y_true_all) == np.sign(y_pred_all)))
 
     # Aplicar filtro de consenso en la serie completa para el backtest final
@@ -409,6 +410,7 @@ def run_e3_walk_forward(  # Walk-forward completo para E3
         "split_method": "walk_forward",
         "feature_count": int(X.shape[-1]),
         "ml_mae": mae_all,
+        "ml_rmse": rmse_all,
         "ml_ic": ic_all,
         "ml_directional_accuracy": dir_acc_all,
         "bt_sharpe": sharpe_all,
@@ -476,7 +478,7 @@ def _register_e3_candidate(
 
         registry_path, metrics_log_path = resolve_lifecycle_paths(config, root=root)
         log_candidate_metrics(
-            metrics=summary, strategy="e3_intraday", ticker=ticker,
+            metrics=summary, strategy="e3", ticker=ticker,
             run_dir=out_dir, variant="e3_intraday",
             log_path=metrics_log_path,
             feature_names=list(feat_names),
@@ -491,7 +493,7 @@ def _register_e3_candidate(
         if passed:
             registry = ModelRegistry(registry_path)
             registry.register_candidate(
-                strategy="e3_intraday", ticker=ticker,
+                strategy="e3", ticker=ticker,
                 run_dir=str(out_dir.resolve().relative_to(root)),
                 metrics=summary, variant="e3_intraday",
                 feature_names=list(feat_names),
@@ -502,7 +504,7 @@ def _register_e3_candidate(
                 try:
                     from ..lifecycle.promotion import evaluate_and_promote
                     promo_cfg = config.get("lifecycle", {}).get("promotion", {})
-                    decision = evaluate_and_promote(registry, "e3_intraday", ticker, promo_cfg)
+                    decision = evaluate_and_promote(registry, "e3", ticker, promo_cfg)
                     if decision.promoted:
                         print(f"  ★ PROMOTED {ticker} to champion ({decision.reason})")
                     else:
@@ -883,6 +885,9 @@ def main() -> None:  # Main
     raw_dir = root / "data" / "raw" / "intraday"  # Dir raw
     out_base = root / "runs" / "e3_intraday" / datetime.now().strftime("%Y%m%d_%H%M%S")  # Dir salida
     ensure_dir(out_base)  # Crear dir
+
+    import shutil
+    shutil.copy(cfg_path, out_base / "config_used.yaml")
 
     if args.mode == "download" or _forced_download:  # Modo download (o forzado por --use-latest-data)
         period = str(data_cfg.get("period", "60d"))  # Period

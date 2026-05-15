@@ -23,13 +23,18 @@ import sys
 import pandas as pd
 import numpy as np
 
+from scripts.evaluation._compare_common import (
+    load_summary_for_comparison,
+    save_comparison_figure,
+    validate_improvement_signs,
+)
+
 
 def load_latest_run(runs_dir: Path) -> Path | None:
-    """Encuentra el run más reciente en un directorio."""
+    """Encuentra el run más reciente en un directorio (timestamps comienzan con dígito)."""
     if not runs_dir.exists():
         return None
-    
-    runs = sorted([d for d in runs_dir.iterdir() if d.is_dir()])
+    runs = sorted([d for d in runs_dir.iterdir() if d.is_dir() and d.name[0].isdigit()])
     return runs[-1] if runs else None
 
 
@@ -85,10 +90,10 @@ def compute_comparison_metrics(df_baseline: pd.DataFrame, df_gru: pd.DataFrame) 
         # Determinar si GRU es mejor
         if direction == "higher_better":
             gru_better = diff > 0
-            improvement_pct = (diff / baseline_val * 100) if baseline_val != 0 else 0
+            improvement_pct = (diff / abs(baseline_val) * 100) if baseline_val != 0 else 0
         else:  # lower_better
             gru_better = diff < 0
-            improvement_pct = (-diff / baseline_val * 100) if baseline_val != 0 else 0
+            improvement_pct = (-diff / abs(baseline_val) * 100) if baseline_val != 0 else 0
         
         comparison_data.append({
             "Métrica": metric_name,
@@ -159,8 +164,9 @@ def print_formatted_table(df: pd.DataFrame) -> None:
 
 def save_comparison_report(df_comparison: pd.DataFrame, output_path: Path) -> None:
     """Guarda reporte de comparación."""
-    # CSV
-    df_comparison.to_csv(output_path.with_suffix(".csv"), index=False)
+    # CSV con nombre consistente con E2/E3
+    csv_path = output_path.parent / "e1_comparison.csv"
+    df_comparison.to_csv(csv_path, index=False)
     
     # Markdown
     with open(output_path.with_suffix(".md"), "w") as f:
@@ -204,7 +210,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=str,
-        default="reports/e1_model_comparison",
+        default="reports/conclusiones/comparaciones/fig_e1_vs_baseline",
         help="Path de salida para el reporte",
     )
     
@@ -218,49 +224,39 @@ def main() -> None:
     else:
         root = Path.cwd()
     
-    # Auto-detectar runs si no se especifican
-    if args.baseline_run is None:
-        baseline_runs_dir = root / "runs" / "e1_baseline"
-        baseline_run_path = load_latest_run(baseline_runs_dir)
-        if baseline_run_path is None:
-            print("❌ No se encontraron runs del baseline en runs/e1_baseline/")
-            print("   Ejecuta primero: python -m src.train_e1_baseline --tickers AAPL")
-            sys.exit(1)
-    else:
-        baseline_run_path = Path(args.baseline_run)
-    
-    if args.gru_run is None:
-        gru_runs_dir = root / "runs" / "e1_conservative"
-        gru_run_path = load_latest_run(gru_runs_dir)
-        if gru_run_path is None:
-            print("❌ No se encontraron runs del GRU en runs/e1_conservative/")
-            print("   Ejecuta primero: python -m src.train_e1_pipeline --tickers AAPL")
-            sys.exit(1)
-    else:
-        gru_run_path = Path(args.gru_run)
-    
+    # Default: read champions/baselines from registry (best per ticker, possibly
+    # from different historical runs). Fall back to latest run if registry is empty.
+    df_baseline, baseline_src = load_summary_for_comparison(
+        "e1", "baseline",
+        explicit_run=Path(args.baseline_run) if args.baseline_run else None,
+        runs_subdir=root / "runs" / "e1_baseline",
+        project_root=root,
+    )
+    df_gru, gru_src = load_summary_for_comparison(
+        "e1", "champion",
+        explicit_run=Path(args.gru_run) if args.gru_run else None,
+        runs_subdir=root / "runs" / "e1_conservative",
+        project_root=root,
+    )
+
     print(f"\n📁 Cargando resultados...")
-    print(f"   Baseline: {baseline_run_path}")
-    print(f"   GRU:      {gru_run_path}")
-    
-    # Cargar summaries
-    df_baseline = load_model_summary(baseline_run_path, "baseline")
-    df_gru = load_model_summary(gru_run_path, "gru")
-    
+    print(f"   Baseline: {baseline_src}")
+    print(f"   GRU:      {gru_src}")
+
     if df_baseline is None:
-        print(f"❌ No se encontró summary del baseline en {baseline_run_path}")
+        print("❌ No se pudo cargar el baseline (registry vacío y no hay runs en runs/e1_baseline/)")
         sys.exit(1)
-    
     if df_gru is None:
-        print(f"❌ No se encontró summary del GRU en {gru_run_path}")
+        print("❌ No se pudo cargar el GRU (registry vacío y no hay runs en runs/e1_conservative/)")
         sys.exit(1)
-    
+
     print(f"   ✓ Baseline: {len(df_baseline)} tickers")
     print(f"   ✓ GRU: {len(df_gru)} tickers")
     
     # Comparar
     df_comparison = compute_comparison_metrics(df_baseline, df_gru)
-    
+    validate_improvement_signs(df_comparison, mejora_col="Mejora %", mejor_col="GRU Mejor", metrica_col="Métrica")
+
     # Mostrar resultados
     print_comparison_table(df_comparison)
     
@@ -269,10 +265,30 @@ def main() -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
     save_comparison_report(df_comparison, output_path)
-    
+
+    # PNG figure using shared helper (rename columns to match _compare_common convention)
+    df_fig = df_comparison.rename(columns={
+        "Métrica": "Metrica",
+        "GRU": "GRU E1",
+        "Mejora %": "Mejora_%",
+        "GRU Mejor": "Modelo_mejor",
+    })
+    df_fig["Modelo_mejor"] = df_fig["Modelo_mejor"] == "✓"
+    fig_path = output_path.with_suffix(".png")
+    save_comparison_figure(
+        df_fig,
+        model_label="GRU E1",
+        strategy_label="E1 Conservative (GRU 90-day)",
+        out_path=fig_path,
+        trading_split_per_group=True,
+    )
+
+    csv_path = output_path.parent / "e1_comparison.csv"
+    ml_fig_path = fig_path.with_name(fig_path.stem + "_ml" + fig_path.suffix)
     print(f"\n✅ Reporte guardado en:")
-    print(f"   📄 {output_path}.csv")
-    print(f"   📄 {output_path}.md")
+    print(f"   📄 {csv_path}")
+    print(f"   📄 {output_path.with_suffix('.md')}")
+    print(f"   📄 {ml_fig_path}")
 
 
 if __name__ == "__main__":

@@ -216,7 +216,7 @@ def main():
     print()
     
     # Guardar resultados en JSON
-    output_file = base_path / "reports" / f"iol_prices_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    output_file = base_path / "reports" / "trading" / f"iol_prices_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     output_file.parent.mkdir(parents=True, exist_ok=True)
     
     with open(output_file, 'w') as f:

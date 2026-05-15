@@ -234,7 +234,6 @@ MLFLOW_VERSION=3.8.1 bash scripts/mlflow/up_transparent_mlflow.sh
 - **Data Cleaning:** `README_DATA_CLEANING.md`
 - **Hyperparameter Tuning:** `README_HYPERPARAMETER_TUNING.md`
 - **IOL Trading:** `README_IOL_FALLBACK.md`
-- **Backtesting:** `README_BACKTESTING.md`
 
 ---
 

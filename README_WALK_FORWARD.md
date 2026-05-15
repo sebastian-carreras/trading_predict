@@ -18,9 +18,11 @@ Walk-forward es una técnica de validación específica para series temporales q
 | Aspecto | Split Simple | Walk-Forward |
 |---------|-------------|--------------|
 | **Ventanas de validación** | 1 única ventana (15%) | N ventanas independientes |
-| **Robustez temporal** | No detecta concept drift | Detecta degradación en el tiempo |
+| **Robustez temporal** | No detecta *concept drift*\* | Detecta degradación en el tiempo |
 | **Uso de datos** | Descarta 85% en test | Usa 100% de datos de forma eficiente |
 | **Rigor académico** | Básico | Gold standard para series temporales |
+
+(*) Concept drift: Concept drift es cuando la relación entre tus variables de entrada y la salida que querés predecir cambia con el tiempo, haciendo que el modelo que entrenaste deje de representar bien la realidad y empiece a rendir peor. Imaginá que entrenás un modelo hoy, asumiendo que “el mundo del dataset” va a seguir siendo parecido mañana. Concept drift es justamente cuando el mundo cambia: las reglas que unían X → y ya no son las mismas.
 
 ## ¿Por qué usar Walk-Forward en este proyecto (FIUBA)?
 
@@ -63,9 +65,7 @@ splits:
   embargo_days:
     e1: 90   # Gap entre train y test (= horizon_days E1)
     e2: 20   # Gap entre train y test (= horizon_days E2)
-    e2: 20
-    e3: 0
-    e4: 0
+    e3: 6    # horizon_bars=6; en barras (5-min), no en días — mismo principio que E1/E2
 ```
 
 ### Parámetros Clave
@@ -90,7 +90,7 @@ splits:
 **E1 (Conservadora - GRU):**
 ```bash
 # Asegurar que splits.method = "walk_forward" en base.yaml
-python -m src.train_e1_pipeline --tickers AAPL
+python -m src.e1.train_pipeline --tickers AAPL
 ```
 
 **Output esperado:**
@@ -108,7 +108,7 @@ python -m src.train_e1_pipeline --tickers AAPL
 **E2 (Moderada - LSTM):**
 ```bash
 # Asegurar que splits.method = "walk_forward" en base.yaml
-python -m src.train_e2_pipeline --tickers NVDA
+python -m src.e2.train_pipeline --tickers NVDA
 ```
 
 **Output esperado:**
@@ -123,18 +123,10 @@ python -m src.train_e2_pipeline --tickers NVDA
 ✓ NVDA: MAE=0.1193 IC=0.495
 ```
 
-### Opción 2: Volver a Split Simple
-
-```yaml
-# En src/config/base.yaml
-splits:
-  method: "time_split"  # Desactiva walk-forward
-```
-
-Luego ejecutar normalmente:
+**E3 (Intraday - LSTM Ensemble, datos 5-min):**
 ```bash
-python -m src.train_e1_pipeline --tickers AAPL
-python -m src.train_e2_pipeline --tickers NVDA
+# Asegurar que splits.method = "walk_forward" en base.yaml
+python -m src.e3.train_pipeline --tickers AAPL
 ```
 
 ## 📁 Archivos Generados
@@ -266,7 +258,7 @@ Agregado: IC=-0.254, Sharpe=0.635
 ### Split Simple (`time_split`)
 
 ```python
-# En train_e1_pipeline.py (sin walk-forward)
+# En src/e1/train_pipeline.py (sin walk-forward)
 idx_train, idx_val, idx_test = time_split(len(X))  # 70/15/15
 X_train, y_train = X[idx_train], y[idx_train]
 X_test, y_test = X[idx_test], y[idx_test]
@@ -284,7 +276,7 @@ ic = np.corrcoef(y_test, y_pred)[0, 1]
 ### Walk-Forward (`walk_forward`)
 
 ```python
-# En train_e1_pipeline.py (con walk-forward)
+# En src/e1/train_pipeline.py (con walk-forward)
 from sklearn.model_selection import TimeSeriesSplit
 
 splitter = TimeSeriesSplit(n_splits=5, test_size=340, gap=90)
@@ -358,40 +350,37 @@ splits:
 
 ## Próximos Pasos
 
-1. **Optimizar hiperparámetros por fold** (opcional):
-   - Buscar `tau_buy`, `tau_sell` óptimos para cada régimen
-   - Ver [README_E1_OPTIMIZATION.md](README_E1_OPTIMIZATION.md) y [README_E2_OPTIMIZATION.md](README_E2_OPTIMIZATION.md)
+1. **Optimizar hiperparámetros** (disponible para E2):
+   - Buscar `tau_buy`, `tau_sell` y arquitectura óptimos vía Optuna
+   - Ver `scripts/optimization/optimize_e2_hyperparameters.py`
 
 2. **Detección de drift**:
    - Implementar monitoreo de IC por ventana deslizante
    - Retraining automático cuando IC < threshold
 
-3. **Ensemble de modelos**:
-   - Combinar predicciones E1 (GRU) y E2 (LSTM) con pesos adaptativos
-   - Mejorar robustez ante concept drift
-
-4. **Portfolio optimization**:
+3. **Portfolio optimization**:
    - Aplicar walk-forward a múltiples tickers simultáneamente
    - Optimizar pesos de portfolio maximizando Sharpe global
 
-## Diferencias E1 vs E2 en Walk-Forward
+## Diferencias por Estrategia en Walk-Forward
 
-| Aspecto | E1 (GRU Conservadora) | E2 (LSTM Moderada) |
-|---------|----------------------|-------------------|
-| **Horizon** | 90 días | 20 días |
-| **Embargo** | 90 días (= horizon) | 20 días (= horizon) |
-| **Modelo** | GRU (2 capas, 64-256 unidades) | LSTM (2 capas, 64-256 unidades) |
-| **Objetivo** | Information Coefficient | Sharpe + Profit Factor + CAGR |
-| **Filtros** | No tiene RSI filters | rsi14_min/max opcionales |
-| **Complejidad** | Menos parámetros (~70K) | Más parámetros (~100K) |
-| **Velocidad** | ~15-20% más rápida | Más lenta pero más expresiva |
+| Aspecto | E1 (GRU Conservadora) | E2 (LSTM Moderada) | E3 (LSTM Intraday) |
+|---------|----------------------|-------------------|-------------------|
+| **Horizon** | 90 días | 20 días | 30-min (6 barras × 5-min) |
+| **Embargo** | 90 días (= horizon) | 20 días (= horizon) | 6 barras (= horizon_bars) |
+| **Modelo** | GRU (2 capas, 64-32 unidades) | LSTM (2 capas, 128-64 unidades) | LSTM Ensemble (3 miembros) |
+| **Objetivo** | Information Coefficient | Sharpe + Profit Factor + CAGR | Sharpe + Profit Factor |
+| **Filtros** | No tiene RSI filters | rsi14_min/max opcionales | No tiene |
+| **Complejidad** | Menos parámetros (~70K) | Más parámetros (~100K) | 3× modelo base |
+| **Velocidad** | ~15-20% más rápida | Más lenta pero más expresiva | Más lenta (ensemble + datos 5-min) |
 
 **Recomendación de uso:**
 - **E1**: Para estrategias de largo plazo, mayor estabilidad temporal
 - **E2**: Para estrategias tácticas, mayor capacidad de capturar patrones complejos
+- **E3**: Para trading intraday, requiere datos de barras 5-min
 
 ---
 
-**Documentado:** 2026-01-09 (actualizado con E2)  
+**Documentado:** 2026-05-01 (actualizado con E3)  
 **Autor:** Sebastian Carreras  
 **Proyecto:** Trading Predict - FIUBA IA CEIA 18co

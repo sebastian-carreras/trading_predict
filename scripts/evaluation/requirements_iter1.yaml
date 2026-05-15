@@ -1,0 +1,110 @@
+# Requirements for Iteration 1 — verified against code + base.yaml, NOT against README files.
+# Each entry: id, descripcion, evidencia (path relative to project root), umbral (optional)
+
+requirements:
+  - id: REQ-01
+    descripcion: "Universo de tickers cubierto por estrategia"
+    evidencia_code: "src/config/base.yaml (universe.tickers)"
+    evidencia_artifact:
+      e1: "models/registry.json (strategies.e1.tickers)"
+      e2: "models/registry.json (strategies.e2.tickers)"
+      e3: "models/registry.json (strategies.e3_intraday.tickers)"
+    expected:
+      e1: 10
+      e2: 11
+      e3: 4
+
+  - id: REQ-02
+    descripcion: "Rango temporal de datos (10 años)"
+    evidencia_code: "src/config/base.yaml (project section)"
+    evidencia_artifact: "data/clean/"
+    expected_start: "2016-01-01"
+    expected_end: "2026-03-03"
+
+  - id: REQ-03
+    descripcion: "Features sin data leakage (z-score fit solo en train)"
+    evidencia_code: "src/e1/train_pipeline.py:609-634 / src/e2/train_pipeline.py / src/e3/train_pipeline.py"
+    expected_features:
+      e1: 12
+      e2: 12
+      e3: 12
+
+  - id: REQ-04
+    descripcion: "Walk-forward validation con 5 folds + embargo >= horizonte"
+    evidencia_code: "src/config/base.yaml (splits.method=walk_forward, splits.folds=5)"
+    expected_folds: 5
+    expected_embargo:
+      e1: 90
+      e2: 20
+      e3: "horizon_bars"
+
+  - id: REQ-05
+    descripcion: "Arquitecturas de modelos (GRU E1, LSTM E2, LSTM Ensemble E3)"
+    evidencia_code:
+      e1: "src/e1/gru.py + base.yaml gru_units=[64,32] dropout=0.3 dense=16"
+      e2: "src/e2/lstm.py + base.yaml lstm_units=[128,64] dropout=0.2 dense=32"
+      e3: "src/e3/lstm.py + base.yaml ensemble_members=3 lstm_hidden_size=128 lstm_num_layers=2"
+    evidencia_artifact: "runs/*/config_used.yaml"
+
+  - id: REQ-06
+    descripcion: "Loss function robusta a outliers (Huber / SmoothL1 delta=1.0)"
+    evidencia_code: "src/e1/gru.py, src/e2/lstm.py, src/e3/lstm.py (SmoothL1Loss beta=1.0)"
+    expected_delta: 1.0
+
+  - id: REQ-07
+    descripcion: "Metricas ML reportadas (MAE, RMSE, IC, Directional Accuracy)"
+    evidencia_artifact: "runs/<strategy>/<ts>/<TICKER>/<TICKER>_summary.csv"
+    required_columns: ["ml_mae", "ml_rmse", "ml_ic", "ml_directional_accuracy"]
+
+  - id: REQ-08
+    descripcion: "Metricas trading reportadas (Sharpe, CAGR, MaxDD, Calmar, PF)"
+    evidencia_artifact: "runs/<strategy>/<ts>/<TICKER>/<TICKER>_summary.csv"
+    required_columns: ["bt_sharpe", "bt_cagr", "bt_max_drawdown", "bt_calmar", "bt_profit_factor"]
+
+  - id: REQ-09
+    descripcion: "Composite score de promocion (min 5% mejora sobre champion)"
+    evidencia_code: "src/lifecycle/promotion.py, src/config/base.yaml lifecycle.promotion.min_improvement=0.05"
+    evidencia_artifact: "models/promotion_log.jsonl"
+    expected_min_improvement: 0.05
+
+  - id: REQ-10
+    descripcion: "Costos de transaccion aplicados en backtest"
+    evidencia_code: "src/backtest/backtest_daily.py:111 / src/backtest/backtest_intraday.py"
+    expected_bps:
+      e1: 10
+      e2: 10
+      e3: 20
+
+  - id: REQ-11
+    descripcion: "Baseline comparativo por estrategia"
+    evidencia_code:
+      e1: "src/e1/baseline_linear.py (LinearRegression, flatten 3D->2D)"
+      e2: "src/e2/baseline_linear.py (Ridge alpha=1.0)"
+      e3: "src/e3/baseline_linear.py (Ridge alpha=100.0)"
+    evidencia_artifact: "models/registry.json (slot=baseline per ticker)"
+
+  - id: REQ-12
+    descripcion: "Registry con escritura atomica (tempfile + os.replace)"
+    evidencia_code: "src/lifecycle/registry.py:248-260"
+
+  - id: REQ-13
+    descripcion: "Reproducibilidad (seed fijo, config_used.yaml por run)"
+    evidencia_code: "src/config/base.yaml:7 (seed=42), src/e1/gru.py:58, src/e2/lstm.py:66, src/e3/lstm.py:42"
+    evidencia_artifact: "runs/<strategy>/<ts>/config_used.yaml"
+    expected_seed: 42
+
+  - id: REQ-14
+    descripcion: "Umbrales de senal superan costos de transaccion"
+    evidencia_code: "src/config/base.yaml (thresholds.tau_buy per strategy)"
+    expected_margins:
+      e1: "tau_buy=0.02 (200bps) > 10bps cost"
+      e2: "tau_buy=0.025 (250bps) > 10bps cost"
+      e3: "tau_buy=0.0025 (25bps) > 20bps cost"
+
+  - id: REQ-15
+    descripcion: "Embargo temporal >= horizonte de prediccion en walk-forward"
+    evidencia_code: "src/config/base.yaml splits.embargo_days"
+    expected:
+      e1: "90 dias >= 90 dias horizonte"
+      e2: "20 dias >= 20 dias horizonte"
+      e3: "horizon_bars barras >= horizonte intradía"

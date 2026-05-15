@@ -100,6 +100,17 @@ def compute_information_coefficient(y_true: np.ndarray, y_pred: np.ndarray) -> f
         return float(np.corrcoef(y_true, y_pred)[0, 1])
 
 
+_PLOT_RCPARAMS = {
+    "font.size": 13,
+    "axes.titlesize": 14,
+    "axes.labelsize": 13,
+    "xtick.labelsize": 12,
+    "ytick.labelsize": 12,
+    "legend.fontsize": 12,
+    "figure.titlesize": 17,
+}
+
+
 def save_walkforward_plot(
     fold_df: pd.DataFrame, ticker: str, out_path: Path,
 ) -> None:
@@ -113,6 +124,7 @@ def save_walkforward_plot(
     except Exception:
         return
 
+    plt.rcParams.update(_PLOT_RCPARAMS)
     fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
 
     axes[0].plot(fold_df["fold"], fold_df["ml_ic"], marker="o")

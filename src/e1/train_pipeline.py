@@ -265,6 +265,17 @@ def compute_information_coefficient(y_true: np.ndarray, y_pred: np.ndarray) -> f
         return float(np.corrcoef(y_true, y_pred)[0, 1])
 
 
+_PLOT_RCPARAMS = {
+    "font.size": 13,
+    "axes.titlesize": 14,
+    "axes.labelsize": 13,
+    "xtick.labelsize": 12,
+    "ytick.labelsize": 12,
+    "legend.fontsize": 12,
+    "figure.titlesize": 17,
+}
+
+
 def save_walkforward_plot(fold_df: pd.DataFrame, ticker: str, out_path: Path) -> None:
     """Guarda grafico de IC y Sharpe por fold."""
     if fold_df.empty:  # Sin datos
@@ -279,6 +290,7 @@ def save_walkforward_plot(fold_df: pd.DataFrame, ticker: str, out_path: Path) ->
         print(f"⚠️  No se pudo generar el gráfico walk-forward para {ticker}: {exc}")  # Warning
         return  # Salir si no hay matplotlib
 
+    plt.rcParams.update(_PLOT_RCPARAMS)  # Estilo tipográfico unificado
     fig, axes = plt.subplots(2, 1, figsize=(8, 6), sharex=True)  # Crear figura con 2 subplots
 
     axes[0].plot(fold_df["fold"], fold_df["ml_ic"], marker="o")  # Serie IC
@@ -309,6 +321,7 @@ def _import_matplotlib():
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
+        plt.rcParams.update(_PLOT_RCPARAMS)
         return matplotlib, plt
     except Exception:
         return None
@@ -369,7 +382,7 @@ def save_pred_vs_actual_plot(
     corr = float(np.corrcoef(y_true, y_pred)[0, 1]) if len(y_true) > 1 else 0.0
     ax.text(
         0.05, 0.95, f"Pearson r = {corr:.3f}",
-        transform=ax.transAxes, fontsize=9, verticalalignment="top",
+        transform=ax.transAxes, fontsize=12, verticalalignment="top",
         bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5),
     )
 
@@ -403,7 +416,7 @@ def save_residuals_plot(
     ax.text(
         0.95, 0.95,
         f"media = {mean_r:.4f}\nstd = {std_r:.4f}",
-        transform=ax.transAxes, fontsize=9, verticalalignment="top",
+        transform=ax.transAxes, fontsize=12, verticalalignment="top",
         horizontalalignment="right",
         bbox=dict(boxstyle="round", facecolor="lightyellow", alpha=0.5),
     )
@@ -454,9 +467,9 @@ def save_fold_metrics_panel(fold_df: pd.DataFrame, ticker: str, out_path: Path) 
         ax.set_xlabel("Fold")
         if "window" in fold_df.columns:
             ax.set_xticks(folds)
-            ax.set_xticklabels(fold_df["window"].to_list(), rotation=35, ha="right", fontsize=7)
+            ax.set_xticklabels(fold_df["window"].to_list(), rotation=35, ha="right", fontsize=10)
 
-    fig.suptitle(f"{ticker} - Métricas por Fold", fontsize=12, y=1.01)
+    fig.suptitle(f"{ticker} - Métricas por Fold", fontsize=15, y=1.01)
     fig.tight_layout()
     fig.savefig(str(out_path), dpi=150, bbox_inches="tight")
     plt.close(fig)

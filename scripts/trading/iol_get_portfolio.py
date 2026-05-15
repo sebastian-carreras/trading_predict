@@ -141,8 +141,8 @@ def main() -> int:
     else:
         print("No se detectaron tenencias listadas en la respuesta.")
 
-    reports_dir = Path("reports")
-    reports_dir.mkdir(exist_ok=True)
+    reports_dir = Path("reports") / "trading"
+    reports_dir.mkdir(parents=True, exist_ok=True)
     output_path = reports_dir / f"iol_portfolio_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     output_path.write_text(json.dumps(portfolio, indent=2, ensure_ascii=False), encoding="utf-8")
     print("=" * 80)

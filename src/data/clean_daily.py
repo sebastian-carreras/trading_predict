@@ -100,6 +100,16 @@ def clean_ohlcv_data(
     if "timestamp" in df_clean.columns:
         df_clean = df_clean.sort_values("timestamp").reset_index(drop=True)
 
+    # 1b. Eliminar fines de semana (sábado=5, domingo=6)
+    if "timestamp" in df_clean.columns:
+        dow = pd.to_datetime(df_clean["timestamp"]).dt.dayofweek
+        weekend_mask = dow >= 5
+        weekend_count = weekend_mask.sum()
+        if weekend_count > 0:
+            weekend_dates = pd.to_datetime(df_clean.loc[weekend_mask, "timestamp"]).dt.date.tolist()
+            print(f"  ⚠️  INCONSISTENCIA: {weekend_count} filas de fin de semana detectadas y eliminadas: {weekend_dates}")
+        df_clean = df_clean[~weekend_mask].reset_index(drop=True)
+
     # 2. Eliminar duplicados: para datos diarios, mantener solo 1 fila por fecha
     if "timestamp" in df_clean.columns:
         df_clean["_date"] = pd.to_datetime(df_clean["timestamp"]).dt.date

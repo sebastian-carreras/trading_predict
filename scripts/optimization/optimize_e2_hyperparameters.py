@@ -12,7 +12,7 @@ entrenamiento/evaluación final, fuera del loop de Optuna.
 
 Parámetros optimizados y rangos de búsqueda:
   Trading thresholds:
-    - tau_buy:  [0.015, 0.05] step=0.005 — Umbral de predicción para señal de compra
+    - tau_buy:  [0.015, 0.08] step=0.005 — Umbral de predicción para señal de compra
     - tau_sell: [-0.01, 0.01]  step=0.005 — Umbral de predicción para señal de venta
 
   Arquitectura LSTM (2 capas):
@@ -210,6 +210,22 @@ class E2HyperparameterOptimizer:
                     has_malformed_mlruns = True
                     break
 
+        def _is_local_path_writable(artifact_loc: str) -> bool:
+            """Returns True if the artifact location is writable (skips remote URIs)."""
+            if not artifact_loc:
+                return True
+            if artifact_loc.startswith(("http://", "https://", "s3://", "gs://", "azure://")):
+                return True
+            loc = artifact_loc[len("file://"):] if artifact_loc.startswith("file://") else artifact_loc
+            loc_path = Path(loc)
+            if loc_path.exists():
+                return os.access(str(loc_path), os.W_OK)
+            try:
+                loc_path.mkdir(parents=True, exist_ok=True)
+                return True
+            except (PermissionError, OSError):
+                return False
+
         def _activate_mlflow(
             uri: str,
             experiment_artifact_dir: Path | None = None,
@@ -227,6 +243,22 @@ class E2HyperparameterOptimizer:
                     elif exp.lifecycle_stage == "deleted":
                         # Restaurar si fue soft-deleted
                         mlflow.tracking.MlflowClient().restore_experiment(exp.experiment_id)
+                    else:
+                        # Experiment exists — verify artifact location is writable.
+                        # If not (e.g. was created by Docker pointing to /opt/airflow),
+                        # archive the old experiment and recreate with the local path.
+                        if not _is_local_path_writable(exp.artifact_location or ""):
+                            client = mlflow.tracking.MlflowClient()
+                            archive_name = f"{experiment_name}_archived_{int(time.time())}"
+                            client.rename_experiment(exp.experiment_id, archive_name)
+                            print(
+                                f"  ⚠️  Artifact location '{exp.artifact_location}' inaccesible. "
+                                f"Experimento archivado como '{archive_name}'."
+                            )
+                            mlflow.create_experiment(
+                                experiment_name,
+                                artifact_location=experiment_artifact_dir.resolve().as_uri(),
+                            )
                     mlflow.set_experiment(experiment_name)
                 else:
                     exp = mlflow.get_experiment_by_name(experiment_name)
@@ -303,7 +335,7 @@ class E2HyperparameterOptimizer:
         self.current_run_min_trial_number: int | None = None
 
         # Search space defaults (se pueden sobreescribir vía CLI / DAG)
-        self.tau_buy_bounds = {"min": 0.015, "max": 0.05, "step": 0.005}
+        self.tau_buy_bounds = {"min": 0.015, "max": 0.08, "step": 0.005}
         self.tau_sell_bounds = {"min": -0.01, "max": 0.01, "step": 0.005}
         self.lstm_units_1_bounds = {"min": 64, "max": 256, "step": 32}
         self.lstm_units_2_bounds = {"min": 32, "max": 128, "step": 16}
@@ -454,6 +486,14 @@ class E2HyperparameterOptimizer:
             # 2. ACTUALIZAR CONFIG CON PARÁMETROS SUGERIDOS
 
             config_trial = copy.deepcopy(self.config)
+
+            # Prevent _apply_tuned_overrides from loading a previously-saved YAML
+            # and overwriting the trial's suggested params. Clearing env vars alone
+            # is not enough because the fallback reads from config["optuna"][...]["tuned_params_path"].
+            try:
+                config_trial["optuna"]["e2_moderate"].pop("tuned_params_path", None)
+            except (KeyError, AttributeError):
+                pass
 
             # Configurar método de validación para el trial.
             # Por defecto walk_forward (alineado con training) con folds reducidos (3).

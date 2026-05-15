@@ -18,7 +18,13 @@ def directional_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 def information_coefficient(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     if len(y_true) < 3:
         return 0.0
-    corr = np.corrcoef(y_true, y_pred)[0, 1]
-    if np.isnan(corr):
+    if np.std(y_true) == 0 or np.std(y_pred) == 0:
         return 0.0
-    return float(corr)
+    try:
+        from scipy.stats import spearmanr
+
+        ic, _ = spearmanr(y_true, y_pred)
+        return float(ic) if np.isfinite(ic) else 0.0
+    except Exception:
+        corr = float(np.corrcoef(y_true, y_pred)[0, 1])
+        return corr if np.isfinite(corr) else 0.0

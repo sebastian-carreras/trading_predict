@@ -205,7 +205,6 @@ runs/<estrategia>/<YYYYMMDD_HHMMSS>/
 - **[README_E3.md](README_E3.md)** - Estrategia E3 Intradía (Ensemble)
 - **[README_E4.md](README_E4.md)** - Estrategia E4 Pairs Trading
 - **[README_DOCKER.md](README_DOCKER.md)** - Deployment con Docker + Airflow
-- **[README_BACKTESTING.md](README_BACKTESTING.md)** - Motor de backtesting
 - **[README_DATA_CLEANING.md](README_DATA_CLEANING.md)** - Pipeline de datos
 
 ### Referencias Técnicas

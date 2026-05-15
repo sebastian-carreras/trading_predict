@@ -131,7 +131,7 @@ def get_strategy_promotion_config(
     config : dict | None
         The ``lifecycle.promotion`` sub-dict from ``base.yaml``.
     strategy : str
-        Strategy key, e.g. ``"e1"``, ``"e1_conservative"``, ``"e3_intraday"``.
+        Strategy key, e.g. ``"e1"``, ``"e1_conservative"``, ``"e3"``.
 
     Returns
     -------
