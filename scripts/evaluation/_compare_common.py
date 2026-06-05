@@ -185,6 +185,8 @@ def _draw_grouped_bars(
     ax,
     subset: pd.DataFrame,
     model_label: str,
+    fs_tick: int = FS_TICK,
+    fs_bar_label: int = FS_BAR_LABEL,
 ) -> None:
     metrics = subset["Metrica"].tolist()
     base_vals = subset["Baseline"].tolist()
@@ -198,8 +200,8 @@ def _draw_grouped_bars(
                     color="#1565C0", edgecolor="white")
 
     ax.set_xticks(x)
-    ax.set_xticklabels(metrics, rotation=20, ha="right", fontsize=FS_TICK)
-    ax.tick_params(axis="y", labelsize=FS_TICK)
+    ax.set_xticklabels(metrics, rotation=20, ha="right", fontsize=fs_tick)
+    ax.tick_params(axis="y", labelsize=fs_tick)
     ax.axhline(0, color="gray", linewidth=0.8)
     ax.grid(axis="y", alpha=0.3)
     ax.spines["top"].set_visible(False)
@@ -217,7 +219,17 @@ def _draw_grouped_bars(
 
     for bars, vals in ((bars_b, base_vals), (bars_m, model_vals)):
         labels = [_fmt(v) for v in vals]
-        ax.bar_label(bars, labels=labels, fontsize=FS_BAR_LABEL, padding=2)
+        ax.bar_label(bars, labels=labels, fontsize=fs_bar_label, padding=2)
+
+    # Margen extra abajo cuando hay valores negativos, para que las etiquetas
+    # de barras pequeñas (ej. IC = -0.040) no se superpongan con el eje X.
+    has_negative = any(
+        v is not None and not (isinstance(v, float) and np.isnan(v)) and v < 0
+        for v in (*base_vals, *model_vals)
+    )
+    if has_negative:
+        bottom, top = ax.get_ylim()
+        ax.set_ylim(bottom - 0.10 * (top - bottom), top)
 
 
 def _save_single_group_figure(
@@ -228,20 +240,28 @@ def _save_single_group_figure(
     group_title: str,
     metric_names: list[str],
     dest: Path,
+    figsize: tuple[float, float] = (8, 6),
+    font_scale: float = 1.0,
 ) -> None:
     subset = df_comp[df_comp["Metrica"].isin(metric_names)].copy()
     if subset.empty:
         return
 
-    fig, ax = plt.subplots(figsize=(8, 6))
+    # El suptitle se mantiene en tamaño base para igualar al resto de figuras;
+    # font_scale solo afecta a ticks, leyenda y etiquetas de barra.
+    fs_tick = int(round(FS_TICK * font_scale))
+    fs_legend = int(round(FS_LEGEND * font_scale))
+    fs_bar_label = int(round(FS_BAR_LABEL * font_scale))
+
+    fig, ax = plt.subplots(figsize=figsize)
     fig.suptitle(
         f"{strategy_label} — Baseline vs {model_label}\n{section_title}: {group_title}",
         fontsize=FS_SUPTITLE,
         fontweight="bold",
     )
 
-    _draw_grouped_bars(ax, subset, model_label)
-    ax.legend(fontsize=FS_LEGEND, frameon=True)
+    _draw_grouped_bars(ax, subset, model_label, fs_tick=fs_tick, fs_bar_label=fs_bar_label)
+    ax.legend(fontsize=fs_legend, frameon=True)
 
     fig.tight_layout(rect=(0, 0, 1, 0.93))
     fig.savefig(dest, bbox_inches="tight", dpi=150)
@@ -301,13 +321,18 @@ def save_comparison_figure(
     strategy_label: str,
     out_path: Path,
     trading_split_per_group: bool = False,
+    figsize_overrides: dict[str, tuple[float, float]] | None = None,
 ) -> None:
     """Generate ML and trading comparison figures.
 
     Args:
         trading_split_per_group: if True, produces one trading figure per group
             (recommended when scales differ across groups, used by E1/E2/E3).
+        figsize_overrides: optional per-group figsize override keyed by slug
+            (e.g. {"calidad": (8, 5.4)} shrinks the ml_calidad figure by 10%).
     """
+    overrides = figsize_overrides or {}
+
     # ML: una figura por subgrupo (más espacio por barra para incluir en informes).
     for group_title, slug, metric_names in ML_METRIC_GROUPS:
         dest = out_path.with_name(f"{out_path.stem}_ml_{slug}{out_path.suffix}")
@@ -319,7 +344,22 @@ def save_comparison_figure(
             group_title=group_title,
             metric_names=metric_names,
             dest=dest,
+            figsize=overrides.get(slug, (8, 6)),
         )
+
+    # ML combinado: un solo grafico con las 4 metricas (MAE, RMSE, Dir. Acc., IC).
+    dest_ml_combined = out_path.with_name(out_path.stem + "_ml" + out_path.suffix)
+    _save_single_group_figure(
+        df_comp=df_comp,
+        model_label=model_label,
+        strategy_label=strategy_label,
+        section_title="Metricas ML (Offline)",
+        group_title="MAE, RMSE, Dir. Accuracy e IC (Spearman)",
+        metric_names=ML_METRICS,
+        dest=dest_ml_combined,
+        figsize=(10, 6),
+        font_scale=1.3,
+    )
 
     if trading_split_per_group:
         # Una figura independiente por grupo de trading (útil cuando las escalas
@@ -334,6 +374,7 @@ def save_comparison_figure(
                 group_title=group_title,
                 metric_names=metric_names,
                 dest=dest,
+                figsize=overrides.get(slug, (8, 6)),
             )
     else:
         # Trading: figura combinada con subplots por escala (se mantiene como estaba).

@@ -71,6 +71,7 @@ def main() -> None:
         strategy_label="E2 Moderate (LSTM 20-day)",
         out_path=OUT_DIR / "fig_e2_vs_baseline.png",
         trading_split_per_group=True,
+        figsize_overrides={"calidad": (8, 5.4)},
     )
 
     # Markdown report

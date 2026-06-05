@@ -146,24 +146,25 @@ def main() -> None:
 
     print(f"Baseline tickers: {len(df_baseline)}, Model tickers: {len(df_model)}")
 
-    df_comp = compare_runs(df_baseline, df_model, model_label="LSTM Ensemble E3")
+    df_comp = compare_runs(df_baseline, df_model, model_label="LSTM E3")
     validate_improvement_signs(df_comp)
-    print_comparison(df_comp, "LSTM Ensemble E3")
+    print_comparison(df_comp, "LSTM E3")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     save_comparison_figure(
         df_comp,
-        model_label="LSTM Ensemble E3",
-        strategy_label="E3 Intraday (LSTM Ensemble, 30-min bars)",
+        model_label="LSTM E3",
+        strategy_label="E3 Intraday (LSTM Ens. 30-min)",
         out_path=OUT_DIR / "fig_e3_vs_baseline.png",
         trading_split_per_group=True,
+        figsize_overrides={"calidad": (8, 4.86), "errores": (8, 4.86)},
     )
 
     # Markdown report
     save_comparison_markdown(
         df_comp,
-        model_label="LSTM Ensemble E3",
-        strategy_label="E3 Intraday (LSTM Ensemble, 30-min bars)",
+        model_label="LSTM E3",
+        strategy_label="E3 Intraday (LSTM Ens. 30-min)",
         out_path=OUT_DIR / "fig_e3_vs_baseline.md",
     )
 

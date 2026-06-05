@@ -130,17 +130,20 @@ def _plot_metric_figure(history_by_strategy: dict[str, pd.DataFrame],
                         ref_lines: list[tuple[float, str, str]],
                         out_filename: str,
                         suptitle: str) -> None:
-    """Generate a vertically stacked figure (one panel per strategy) for a single metric.
+    """Generate one standalone figure per strategy for a single metric.
+
+    Each strategy gets its own PNG file. The base ``out_filename`` is suffixed
+    with the strategy key (e.g. ``fig_champion_stability_sharpe_e1_conservative.png``).
 
     Args:
         history_by_strategy: history dataframes keyed by strategy.
-        out_dir: directory to save the PNG.
+        out_dir: directory to save the PNGs.
         metric_col: column to plot (e.g., "bt_sharpe", "ml_ic").
         metric_label: y-axis label.
         marker: matplotlib marker style.
         ref_lines: list of (y_value, color, linestyle) reference lines.
-        out_filename: output PNG filename.
-        suptitle: figure-level title.
+        out_filename: base output PNG filename (strategy key gets appended).
+        suptitle: figure-level title template; the strategy label is appended.
     """
     plt.rcParams.update(STYLE)
     strategies = [k for k in STRATEGY_CONFIG if k in history_by_strategy]
@@ -148,15 +151,14 @@ def _plot_metric_figure(history_by_strategy: dict[str, pd.DataFrame],
         print(f"[WARN] No history data found for {metric_col} plot.")
         return
 
-    fig, axes = plt.subplots(len(strategies), 1, figsize=(12, 5.99 * len(strategies)),
-                             squeeze=False)
-    fig.suptitle(suptitle, fontsize=24, fontweight="bold", y=1.005)
+    stem = out_filename[:-4] if out_filename.endswith(".png") else out_filename
 
-    for row_idx, strat in enumerate(strategies):
+    for strat in strategies:
         df = history_by_strategy[strat].sort_values("date")
         cfg = STRATEGY_CONFIG[strat]
         label = cfg["label"]
-        ax = axes[row_idx, 0]
+
+        fig, ax = plt.subplots(figsize=(14.4, 6.4152))
 
         for ticker_file, grp in df.groupby("source_file"):
             ticker_name = (ticker_file
@@ -183,11 +185,11 @@ def _plot_metric_figure(history_by_strategy: dict[str, pd.DataFrame],
             legend_kwargs["bbox_to_anchor"] = cfg["legend_bbox"]
         ax.legend(**legend_kwargs)
 
-    fig.tight_layout()
-    out = out_dir / out_filename
-    fig.savefig(out, bbox_inches="tight")
-    plt.close(fig)
-    print(f"[OK] {out}")
+        fig.tight_layout()
+        out = out_dir / f"{stem}_{strat}.png"
+        fig.savefig(out, bbox_inches="tight")
+        plt.close(fig)
+        print(f"[OK] {out}")
 
 
 def fig_champion_stability(history_by_strategy: dict[str, pd.DataFrame], out_dir: Path) -> None:

@@ -80,7 +80,7 @@ def fig_sharpe_boxplot(df: pd.DataFrame, out_dir: Path) -> None:
             labels.append(STRATEGY_LABELS.get(s, s))
             colors.append(COLORS.get(s, "gray"))
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(8, 4.2768))
     bp = ax.boxplot(data_groups, patch_artist=True, widths=0.4,
                     medianprops=dict(color="black", linewidth=2))
     for patch, color in zip(bp["boxes"], colors):
