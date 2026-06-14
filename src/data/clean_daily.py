@@ -273,7 +273,17 @@ def process_daily_data_with_cleaning(
 
         # Cargar datos
         df = pd.read_csv(csv_path)
-        df["timestamp"] = pd.to_datetime(df["timestamp"], format='ISO8601', utc=True)
+        # errors='coerce': una fila corrupta (p.ej. un append partido que deja un
+        # precio en la columna timestamp) se vuelve NaT y se descarta, en lugar de
+        # abortar toda la limpieza. Es justamente lo que esta etapa debe resolver.
+        df["timestamp"] = pd.to_datetime(
+            df["timestamp"], format='ISO8601', utc=True, errors='coerce'
+        )
+        n_bad_ts = int(df["timestamp"].isna().sum())
+        if n_bad_ts:
+            if verbose:
+                print(f"  🗑️  Eliminadas {n_bad_ts} filas con timestamp inválido (corruptas)")
+            df = df.dropna(subset=["timestamp"]).reset_index(drop=True)
 
         # Diagnóstico pre-limpieza
         report = diagnose_data_quality(df, ticker)

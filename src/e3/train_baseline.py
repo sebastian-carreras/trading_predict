@@ -387,7 +387,9 @@ def _setup_mlflow(root: Path, experiment_name: str) -> tuple[bool, object | None
     timeout = float(os.getenv("MLFLOW_REMOTE_CHECK_TIMEOUT_SECONDS", "1.5"))
     local_dir = root / "runs" / "mlflow_local"
     ensure_dir(local_dir)
-    local_db = local_dir / "mlflow.db"
+    # DB de fallback SEPARADA: no contaminar la DB compartida del server con
+    # artifact_location del host cuando el server MLflow está caído.
+    local_db = local_dir / "mlflow_fallback.db"
     local_artifacts = local_dir / "artifacts"
     ensure_dir(local_artifacts)
     local_uri = os.getenv("MLFLOW_LOCAL_TRACKING_URI", "").strip() or f"sqlite:///{local_db}"

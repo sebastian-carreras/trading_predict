@@ -1,2 +1,6 @@
+# Dependencias de la API de demo (Approach B: sirve predicciones guardadas).
+# No requiere torch/mlflow: solo lee el registry (stdlib) y los CSV de runs.
 fastapi~=0.109
 uvicorn~=0.27
+pandas>=2.0
+pyyaml>=6.0

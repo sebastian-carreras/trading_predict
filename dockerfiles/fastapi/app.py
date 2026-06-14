@@ -1,58 +1,137 @@
 """
 FastAPI Service - Trading Predict
 
+Sirve la ÚLTIMA predicción guardada del modelo champion para un (strategy, ticker)
+y la convierte en una señal accionable BUY/SELL/HOLD. No hace inferencia en vivo:
+lee la predicción precalculada del walk-forward del champion registrado en
+``models/registry.json``.
+
 Endpoints:
-- GET  /health - Health check
-- POST /predict/e1/{ticker} - Predicción E1 (retorno 90 días)
-- POST /predict/e3/{ticker} - Predicción E3 (retorno 30 min)
-- POST /models/register - Registrar nuevos modelos (desde Airflow)
-- GET  /models/status - Estado de modelos cargados
+- GET /                          - Health check básico
+- GET /health                    - Health check detallado
+- GET /models/status             - Champions registrados por estrategia
+- GET /predict/{strategy}/{ticker} - Predicción + señal del champion (e1|e2|e3)
+
+La superficie del demo es la UI de Swagger en /docs.
 """
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Dict, Optional
-import torch
+from typing import Any
+
 import pandas as pd
-import mlflow
-import os
+from fastapi import FastAPI, HTTPException
+
+from src.lifecycle.registry import ModelRegistry
+from src.utils import get_nested, load_yaml, project_root
 
 app = FastAPI(
     title="Trading Predict API",
-    description="API para predicciones de trading con ML",
+    description="API para predicciones de trading con ML (modelos champion del lifecycle)",
     version="1.0.0",
 )
 
-# Configuración MLflow
-MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
-mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+# Registry como única fuente de verdad de los champions.
+_REGISTRY_PATH = project_root() / "models" / "registry.json"
+REGISTRY = ModelRegistry(_REGISTRY_PATH)
 
-# Cache de modelos cargados en memoria
-models_cache: Dict[str, Dict] = {
-    "e1": {},  # {"AAPL": {"model": ..., "scaler": ...}}
-    "e3": {},
-}
+# Config centralizada: provee umbrales por defecto por variant cuando el
+# champion no los tiene en el registry (ej. tickers entrenados sin Optuna).
+_CONFIG_PATH = project_root() / "src" / "config" / "base.yaml"
+CONFIG = load_yaml(_CONFIG_PATH) if _CONFIG_PATH.exists() else {}
 
-# Estado de modelos registrados
-models_registry: Dict[str, Dict] = {
-    "e1_conservative": {"last_update": None, "run_dir": None, "tickers": []},
-    "e3_intraday": {"last_update": None, "run_dir": None, "tickers": []},
-}
+# Estrategias soportadas en el demo.
+SUPPORTED_STRATEGIES = ("e1", "e2", "e3")
 
 
-class PredictionRequest(BaseModel):
-    """Request para predicción."""
-    features: Optional[list] = None  # Si se pasan features directamente
-    use_latest_data: bool = True     # Usar últimos datos disponibles
+# ----------------------------------------------------------------------
+# Helpers
+# ----------------------------------------------------------------------
+
+def _resolve_run_dir(run_dir: str) -> Path:
+    """Resolver run_dir (relativo en el registry) contra la raíz del proyecto."""
+    path = Path(run_dir)
+    if not path.is_absolute():
+        path = project_root() / path
+    return path
 
 
-class ModelRegistration(BaseModel):
-    """Registro de nuevos modelos desde Airflow."""
-    strategy: str  # "e1_conservative" | "e3_intraday"
-    run_dir: str
-    timestamp: str
+def _latest_prediction(run_dir: Path, ticker: str) -> dict[str, Any]:
+    """Leer la última fila del CSV de predicciones walk-forward del champion.
 
+    Devuelve un dict con: prediction_date, predicted_return y, si existe (E3),
+    pred_std. Lanza FileNotFoundError si no hay CSV de predicciones.
+    """
+    candidates = list(run_dir.glob(f"{ticker}*_walkforward_predictions.csv"))
+    if not candidates:
+        raise FileNotFoundError(
+            f"No se encontró CSV de predicciones en {run_dir} para {ticker}"
+        )
+
+    df = pd.read_csv(candidates[0])
+    if df.empty:
+        raise FileNotFoundError(f"CSV de predicciones vacío: {candidates[0]}")
+
+    last = df.iloc[-1]
+    result: dict[str, Any] = {
+        "prediction_date": str(last["timestamp"]),
+        "predicted_return": float(last["y_pred"]),
+    }
+    # E3 (ensemble) incluye la desviación estándar del ensemble como confianza.
+    if "pred_std" in df.columns and pd.notna(last["pred_std"]):
+        result["pred_std"] = float(last["pred_std"])
+    return result
+
+
+def _to_signal(y_pred: float, tau_buy: float, tau_sell: float) -> str:
+    """Convertir un retorno predicho en señal accionable."""
+    if y_pred >= tau_buy:
+        return "BUY"
+    if y_pred <= -tau_sell:
+        return "SELL"
+    return "HOLD"
+
+
+def _thresholds(metrics: dict[str, Any], variant: str | None) -> tuple[float, float]:
+    """Umbrales del champion: primero el registry (Optuna por ticker, claves
+    ``tau_*`` en E3 o ``hp_tau_*`` en E1/E2); si no, los defaults de ``base.yaml``
+    según el variant (ej. ``e1_conservative``).
+    """
+    tau_buy = metrics.get("tau_buy", metrics.get("hp_tau_buy"))
+    tau_sell = metrics.get("tau_sell", metrics.get("hp_tau_sell"))
+
+    if (tau_buy is None or tau_sell is None) and variant:
+        defaults = get_nested(CONFIG, ["strategies", variant, "thresholds"], default={})
+        if tau_buy is None:
+            tau_buy = defaults.get("tau_buy")
+        if tau_sell is None:
+            tau_sell = defaults.get("tau_sell")
+
+    if tau_buy is None or tau_sell is None:
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se encontraron umbrales (tau_buy/tau_sell) para variant '{variant}'.",
+        )
+    return float(tau_buy), float(tau_sell)
+
+
+def _champion_metrics_summary(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Resumen de métricas del champion para mostrar en el demo."""
+    return {
+        "bt_sharpe": metrics.get("bt_sharpe"),
+        "bt_total_return": metrics.get("bt_total_return"),
+        "ml_directional_accuracy": metrics.get("ml_directional_accuracy"),
+        "ml_ic": metrics.get("ml_ic"),
+        # E1/E2 reportan horizon_days; E3 (intradía) reporta horizon_bars.
+        "horizon_days": metrics.get("horizon_days"),
+        "horizon_bars": metrics.get("horizon_bars"),
+    }
+
+
+# ----------------------------------------------------------------------
+# Endpoints
+# ----------------------------------------------------------------------
 
 @app.get("/")
 def read_root():
@@ -60,158 +139,98 @@ def read_root():
     return {
         "service": "Trading Predict API",
         "status": "running",
-        "strategies": ["e1_conservative", "e3_intraday"],
-        "mlflow_uri": MLFLOW_TRACKING_URI,
+        "strategies": list(SUPPORTED_STRATEGIES),
+        "docs": "/docs",
     }
 
 
 @app.get("/health")
 def health_check():
     """Health check detallado."""
+    champions = REGISTRY.list_all(stage="champion")
     return {
         "status": "healthy",
-        "models_loaded": {
-            "e1": len(models_cache["e1"]),
-            "e3": len(models_cache["e3"]),
-        },
-        "registry": models_registry,
-    }
-
-
-@app.post("/models/register")
-def register_models(registration: ModelRegistration):
-    """Registrar nuevos modelos entrenados (llamado por Airflow)."""
-    strategy = registration.strategy
-    run_dir = Path(registration.run_dir)
-    
-    if not run_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Run directory not found: {run_dir}")
-    
-    # Actualizar registry
-    if strategy not in models_registry:
-        models_registry[strategy] = {}
-    
-    models_registry[strategy].update({
-        "last_update": registration.timestamp,
-        "run_dir": str(run_dir),
-        "tickers": [p.stem for p in run_dir.glob("*/") if p.is_dir()],
-    })
-    
-    # Opcional: pre-cargar modelos en cache
-    # (para producción, cargar bajo demanda)
-    
-    return {
-        "status": "registered",
-        "strategy": strategy,
-        "tickers": models_registry[strategy]["tickers"],
-        "timestamp": registration.timestamp,
+        "registry_path": str(_REGISTRY_PATH),
+        "registry_exists": _REGISTRY_PATH.exists(),
+        "champions_count": len(champions),
     }
 
 
 @app.get("/models/status")
 def get_models_status():
-    """Estado de modelos registrados y cargados."""
+    """Champions registrados, agrupados por estrategia."""
+    champions = REGISTRY.list_all(stage="champion")
+    by_strategy: dict[str, list[dict[str, Any]]] = {}
+    for entry in champions:
+        strategy = entry["strategy"]
+        by_strategy.setdefault(strategy, []).append(
+            {
+                "ticker": entry["ticker"],
+                "variant": entry.get("variant"),
+                "promoted_at": entry.get("promoted_at"),
+            }
+        )
     return {
-        "registry": models_registry,
-        "cache": {
-            "e1_loaded": list(models_cache["e1"].keys()),
-            "e3_loaded": list(models_cache["e3"].keys()),
-        },
+        "champions_count": len(champions),
+        "strategies": by_strategy,
     }
 
 
-@app.post("/predict/e1/{ticker}")
-def predict_e1(ticker: str, request: PredictionRequest):
-    """
-    Predicción E1: retorno acumulado a 90 días.
-    
+@app.get("/predict/{strategy}/{ticker}")
+def predict(strategy: str, ticker: str):
+    """Predicción + señal del champion para una estrategia/ticker.
+
     Args:
-        ticker: Símbolo del activo (ej: AAPL, YPF)
-        request: Configuración de predicción
-    
+        strategy: e1 (90d) | e2 (20d) | e3 (intradía 30min)
+        ticker: símbolo del activo (ej: AAPL, GGAL.BA, SPY)
+
     Returns:
-        Predicción de retorno a 90 días
+        Predicción guardada más reciente del walk-forward del champion,
+        convertida en señal BUY/SELL/HOLD, con métricas del champion.
     """
-    # Validar ticker registrado
-    if ticker not in models_registry.get("e1_conservative", {}).get("tickers", []):
+    strategy = strategy.lower()
+    if strategy not in SUPPORTED_STRATEGIES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Estrategia '{strategy}' no soportada. Use: {SUPPORTED_STRATEGIES}",
+        )
+
+    champion = REGISTRY.get_champion(strategy, ticker)
+    if champion is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Ticker {ticker} no disponible en E1. Disponibles: {models_registry['e1_conservative'].get('tickers', [])}",
+            detail=f"No hay champion para {strategy.upper()} / {ticker}.",
         )
-    
-    # Cargar modelo si no está en cache
-    if ticker not in models_cache["e1"]:
-        run_dir = Path(models_registry["e1_conservative"]["run_dir"])
-        model_path = run_dir / ticker / f"{ticker}_model.pth"
-        
-        if not model_path.exists():
-            raise HTTPException(status_code=404, detail=f"Modelo no encontrado: {model_path}")
-        
-        # TODO: Cargar modelo GRU desde PyTorch
-        # models_cache["e1"][ticker] = {"model": model, "scaler": scaler}
-        
-        return {
-            "ticker": ticker,
-            "strategy": "e1_conservative",
-            "status": "model_loading_pending",
-            "message": "Implementar carga de modelo PyTorch",
-        }
-    
-    # TODO: Hacer predicción con features más recientes
-    return {
-        "ticker": ticker,
-        "strategy": "e1_conservative",
-        "predicted_return_90d": 0.0,  # Placeholder
-        "confidence": "pending_implementation",
-    }
 
+    metrics = champion.get("metrics", {})
+    run_dir = _resolve_run_dir(champion["run_dir"])
 
-@app.post("/predict/e3/{ticker}")
-def predict_e3(ticker: str, request: PredictionRequest):
-    """
-    Predicción E3: retorno intradía a 30 min.
-    
-    Args:
-        ticker: Símbolo del activo
-        request: Configuración
-    
-    Returns:
-        Predicción de retorno a 6 barras (30 min)
-    """
-    if ticker not in models_registry.get("e3_intraday", {}).get("tickers", []):
-        raise HTTPException(
-            status_code=404,
-            detail=f"Ticker {ticker} no disponible en E3",
-        )
-    
-    # Similar a E1, cargar ensemble LSTM
-    return {
-        "ticker": ticker,
-        "strategy": "e3_intraday",
-        "predicted_return_30min": 0.0,  # Placeholder
-        "status": "pending_implementation",
-    }
-
-
-@app.get("/mlflow/experiments")
-def list_mlflow_experiments():
-    """Listar experimentos de MLflow."""
     try:
-        experiments = mlflow.search_experiments()
-        return {
-            "experiments": [
-                {
-                    "experiment_id": exp.experiment_id,
-                    "name": exp.name,
-                    "artifact_location": exp.artifact_location,
-                }
-                for exp in experiments
-            ]
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error consultando MLflow: {e}")
+        pred = _latest_prediction(run_dir, ticker)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    tau_buy, tau_sell = _thresholds(metrics, champion.get("variant"))
+    signal = _to_signal(pred["predicted_return"], tau_buy, tau_sell)
+
+    response: dict[str, Any] = {
+        "ticker": ticker,
+        "strategy": strategy,
+        "variant": champion.get("variant"),
+        "signal": signal,
+        "predicted_return": pred["predicted_return"],
+        "prediction_date": pred["prediction_date"],
+        "thresholds": {"tau_buy": tau_buy, "tau_sell": tau_sell},
+        "champion_metrics": _champion_metrics_summary(metrics),
+        "note": "predicted_return es la última predicción walk-forward del champion "
+        "(fecha = prediction_date), no una inferencia en tiempo real.",
+    }
+    if "pred_std" in pred:
+        response["pred_std"] = pred["pred_std"]
+    return response
 
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8800)

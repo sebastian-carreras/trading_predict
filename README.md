@@ -23,7 +23,7 @@ docker-compose --profile all up -d
 # - FastAPI Docs: http://localhost:8800/docs
 ```
 
- **Ver documentación completa**: [README_DOCKER.md](README_DOCKER.md)
+ **Ver documentación completa**: [README_DOCKER.md](README_DOCKER.md) · **API de predicciones**: [README_FASTAPI.md](dockerfiles/fastapi/README_FASTAPI.md)
 
 ### **Desarrollo Local**
 
@@ -205,6 +205,7 @@ runs/<estrategia>/<YYYYMMDD_HHMMSS>/
 - **[README_E3.md](README_E3.md)** - Estrategia E3 Intradía (Ensemble)
 - **[README_E4.md](README_E4.md)** - Estrategia E4 Pairs Trading
 - **[README_DOCKER.md](README_DOCKER.md)** - Deployment con Docker + Airflow
+- **[README_FASTAPI.md](dockerfiles/fastapi/README_FASTAPI.md)** - API de predicciones (señal BUY/SELL/HOLD por ticker, Swagger en `/docs`)
 - **[README_DATA_CLEANING.md](README_DATA_CLEANING.md)** - Pipeline de datos
 
 ### Referencias Técnicas

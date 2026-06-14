@@ -450,7 +450,9 @@ def main() -> None:
     experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "E2_Baseline")
     local_sqlite_dir = root / "runs" / "mlflow_local"
     ensure_dir(local_sqlite_dir)
-    local_sqlite_db = local_sqlite_dir / "mlflow.db"
+    # DB de fallback SEPARADA: no contaminar la DB compartida del server con
+    # artifact_location del host cuando el server MLflow está caído.
+    local_sqlite_db = local_sqlite_dir / "mlflow_fallback.db"
     local_artifacts_dir = local_sqlite_dir / "artifacts"
     ensure_dir(local_artifacts_dir)
     local_sqlite_uri = f"sqlite:///{local_sqlite_db}"

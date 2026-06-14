@@ -5,14 +5,12 @@ WORKDIR /app
 # Instalar dependencias del sistema
 RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
-# Copiar requirements
+# Copiar requirements (solo los de la API de demo; no instala torch/mlflow)
 COPY dockerfiles/fastapi/requirements.txt /app/requirements.txt
-COPY requirements.txt /app/requirements_project.txt
 
 # Instalar dependencias Python
 RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements_project.txt
 
 # Copiar aplicación FastAPI
 COPY dockerfiles/fastapi/app.py /app/app.py

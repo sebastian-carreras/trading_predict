@@ -259,7 +259,7 @@ lifecycle:
   promotion:
     auto_promote: false          # Default conservador; habilitar con --auto-promote CLI flag
     first_champion_strategy: "promote"  # Si no hay champion, promover candidato si pasa guardrails
-    min_improvement: 0.05        # Margen mínimo de mejora (5%) en composite score
+    min_improvement: 0.0         # Promover si el candidato es al menos tan bueno como el champion (mejora >= 0). Subir para exigir margen.
     require_positive_sharpe: true  # Safety net: candidato debe tener bt_sharpe > 0
 
     # Scoring weights globales (fallback si la estrategia no tiene overrides)

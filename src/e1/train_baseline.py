@@ -496,7 +496,7 @@ def main() -> None:  # Entry-point principal
     experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "E1_Baseline")  # Nombre experimento
     local_sqlite_dir = root / "runs" / "mlflow_local"  # Directorio SQLite local
     ensure_dir(local_sqlite_dir)  # Crear directorio
-    local_sqlite_db = local_sqlite_dir / "mlflow.db"  # DB SQLite
+    local_sqlite_db = local_sqlite_dir / "mlflow_fallback.db"  # DB de fallback SEPARADA (no contaminar la DB compartida del server)
     local_artifacts_dir = local_sqlite_dir / "artifacts"  # Artifacts local
     ensure_dir(local_artifacts_dir)  # Crear directorio artifacts
     local_sqlite_uri = f"sqlite:///{local_sqlite_db}"  # URI SQLite

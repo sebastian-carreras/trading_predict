@@ -1256,7 +1256,11 @@ def main() -> None:
 
     local_sqlite_dir = root / "runs" / "mlflow_local"
     ensure_dir(local_sqlite_dir)
-    local_sqlite_db = local_sqlite_dir / "mlflow.db"
+    # DB de fallback SEPARADA de la del server. Si el server MLflow está caído y
+    # caemos a SQLite local, NO debe escribir en mlflow.db (la DB compartida que
+    # usan server + Airflow): hacerlo contamina la DB con artifact_location del
+    # host (file:///Users/...) y rompe los runs en contenedor.
+    local_sqlite_db = local_sqlite_dir / "mlflow_fallback.db"
     local_artifacts_dir = local_sqlite_dir / "artifacts"
     ensure_dir(local_artifacts_dir)
     local_sqlite_uri = f"sqlite:///{local_sqlite_db}"

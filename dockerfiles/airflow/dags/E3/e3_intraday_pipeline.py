@@ -36,6 +36,8 @@ dag = DAG(
     tags=['trading', 'e3', 'intraday', 'lstm', 'ensemble'],
     params={
         "tickers": "",
+        # False = descargar a staging sin usarlo; True = refrescar datos canónicos y entrenar con ellos
+        "train_with_new_data": "False",
     },
 )
 
@@ -48,6 +50,14 @@ def _parse_tickers_param(value) -> list[str]:
     if isinstance(value, (list, tuple)):
         return [str(t).strip() for t in value if str(t).strip()]
     return []
+
+
+def _as_bool(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"true", "1", "yes", "on"}
 
 
 def download_intraday_data(**context):
@@ -77,15 +87,25 @@ def download_intraday_data(**context):
         )
     if not tickers:
         raise ValueError("No se especificaron tickers para E3")
-    
-    out_dir = root / "data/raw/intraday"
+
+    # train_with_new_data controla si los datos recién descargados se USAN para
+    # entrenar. Por defecto (False) se descargan a un directorio de staging y los
+    # datos canónicos (data/raw/intraday) que consume el entrenamiento NO se tocan.
+    train_with_new_data = _as_bool(conf.get("train_with_new_data") if conf else None) \
+        or _as_bool(params.get("train_with_new_data"))
+    canonical_dir = root / "data/raw/intraday"
+    staging_dir = root / "data/raw/intraday_incoming"
+    out_dir = canonical_dir if train_with_new_data else staging_dir
     out_dir.mkdir(parents=True, exist_ok=True)
-    
+
     e3_cfg = config.get("strategies", {}).get("e3_intraday", {})
     period = e3_cfg.get("data", {}).get("period", "60d")
-    
+
     print(f"[E3][download] Tickers seleccionados: {tickers}")
-    print(f"[E3][download] Directorio raw: {out_dir}")
+    print(
+        f"[E3][download] train_with_new_data={train_with_new_data} -> destino={out_dir} "
+        f"({'se usará para entrenar' if train_with_new_data else 'STAGING: no se usará para entrenar'})"
+    )
 
     # Download all tickers at once
     try:
@@ -103,7 +123,9 @@ def download_intraday_data(**context):
     
     context['task_instance'].xcom_push(key='tickers_selected', value=tickers)
     context['task_instance'].xcom_push(key='tickers_downloaded', value=downloaded)
-    return f"Descargados {len(downloaded)} tickers 5-min"
+    context['task_instance'].xcom_push(key='train_with_new_data', value=train_with_new_data)
+    context['task_instance'].xcom_push(key='download_dir', value=str(out_dir))
+    return f"Descargados {len(downloaded)} tickers 5-min a {out_dir.name} (train_with_new_data={train_with_new_data})"
 
 
 def clean_intraday_data(**context):
@@ -196,10 +218,18 @@ def train_e3_with_mlflow(**context):
     from pathlib import Path
     
     mlflow.set_experiment("E3_Intraday_Strategy")
-    
+
     root = Path("/opt/airflow")
     config = load_yaml(root / "src/config/base.yaml")
-    
+
+    # Único flag que decide si se entrena con datos nuevos:
+    #   False (default) -> usa la ventana congelada en config (data.training_window.intraday)
+    #   True            -> extiende la ventana hasta hoy (use_latest_data) y entrena
+    #                      con los datos frescos que la descarga dejó en data/raw/intraday
+    train_with_new_data = bool(context['task_instance'].xcom_pull(
+        task_ids='download_intraday', key='train_with_new_data'
+    ))
+
     tickers_cleaned = context['task_instance'].xcom_pull(task_ids='clean_intraday', key='tickers_cleaned')
     tickers_downloaded = context['task_instance'].xcom_pull(task_ids='download_intraday', key='tickers_downloaded')
     tickers_selected = context['task_instance'].xcom_pull(task_ids='download_intraday', key='tickers_selected')
@@ -215,6 +245,19 @@ def train_e3_with_mlflow(**context):
     os.environ["MLFLOW_TRACKING_URI"] = MLFLOW_TRACKING_URI
     os.environ["MLFLOW_EXPERIMENT_NAME"] = "E3_Intraday_Strategy"
     
+    e3_cfg = config.get("strategies", {}).get("e3_intraday", {})
+    model_cfg = e3_cfg.get("model", {})
+
+    def _sanitize(v):
+        """NaN -> 0, Inf -> ±1e8 para que MLflow no rechace la métrica."""
+        import math
+        if isinstance(v, (int, float)):
+            if math.isnan(v):
+                return 0.0
+            if math.isinf(v):
+                return 1e8 if v > 0 else -1e8
+        return v
+
     results = []
     print(f"[E3][train] Tickers a entrenar: {tickers}")
     for ticker in tickers:
@@ -222,35 +265,71 @@ def train_e3_with_mlflow(**context):
         print(f"\n{'='*60}")
         print(f"Training E3 ensemble for {ticker}")
         print(f"{'='*60}")
-        
-        try:
-            summary = run_for_ticker(
-                config=config,
-                ticker=ticker,
-                raw_dir=root / "data/clean/intraday",
-                out_dir=ticker_out,
-            )
-            
-            print(f"\n✓ {ticker} complete:")
-            print(f"  MAE: {summary.get('ml_mae', 0):.6f}")
-            print(f"  RMSE: {summary.get('ml_rmse', 0):.6f}")
-            print(f"  IC: {summary.get('ml_ic', 0):.4f}")
-            print(f"  Dir Acc: {summary.get('ml_directional_accuracy', 0):.3f}")
-            print(f"  Profit Factor: {summary.get('tr_profit_factor', 0):.3f}")
-            print(f"  Max DD: {summary.get('tr_max_drawdown', 0):.3%}")
-            
-            results.append({
+
+        # Un run MLflow por ticker (alineado con E1/E2): así el modelo y los
+        # backtests/predicciones quedan como artifacts en S3, no solo en disco.
+        with mlflow.start_run(run_name=f"E3_{ticker}_{timestamp}"):
+            mlflow.log_params({
+                "strategy": "e3_intraday",
                 "ticker": ticker,
-                "status": "success",
-                "profit_factor": summary.get("tr_profit_factor"),
-                "ic": summary.get("ml_ic"),
+                "model_type": "LSTM_Ensemble",
+                "lookback_bars": e3_cfg.get("lookback_bars", 96),
+                "horizon_bars": e3_cfg.get("horizon_bars", 6),
+                "ensemble_size": model_cfg.get("ensemble_size", 3),
+                "timestamp": timestamp,
+                "train_with_new_data": train_with_new_data,
             })
-            
-        except Exception as e:
-            print(f"✗ Error en {ticker}: {e}")
-            import traceback
-            traceback.print_exc()
-            results.append({"ticker": ticker, "status": "failed", "error": str(e)})
+
+            try:
+                summary = run_for_ticker(
+                    config=config,
+                    ticker=ticker,
+                    raw_dir=root / "data/clean/intraday",
+                    out_dir=ticker_out,
+                    use_latest_data=train_with_new_data,
+                )
+
+                print(f"\n✓ {ticker} complete:")
+                print(f"  MAE: {summary.get('ml_mae', 0):.6f}")
+                print(f"  RMSE: {summary.get('ml_rmse', 0):.6f}")
+                print(f"  IC: {summary.get('ml_ic', 0):.4f}")
+                print(f"  Dir Acc: {summary.get('ml_directional_accuracy', 0):.3f}")
+                print(f"  Profit Factor: {summary.get('tr_profit_factor', 0):.3f}")
+                print(f"  Max DD: {summary.get('tr_max_drawdown', 0):.3%}")
+
+                # Métricas ML + trading a MLflow
+                mlflow.log_metrics({
+                    "mae": _sanitize(summary.get("ml_mae", 0)),
+                    "rmse": _sanitize(summary.get("ml_rmse", 0)),
+                    "ic": _sanitize(summary.get("ml_ic", 0)),
+                    "directional_accuracy": _sanitize(summary.get("ml_directional_accuracy", 0)),
+                    "tr_profit_factor": _sanitize(summary.get("tr_profit_factor", 0)),
+                    "tr_sharpe": _sanitize(summary.get("tr_sharpe", 0)),
+                    "tr_max_drawdown": _sanitize(summary.get("tr_max_drawdown", 0)),
+                })
+
+                # Modelo (ensemble) como artifact
+                model_path = ticker_out / f"{ticker}_model.pth"
+                if model_path.exists():
+                    mlflow.log_artifact(str(model_path), artifact_path="models")
+
+                # Backtests / predicciones como artifacts
+                for csv_path in sorted(ticker_out.glob("*.csv")):
+                    mlflow.log_artifact(str(csv_path), artifact_path="backtest")
+
+                results.append({
+                    "ticker": ticker,
+                    "status": "success",
+                    "profit_factor": summary.get("tr_profit_factor"),
+                    "ic": summary.get("ml_ic"),
+                })
+
+            except Exception as e:
+                mlflow.log_param("error", str(e))
+                print(f"✗ Error en {ticker}: {e}")
+                import traceback
+                traceback.print_exc()
+                results.append({"ticker": ticker, "status": "failed", "error": str(e)})
     
     # Guardar y loggear resumen agregado
     summary_df = pd.DataFrame(results)
@@ -268,6 +347,7 @@ def train_e3_with_mlflow(**context):
     
     with mlflow.start_run(run_name=f"E3_Intraday_Summary_{timestamp}"):
         mlflow.log_artifact(str(summary_path))
+        mlflow.log_param("train_with_new_data", train_with_new_data)
         mlflow.log_metric("total_tickers", len(results))
         mlflow.log_metric("successful_tickers", sum(1 for r in results if r["status"] == "success"))
         if ic_values:
@@ -279,6 +359,53 @@ def train_e3_with_mlflow(**context):
     context['task_instance'].xcom_push(key='run_dir', value=str(out_base))
     successful = sum(1 for r in results if r["status"] == "success")
     return f"Entrenados {successful}/{len(results)} modelos E3"
+
+
+def promote_champions(**context):
+    """Task: evaluar cada candidato entrenado vs el champion y promover si es mejor.
+
+    Usa lifecycle.promotion del config (min_improvement=0.0 => promueve si el
+    candidato es al menos tan bueno como el champion; si no hay champion, bootstrap).
+    Loggea UNA línea por ticker indicando si se promovió o no y el porqué.
+    """
+    import sys
+    sys.path.insert(0, '/opt/airflow')
+    from pathlib import Path
+    from src.lifecycle.registry import ModelRegistry
+    from src.lifecycle.promotion import evaluate_and_promote
+    from src.utils import load_yaml
+
+    run_dir = context['task_instance'].xcom_pull(task_ids='train_e3_ensemble', key='run_dir')
+    if not run_dir:
+        return "No run_dir disponible; se omite promoción"
+
+    root = Path("/opt/airflow")
+    config = load_yaml(root / "src/config/base.yaml")
+    promo_cfg = config.get("lifecycle", {}).get("promotion", {})
+    registry = ModelRegistry(root / "models" / "registry.json")
+
+    promoted, kept = [], []
+    print("=" * 60)
+    print("PROMOCIÓN E3: candidato vs champion")
+    print("=" * 60)
+    for ticker_dir in sorted(Path(run_dir).iterdir()):
+        if not ticker_dir.is_dir():
+            continue
+        ticker = ticker_dir.name
+        try:
+            d = evaluate_and_promote(registry, "e3", ticker, promo_cfg)
+            scores = f"cand={d.candidate_score:.4f} vs champ={d.champion_score:.4f}"
+            if d.promoted:
+                print(f"  ★ PROMOVIDO   {ticker}: {d.reason} [{scores}, mejora={d.improvement_pct * 100:+.1f}%]")
+                promoted.append(ticker)
+            else:
+                print(f"  ↳ NO promovido {ticker}: {d.reason} [{scores}]")
+                kept.append(ticker)
+        except Exception as e:
+            print(f"  ⚠️  Error evaluando {ticker}: {e}")
+    print("-" * 60)
+    print(f"Resumen: {len(promoted)} promovidos, {len(kept)} mantenidos")
+    return f"Promovidos {len(promoted)}, mantenidos {len(kept)}"
 
 
 # Definir tareas
@@ -300,5 +427,11 @@ task_train = PythonOperator(
     dag=dag,
 )
 
+task_promote = PythonOperator(
+    task_id='promote_champions',
+    python_callable=promote_champions,
+    dag=dag,
+)
+
 # Flujo
-task_download >> task_clean >> task_train
+task_download >> task_clean >> task_train >> task_promote

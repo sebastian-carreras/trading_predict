@@ -41,6 +41,7 @@ dag = DAG(
         'tickers': 'BBAR.BA, BMA.BA, EDN.BA, TGSU2.BA, LOMA.BA, NVDA, GOOGL, AMZN, META, NFLX',
         'use_tuned_params': 'True',
         'tuned_params_path': 'reports/hyperparameter_optimization/e2_tuned_params_by_ticker.yaml',
+        'train_with_new_data': 'False',  # False = descargar a staging sin usarlo; True = refrescar datos canónicos y entrenar con ellos
     },
 )
 
@@ -77,19 +78,34 @@ def download_daily_data(**context):
             .get("e2_moderate", [])
         )
     
-    out_dir = root / "data/raw/daily"
-    
-    written = download_daily_ohlcv(
-        tickers, 
-        out_dir=out_dir, 
-        period="10y",
-        skip_existing=True,
-        min_days_fresh=1,
+    # train_with_new_data controla si los datos recién descargados se USAN para
+    # entrenar. Por defecto (False) se descargan a un directorio de staging y los
+    # datos canónicos (data/raw/daily) que consume el entrenamiento NO se tocan.
+    train_with_new_data = _as_bool(context['params'].get('train_with_new_data'))
+    canonical_dir = root / "data/raw/daily"
+    staging_dir = root / "data/raw/daily_incoming"
+    out_dir = canonical_dir if train_with_new_data else staging_dir
+
+    print(
+        f"[E2][download] train_with_new_data={train_with_new_data} -> destino={out_dir} "
+        f"({'se usará para entrenar' if train_with_new_data else 'STAGING: no se usará para entrenar'})"
     )
-    
+
+    written = download_daily_ohlcv(
+        tickers,
+        out_dir=out_dir,
+        period="10y",
+        skip_existing=False,  # Siempre traer datos frescos (merge + dedupe por timestamp)
+    )
+
     context['task_instance'].xcom_push(key='files_downloaded', value=len(written))
     context['task_instance'].xcom_push(key='tickers_to_train', value=tickers)
-    return f"Descargados {len(written)} archivos nuevos para {len(tickers)} tickers"
+    context['task_instance'].xcom_push(key='train_with_new_data', value=train_with_new_data)
+    context['task_instance'].xcom_push(key='download_dir', value=str(out_dir))
+    return (
+        f"Descargados {len(written)} archivos a {out_dir.name} "
+        f"(train_with_new_data={train_with_new_data})"
+    )
 
 
 def clean_daily_data(**context):
@@ -129,9 +145,15 @@ def train_e2_with_mlflow(**context):
     import pandas as pd
     
     mlflow.set_experiment("E2_Moderate")
-    
+
     root = Path("/opt/airflow")
     config = load_yaml(root / "src/config/base.yaml")
+
+    # Único flag que decide si se entrena con datos nuevos:
+    #   False (default) -> usa la ventana congelada en config (data.training_window)
+    #   True            -> extiende la ventana hasta hoy (use_latest_data) y entrena
+    #                      con los datos frescos que la descarga dejó en data/raw/daily
+    train_with_new_data = _as_bool(context['params'].get('train_with_new_data'))
 
     # Elegir baseline vs tuned params (Optuna) desde la UI del DAG.
     use_tuned_params = _as_bool(context['params'].get('use_tuned_params'))
@@ -166,6 +188,11 @@ def train_e2_with_mlflow(**context):
             .get("e2_moderate", [])
         )
     
+    # El entrenamiento siempre lee los datos canónicos (data/raw/daily, con
+    # preferencia interna por data/clean). Los datos frescos solo llegan acá si
+    # se corrió la descarga con train_with_new_data=True.
+    raw_dir = root / "data" / "raw" / "daily"
+
     # Directorio de salida con timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = root / "runs" / "e2_moderate" / timestamp
@@ -179,6 +206,7 @@ def train_e2_with_mlflow(**context):
         with mlflow.start_run(run_name=f"E2_{ticker}_{timestamp}"):
             mlflow.log_param("use_tuned_params", use_tuned_params)
             mlflow.log_param("tuned_params_path", tuned_params_path if use_tuned_params else "")
+            mlflow.log_param("train_with_new_data", train_with_new_data)
             if use_tuned_params and isinstance(tuned_map, dict):
                 overrides_for_ticker = tuned_map.get(ticker) or {}
                 mlflow.log_param(
@@ -228,6 +256,7 @@ def train_e2_with_mlflow(**context):
                     ticker=ticker,
                     raw_dir=raw_dir,
                     out_dir=ticker_out,
+                    use_latest_data=train_with_new_data,
                 )
                 
                 # Log métricas ML a MLflow
@@ -355,6 +384,53 @@ def notify_api_model_ready(**context):
         return "API notification skipped"
 
 
+def promote_champions(**context):
+    """Task: evaluar cada candidato entrenado vs el champion y promover si es mejor.
+
+    Usa lifecycle.promotion del config (min_improvement=0.0 => promueve si el
+    candidato es al menos tan bueno como el champion; si no hay champion, bootstrap).
+    Loggea UNA línea por ticker indicando si se promovió o no y el porqué.
+    """
+    import sys
+    sys.path.insert(0, '/opt/airflow')
+    from pathlib import Path
+    from src.lifecycle.registry import ModelRegistry
+    from src.lifecycle.promotion import evaluate_and_promote
+    from src.utils import load_yaml
+
+    run_dir = context['task_instance'].xcom_pull(task_ids='train_e2_models', key='run_dir')
+    if not run_dir:
+        return "No run_dir disponible; se omite promoción"
+
+    root = Path("/opt/airflow")
+    config = load_yaml(root / "src/config/base.yaml")
+    promo_cfg = config.get("lifecycle", {}).get("promotion", {})
+    registry = ModelRegistry(root / "models" / "registry.json")
+
+    promoted, kept = [], []
+    print("=" * 60)
+    print("PROMOCIÓN E2: candidato vs champion")
+    print("=" * 60)
+    for ticker_dir in sorted(Path(run_dir).iterdir()):
+        if not ticker_dir.is_dir():
+            continue
+        ticker = ticker_dir.name
+        try:
+            d = evaluate_and_promote(registry, "e2", ticker, promo_cfg)
+            scores = f"cand={d.candidate_score:.4f} vs champ={d.champion_score:.4f}"
+            if d.promoted:
+                print(f"  ★ PROMOVIDO   {ticker}: {d.reason} [{scores}, mejora={d.improvement_pct * 100:+.1f}%]")
+                promoted.append(ticker)
+            else:
+                print(f"  ↳ NO promovido {ticker}: {d.reason} [{scores}]")
+                kept.append(ticker)
+        except Exception as e:
+            print(f"  ⚠️  Error evaluando {ticker}: {e}")
+    print("-" * 60)
+    print(f"Resumen: {len(promoted)} promovidos, {len(kept)} mantenidos")
+    return f"Promovidos {len(promoted)}, mantenidos {len(kept)}"
+
+
 # Definir tareas
 task_download = PythonOperator(
     task_id='download_daily_data',
@@ -374,11 +450,17 @@ task_train = PythonOperator(
     dag=dag,
 )
 
+task_promote = PythonOperator(
+    task_id='promote_champions',
+    python_callable=promote_champions,
+    dag=dag,
+)
+
 task_notify = PythonOperator(
     task_id='notify_api',
     python_callable=notify_api_model_ready,
     dag=dag,
 )
 
-# Flujo del DAG: Download → Clean → Train → Notify
-task_download >> task_clean >> task_train >> task_notify
+# Flujo del DAG: Download → Clean → Train → Promote → Notify
+task_download >> task_clean >> task_train >> task_promote >> task_notify

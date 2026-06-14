@@ -12,7 +12,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${PG_USER:-airflow}:${PG_PASSWORD:-airflow}@postgres/${PG_DATABASE:-airflow}
     AIRFLOW__CORE__FERNET_KEY: ''
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
-    AIRFLOW__CORE__LOAD_EXAMPLES: 'true'  # Change to 'false' to remove the tutorials and examples
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'  # Change to 'false' to remove the tutorials and examples
     AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.session'
     AIRFLOW__CORE__TEST_CONNECTION: 'Enabled'
     AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'True'
@@ -40,6 +40,7 @@ x-airflow-common: &airflow-common
     - ./src:/opt/airflow/src
     - ./data:/opt/airflow/data
     - ./runs:/opt/airflow/runs
+    - ./models:/opt/airflow/models
     - ./src/config:/opt/airflow/config_project
   networks:
     - frontend
@@ -151,13 +152,18 @@ services:
       - AWS_ACCESS_KEY_ID=${MINIO_ACCESS_KEY:-minio}
       - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-minio123}
       - MLFLOW_S3_ENDPOINT_URL=http://s3:9000
+      # MLflow 3.x valida el Host header (protección DNS-rebinding) y por defecto
+      # solo acepta IPs de localhost/privadas, rechazando 'mlflow:5000' (healthcheck
+      # interno) y 'localhost:5000' (navegador) con 403. En entorno local/demo
+      # permitimos todos los hosts.
+      - MLFLOW_SERVER_ALLOWED_HOSTS=*
     volumes:
       - ./runs:/mlflow_data
     command: >
       mlflow server 
       --backend-store-uri ${MLFLOW_BACKEND_STORE_URI:-sqlite:////mlflow_data/mlflow_local/mlflow.db}
       --host 0.0.0.0
-      --default-artifact-root ${MLFLOW_DEFAULT_ARTIFACT_ROOT:-file:///mlflow_data/mlflow_local/artifacts}
+      --default-artifact-root ${MLFLOW_DEFAULT_ARTIFACT_ROOT:-s3://${MLFLOW_BUCKET_NAME:-mlflow}/}
     healthcheck:
       test: wget --no-verbose --tries=1 --spider http://mlflow:5000 || exit 1
       interval: 60s
@@ -173,29 +179,23 @@ services:
     container_name: fastapi
     profiles:
       - all
-    depends_on:
-      mlflow:
-        condition: service_healthy
-      airflow-webserver:
-        condition: service_healthy
+    # La API de demo (Approach B) sirve predicciones guardadas leyendo el
+    # registry + los CSV de runs. No usa MLflow ni Airflow en runtime, por eso
+    # NO declara depends_on: arranca de forma independiente y el demo funciona
+    # aunque el resto del stack esté caído.
     ports:
       - "${FASTAPI_PORT:-8800}:8800"
     networks:
       - frontend
       - backend
-    environment:
-      - AWS_ACCESS_KEY_ID=${MINIO_ACCESS_KEY:-minio}
-      - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-minio123}
-      - MLFLOW_S3_ENDPOINT_URL=http://s3:9000
-      - AWS_ENDPOINT_URL_S3=http://s3:9000
-      - MLFLOW_TRACKING_URI=http://mlflow:5000
     volumes:
       - ./src:/app/src
       - ./data:/app/data
       - ./runs:/app/runs
+      - ./models:/app/models
       - ./src/config:/app/config_project
     command: >
-      uvicorn app:app 
+      uvicorn app:app
       --host 0.0.0.0
       --port 8800
     healthcheck:

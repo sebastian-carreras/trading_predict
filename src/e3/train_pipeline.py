@@ -33,6 +33,12 @@ import numpy as np  # NumPy
 import pandas as pd  # Pandas
 from sklearn.model_selection import TimeSeriesSplit  # Walk-forward validation
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # Cargar .env (MLFLOW_TRACKING_URI, MinIO/S3, etc.) en runs por consola
+except ImportError:
+    pass
+
 from ..backtest.backtest_intraday import (  # Backtest intraday
     backtest_intraday_signals,  # Simula ejecución de órdenes
     compute_max_drawdown,        # Calcula máxima caída del equity
@@ -906,7 +912,11 @@ def main() -> None:  # Main
 
     local_sqlite_dir = root / "runs" / "mlflow_local"
     ensure_dir(local_sqlite_dir)
-    local_sqlite_db = local_sqlite_dir / "mlflow.db"
+    # DB de fallback SEPARADA de la del server. Si el server MLflow está caído y
+    # caemos a SQLite local, NO debe escribir en mlflow.db (la DB compartida que
+    # usan server + Airflow): hacerlo contamina la DB con artifact_location del
+    # host (file:///Users/...) y rompe los runs en contenedor.
+    local_sqlite_db = local_sqlite_dir / "mlflow_fallback.db"
     local_artifacts_dir = local_sqlite_dir / "artifacts"
     ensure_dir(local_artifacts_dir)
     local_sqlite_uri = f"sqlite:///{local_sqlite_db}"
