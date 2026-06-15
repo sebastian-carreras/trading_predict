@@ -41,6 +41,7 @@ x-airflow-common: &airflow-common
     - ./data:/opt/airflow/data
     - ./runs:/opt/airflow/runs
     - ./models:/opt/airflow/models
+    - ./reports:/opt/airflow/reports   # tuned params de Optuna (use_tuned_params=True)
     - ./src/config:/opt/airflow/config_project
   networks:
     - frontend

@@ -17,11 +17,12 @@ La superficie del demo es la UI de Swagger en /docs.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 
 from src.lifecycle.registry import ModelRegistry
 from src.utils import get_nested, load_yaml, project_root
@@ -116,16 +117,32 @@ def _thresholds(metrics: dict[str, Any], variant: str | None) -> tuple[float, fl
     return float(tau_buy), float(tau_sell)
 
 
-def _champion_metrics_summary(metrics: dict[str, Any]) -> dict[str, Any]:
-    """Resumen de métricas del champion para mostrar en el demo."""
+def _champion_metrics_summary(metrics: dict[str, Any], variant: str | None = None) -> dict[str, Any]:
+    """Resumen de métricas del champion para mostrar en el demo.
+
+    horizon_days/horizon_bars son parámetros ESTÁTICOS de configuración, no
+    métricas aprendidas. Si el champion no los tiene guardados (modelos viejos),
+    se completan desde el config según el variant: E1/E2 -> horizon_days, E3 ->
+    horizon_bars. Así el valor es consistente y nunca queda null por un gap de
+    persistencia del entrenamiento.
+    """
+    horizon_days = metrics.get("horizon_days")
+    horizon_bars = metrics.get("horizon_bars")
+    if variant:
+        strat_cfg = get_nested(CONFIG, ["strategies", variant], default={}) or {}
+        if horizon_days is None:
+            horizon_days = strat_cfg.get("horizon_days")
+        if horizon_bars is None:
+            horizon_bars = strat_cfg.get("horizon_bars")
     return {
         "bt_sharpe": metrics.get("bt_sharpe"),
         "bt_total_return": metrics.get("bt_total_return"),
+        "bt_cagr": metrics.get("bt_cagr"),  # retorno anualizado (E1/E2; null en E3 intradía)
         "ml_directional_accuracy": metrics.get("ml_directional_accuracy"),
         "ml_ic": metrics.get("ml_ic"),
         # E1/E2 reportan horizon_days; E3 (intradía) reporta horizon_bars.
-        "horizon_days": metrics.get("horizon_days"),
-        "horizon_bars": metrics.get("horizon_bars"),
+        "horizon_days": horizon_days,
+        "horizon_bars": horizon_bars,
     }
 
 
@@ -145,14 +162,37 @@ def read_root():
 
 
 @app.get("/health")
-def health_check():
-    """Health check detallado."""
-    champions = REGISTRY.list_all(stage="champion")
+def health_check(response: Response):
+    """Health check de readiness.
+
+    Relee el registry en disco (la instancia global se cachea al arrancar) para
+    reflejar el estado actual y validar que sea parseable. Devuelve HTTP 503 si el
+    registry no existe, no se puede leer/parsear, o no hay champions. No expone
+    rutas internas del filesystem.
+    """
+    registry_exists = _REGISTRY_PATH.exists()
+    last_updated: str | None = None
+    champions_count = 0
+    ok = registry_exists
+    if registry_exists:
+        try:
+            fresh = ModelRegistry(_REGISTRY_PATH)
+            champions_count = len(fresh.list_all(stage="champion"))
+            last_updated = fresh.data.get("last_updated")
+        except Exception:
+            ok = False
+
+    ok = ok and champions_count > 0
+    if not ok:
+        response.status_code = 503
+
     return {
-        "status": "healthy",
-        "registry_path": str(_REGISTRY_PATH),
-        "registry_exists": _REGISTRY_PATH.exists(),
-        "champions_count": len(champions),
+        "status": "healthy" if ok else "unhealthy",
+        "version": app.version,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "registry_exists": registry_exists,
+        "registry_last_updated": last_updated,
+        "champions_count": champions_count,
     }
 
 
@@ -221,7 +261,7 @@ def predict(strategy: str, ticker: str):
         "predicted_return": pred["predicted_return"],
         "prediction_date": pred["prediction_date"],
         "thresholds": {"tau_buy": tau_buy, "tau_sell": tau_sell},
-        "champion_metrics": _champion_metrics_summary(metrics),
+        "champion_metrics": _champion_metrics_summary(metrics, champion.get("variant")),
         "note": "predicted_return es la última predicción walk-forward del champion "
         "(fecha = prediction_date), no una inferencia en tiempo real.",
     }
