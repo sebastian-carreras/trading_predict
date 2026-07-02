@@ -87,7 +87,9 @@ Todos los parámetros están en [`src/config/base.yaml`](src/config/base.yaml):
 
 Ver README específico de cada estrategia para comandos detallados:
 
-**E1 - Conservadora (GRU)**```bash
+**E1 - Conservadora (GRU)**
+
+```bash
 python -m src.data.download_daily
 # Runner unificado: baseline + simple + conservador
 python -m src.e1.train_all
@@ -98,7 +100,9 @@ python -m src.train_e1_pipeline --tickers AAPL
 ```
 → Ver [README_E1.md](README_E1.md) y [README_E1_SIMPLE.md](README_E1_SIMPLE.md)
 
-**E2 - Moderada (LSTM)**```bash
+**E2 - Moderada (LSTM)**
+
+```bash
 python -m src.data.download_daily
 # E2 Moderate (walk-forward, 2-layer LSTM)
 python -m src.train_e2_pipeline --tickers NVDA
@@ -110,12 +114,16 @@ python -m src.train_e2_simple_pipeline --tickers NVDA
 La ejecución de E2 guarda artefactos por ticker en `runs/e2_moderate/<timestamp>/<TICKER>/` (o `runs/e2_simple/<timestamp>/<TICKER>/` para E2 Simple), incluyendo:
 - `*_predictions.csv`, `*_summary.csv` y el modelo entrenado `*_model.pth`.
 
-**E3 - Intradía (Ensemble)**```bash
+**E3 - Intradía (Ensemble)**
+
+```bash
 python -m src.e3.train_pipeline --tickers SPY
 ```
 → Ver [README_E3.md](README_E3.md)
 
-**E4 - Pairs Trading (k-NN)**```bash
+**E4 - Pairs Trading (k-NN)**
+
+```bash
 # TODO: pendiente implementación
 ```
 → Ver [README_E4.md](README_E4.md)
@@ -175,11 +183,11 @@ runs/<estrategia>/<YYYYMMDD_HHMMSS>/
 
 **Principios fundamentales** (críticos en tesis):
 
- **Features "as-of"**: toda variable en timestamp `t` usa solo datos ≤ `t`
- **Normalización correcta**: scaler fit solo en train, aplicado a val/test
- **Split temporal**: walk-forward (expanding/rolling) + helper `temporal_train_val_split` para evitar fugas y pérdida de muestras en validación, nunca shuffle
- **Embargo**: gap de H días entre train y validación para evitar solapamiento
- **Costos realistas**: backtesting incluye comisiones + slippage
+- **Features "as-of"**: toda variable en timestamp `t` usa solo datos ≤ `t`
+- **Normalización correcta**: scaler fit solo en train, aplicado a val/test
+- **Split temporal**: walk-forward (expanding/rolling) + helper `temporal_train_val_split` para evitar fugas y pérdida de muestras en validación, nunca shuffle
+- **Embargo**: gap de H días entre train y validación para evitar solapamiento
+- **Costos realistas**: backtesting incluye comisiones + slippage
 
 ## Estado del Proyecto
 
@@ -247,7 +255,7 @@ Proyecto final - Posgrado en Inteligencia Artificial FIUBA
 ## Detalles de los Modelos de Machine Learning a Implementar
 Este documento define una especificación **implementable** (datos → features → targets → entrenamiento → evaluación → reglas de trading) para cuatro estrategias. La prioridad es evitar **data leakage**, definir objetivos medibles y mantener coherencia entre: (a) lo que predice el modelo y (b) cómo se transforma en decisiones de compra/venta.
 
-> Nota de enfoque: para toma de decisiones, en general es más estable modelar **retornos** (o spreads en pairs trading) que el **precio** directo. En lo que sigue, cuando se hable de “predicción de precio”, se recomienda reinterpretarlo como “predicción de retorno acumulado a horizonte $H$”.
+> Nota de enfoque: para toma de decisiones, en general es más estable modelar **retornos** (o spreads en pairs trading) que el **precio** directo. En lo que sigue, cuando se hable de “predicción de precio”, se recomienda reinterpretarlo como “predicción de retorno acumulado a horizonte H”.
 
 ### Convenciones y reglas comunes (aplican a los 4 modelos)
 
@@ -265,17 +273,17 @@ Para poder implementar y evaluar de punta a punta sin bloquearse por disponibili
 - Intradía (E3): 20 bps round-trip (comisión + slippage), configurable como parámetro.
 
 **Targets y horizontes (cierre)**
-- E1 Conservadora: $H=90$ días, lookback = 360 días.
-- E2 Moderada: $H=20$ días, lookback = 60 días.
-- E3 Intradía: $H=6$ barras de 5-min (30 min), lookback = 96 barras.
-- E4 Pairs: $H=10$ días para predicción (solo como confirmación), y reglas basadas en Z-score.
+- E1 Conservadora: H=90 días, lookback = 360 días.
+- E2 Moderada: H=20 días, lookback = 60 días.
+- E3 Intradía: H=6 barras de 5-min (30 min), lookback = 96 barras.
+- E4 Pairs: H=10 días para predicción (solo como confirmación), y reglas basadas en Z-score.
 
 **Umbrales y reglas (cierre, versión base reproducible)**
 - En E1/E2 se usa umbral fijo inicial + chequeo de costos:
-   - E1: $\tau_{buy}=0.06$ (6% a 90D), $\tau_{sell}=0.00$.
-   - E2: $\tau_{buy}=0.025$ (2.5% a 20D), $\tau_{sell}=0.00$.
-   - En ambos: solo operar si $\hat{y}^{(H)}$ excede (costos estimados).
-- En E3: umbral simétrico sobre retorno predicho (30 min): $\tau_{buy}=0.001$, $\tau_{sell}=0.001$ (≈ 0.10% en log-retorno), con delay de ejecución de 1 barra.
+   - E1: `tau_buy = 0.06` (6% a 90D), `tau_sell = 0.00`.
+   - E2: `tau_buy = 0.025` (2.5% a 20D), `tau_sell = 0.00`.
+   - En ambos: solo operar si `y_hat(H)` excede (costos estimados).
+- En E3: umbral simétrico sobre retorno predicho (30 min): `tau_buy = 0.001`, `tau_sell = 0.001` (≈ 0.10% en log-retorno), con delay de ejecución de 1 barra.
 - En E4: entrada por |Z| ≥ 2.0; salida por |Z| ≤ 0.25; stop por |Z| ≥ 3.0; time-stop 20 días.
 
 **Selección del “mejor modelo” (cierre)**
@@ -285,13 +293,13 @@ Para poder implementar y evaluar de punta a punta sin bloquearse por disponibili
    - E4: Sharpe neto y estabilidad de cointegración.
 
 **Definiciones**
-- Precio: $P_t$ (idealmente **ajustado** por splits/dividendos si aplica).
-- Log-retorno: $r_t = \ln(P_t / P_{t-1})$.
-- Retorno a horizonte $H$ (días o barras): $y_t^{(H)} = \sum_{i=1}^{H} r_{t+i}$.
+- Precio: `P_t` (idealmente **ajustado** por splits/dividendos si aplica).
+- Log-retorno: `r_t = ln(P_t / P_(t-1))`.
+- Retorno a horizonte H (días o barras): `y_t(H) = sum_{i=1..H} r_(t+i)`.
 
 **Prevención de leakage (crítico en tesis)**
-- Toda feature debe estar disponible **en el timestamp $t$**. Macro/fundamentales/sentimiento deben:
-   - Usar el **último dato publicado** a $t$ (no el “final value” del período).
+- Toda feature debe estar disponible **en el timestamp t**. Macro/fundamentales/sentimiento deben:
+   - Usar el **último dato publicado** a t (no el “final value” del período).
    - Aplicar **lag de publicación** (por ejemplo, fundamentals trimestrales con 30–60 días de retraso; macro con calendario; sentimiento con ventana cerrada).
 - Normalización/estandarización: el scaler se ajusta **solo con train**, y se aplica a val/test.
 - Cross-validation de series: usar **walk-forward** (expanding o rolling). Para alta frecuencia y/o múltiples activos: preferir *purged/embargo* para evitar fuga por solapamiento temporal.
@@ -314,8 +322,8 @@ Para poder implementar y evaluar de punta a punta sin bloquearse por disponibili
 ### Configuración del Modelo
 
 **Objetivo (target) recomendado**
-- Predicción de retorno acumulado $y_t^{(H)}$ con $H \in \{60, 90\}$ días (horizonte largo).
-- Alternativa (si querés mantener “precio”): predecir $\ln(P_{t+H})$ y luego convertir a retorno. En evaluación reportar error sobre retorno.
+- Predicción de retorno acumulado `y_t(H)` con H ∈ {60, 90} días (horizonte largo).
+- Alternativa (si querés mantener “precio”): predecir `ln(P_(t+H))` y luego convertir a retorno. En evaluación reportar error sobre retorno.
 
 **Ventana temporal**
 - **Frecuencia**: diaria.
@@ -329,14 +337,14 @@ Para poder implementar y evaluar de punta a punta sin bloquearse por disponibili
 > Evitar inflar features por “agregados” ambiguos (por ejemplo “Bollinger Bands” es 2–3 variables). Es mejor listar variables concretas y su cálculo.
 
 - **Precio/retorno (core)**
-   - $r_t$ (log-retorno 1D)
-   - Retornos rolling: $\sum r_{t-5}$, $\sum r_{t-20}$, $\sum r_{t-60}$
-   - Volatilidad realizada: $\sigma_{20}$, $\sigma_{60}$ (std de $r$)
-   - Rango intradía: $(High-Low)/Close$, y ATR(14)
+   - `r_t` (log-retorno 1D)
+   - Retornos rolling: `sum(r) 5D`, `sum(r) 20D`, `sum(r) 60D`
+   - Volatilidad realizada: `sigma_20`, `sigma_60` (std de r)
+   - Rango intradía: `(High-Low)/Close`, y ATR(14)
    - Volumen: Volume, Dollar Volume, y *volume z-score* (rolling 60)
 
 - **Tendencia (largo plazo)**
-   - SMA(50), SMA(200), distancia relativa: $Close/SMA(200) - 1$
+   - SMA(50), SMA(200), distancia relativa: `Close/SMA(200) - 1`
    - EMA(50)
    - MACD (12,26,9): línea, señal e histograma
    - Bollinger (20,2): %B y bandwidth
@@ -369,21 +377,22 @@ Dropout (0.2)
 Dense Layer (32 units, activation='relu')
 ↓
 Output (1): predicción de retorno a H días
+
 ```
 
 **Hiperparámetros de entrenamiento (recomendación inicial)**
-- Optimizer: AdamW (o Adam) con $lr=1e-3$ (tune: $[3e-4, 3e-3]$)
+- Optimizer: AdamW (o Adam) con `lr = 1e-3` (tune: `[3e-4, 3e-3]`)
 - Batch size: 32–128 (iniciar en 64)
 - Épocas: 50–200 con EarlyStopping (patience 10–20) + ReduceLROnPlateau
 - Regularización: L2 (1e-5 a 1e-4) + gradient clipping (clipnorm 1.0)
 - *Loss scaling*: entrenar sobre retornos estandarizados suele estabilizar.
 
 **Función de pérdida (recomendada)**
-- Huber Loss sobre retorno (robusta a outliers) con $\delta$ acorde a escala (p. ej. 1.0 si el target está estandarizado).
+- Huber Loss sobre retorno (robusta a outliers) con `delta` acorde a escala (p. ej. 1.0 si el target está estandarizado).
 - Alternativa: MSE si el target está bien normalizado y sin outliers.
 
 **Métricas de evaluación (ML + trading)**
-- ML: MAE/RMSE sobre $y^{(H)}$, $R^2$, Directional Accuracy sobre $\operatorname{sign}(y^{(H)})$.
+- ML: MAE/RMSE sobre `y(H)`, R², Directional Accuracy sobre `sign(y(H))`.
 - Trading (backtest): CAGR, Sharpe/Sortino, Max Drawdown, Calmar, hit rate (win rate), *avg trade*, turnover.
 - Importante: reportar métricas **netas de costos** y también “gross” (sin costos) para diagnóstico.
 
@@ -391,15 +400,15 @@ Output (1): predicción de retorno a H días
 
 **Criterio de compra (ejemplo, coherente con target retorno)**
 - Entrar **solo si el retorno esperado neto de costos es atractivo**:
-   - $\hat{y}^{(H)} > \tau_{buy}$, con $\tau_{buy}$ inicial 6%–10% para 90D (ajustar por activo).
+   - `y_hat(H) > tau_buy`, con `tau_buy` inicial 6%–10% para 90D (ajustar por activo).
 - Filtros (reducen falsas entradas):
    - RSI(14) < 60 (evitar sobrecompra fuerte)
-   - Tendencia: $Close > SMA(200)$ (filtro de régimen) **o** $ADX(14) > 20$ (si se usa)
+   - Tendencia: `Close > SMA(200)` (filtro de régimen) **o** `ADX(14) > 20` (si se usa)
    - Evitar pico: bandwidth BB(20) no extremo + %B < 0.9
    - (Opcional) Sentimiento semanal ≥ 0
 
 **Criterio de venta / salida**
-- Salida por modelo: $\hat{y}^{(H)} < 0$ (o < $\tau_{sell}$)
+- Salida por modelo: `y_hat(H) < 0` (o < `tau_sell`)
 - Salida por riesgo:
    - Stop-loss inicial: 8%–12% (depende de volatilidad del activo)
    - Take-profit: 12%–20% (buscar R:R ≥ 1.5)
@@ -424,7 +433,7 @@ Output (1): predicción de retorno a H días
 ### Configuración del Modelo
 
 **Objetivo (target) recomendado**
-- Predicción de retorno acumulado $y_t^{(H)}$ con $H \in \{10, 20\}$ días (≈ 2–4 semanas).
+- Predicción de retorno acumulado `y_t(H)` con H ∈ {10, 20} días (≈ 2–4 semanas).
 
 **Ventana temporal**
 - Frecuencia: diaria.
@@ -434,19 +443,21 @@ Output (1): predicción de retorno a H días
 - Rebalanceo: semanal o cada 2 semanas.
 
 **Features de entrada (momentum/volatilidad, concretas)**
-- Precio/retorno: $r_t$, retornos rolling 5/10/20, gap open-close, rango (high-low)
+- Precio/retorno: `r_t`, retornos rolling 5/10/20, gap open-close, rango (high-low)
 - Momentum:
    - RSI(14)
    - Stochastic %K/%D (14,3)
    - ROC(10)
    - MACD (12,26,9): línea/señal/hist
-- Tendencia corta/media: SMA(7), SMA(20), EMA(12), EMA(26), distancia $Close/EMA(26)-1$
-- Volatilidad: ATR(14), Bollinger bandwidth (20,2), $\sigma_{20}$
+- Tendencia corta/media: SMA(7), SMA(20), EMA(12), EMA(26), distancia `Close/EMA(26) - 1`
+- Volatilidad: ATR(14), Bollinger bandwidth (20,2), `sigma_20`
 - Volumen: OBV, Volume ROC(10), *volume z-score* (20)
 - Contexto: FX (mejor que “close” crudo)
 - Sentimiento: si existe, usarlo con ventana cerrada diaria y/o agregación horaria (sin mirar futuro)
 
-**Arquitectura de red (LSTM, alineada con target retorno)**```
+**Arquitectura de red (LSTM, alineada con target retorno)**
+
+```
 Input: (sequence_length=60, features=F)
 ↓
 LSTM 1 (128 units, return_sequences=True)
@@ -460,10 +471,11 @@ Dropout (0.2)
 Dense (32 units, activation='relu')
 ↓
 Output (1): predicción de retorno a H días
+
 ```
 
 **Hiperparámetros de entrenamiento (cierre)**
-- Optimizer: AdamW/Adam, $lr=1e-3$ (tune: $[3e-4, 3e-3]$)
+- Optimizer: AdamW/Adam, `lr = 1e-3` (tune: `[3e-4, 3e-3]`)
 - Batch: 64
 - EarlyStopping: patience 10–15; ReduceLROnPlateau
 - Clipping: clipnorm 1.0
@@ -473,22 +485,22 @@ Output (1): predicción de retorno a H días
 - Si el objetivo es captar colas (eventos extremos), considerar Quantile Loss (p. ej. q=0.25/0.5/0.75) pero manteniendo un único output si querés evitar multi-output.
 
 **Métricas de evaluación**
-- ML: MAE/RMSE (retorno), Directional Accuracy, Spearman IC (correlación rank entre $\hat{y}$ y $y$ por ventana)
+- ML: MAE/RMSE (retorno), Directional Accuracy, Spearman IC (correlación rank entre `y_hat` y `y` por ventana)
 - Trading: Sharpe/Sortino, MaxDD, Profit Factor, Exposure, hit rate, average holding time
 
 ### Lógica de Generación de Señales
 
 **Criterio de compra**
-- Señal por modelo: $\hat{y}^{(H)} > \tau_{buy}$ (p. ej. 2%–5% para 10–20D, depende del activo)
+- Señal por modelo: `y_hat(H) > tau_buy` (p. ej. 2%–5% para 10–20D, depende del activo)
 - Confirmación técnica (reduce ruido):
    - MACD hist > 0 y creciente **o** cruce MACD > signal
    - RSI entre 35 y 70
    - Volume z-score(20) > 0 (participación)
 
 **Criterio de venta / salida**
-- Por modelo: $\hat{y}^{(H)} < 0$ o < $\tau_{sell}$
+- Por modelo: `y_hat(H) < 0` o < `tau_sell`
 - Por riesgo: stop-loss 5%–8% y take-profit 7%–12% (ajustar por volatilidad)
-- Time stop: salir si pasan $H$ días sin alcanzar objetivo
+- Time stop: salir si pasan H días sin alcanzar objetivo
 
 **Diversificación**: Portfolio de 5-8 activos con rotación activa basada en momentum relativo.
 
@@ -510,7 +522,7 @@ Output (1): predicción de retorno a H días
 
 **Objetivo (target) recomendado**
 - Predicción de retorno a corto horizonte en barras de 5 minutos:
-   - $H \in \{3, 6, 12\}$ barras (15, 30, 60 min)
+   - H ∈ {3, 6, 12} barras (15, 30, 60 min)
 - Recomendación inicial: **H = 6** (30 min) para balance ruido vs acción.
 
 **Ventana temporal**
@@ -522,16 +534,18 @@ Output (1): predicción de retorno a H días
 **Features de entrada (baseline implementado, auditable)**
 
 - **OHLCV 5-min (siempre disponibles)**
-   - Log-retorno 1 barra: $r_t$
-   - Retorno rolling ~1h: $\sum_{i=1}^{12} r_{t-i}$
-   - Volatilidad rolling: std($r$) en 24 barras (~2h) y 96 barras (~1 día)
-   - Rango: $(High-Low)/Close$ y ATR(14) normalizado por precio
+   - Log-retorno 1 barra: `r_t`
+   - Retorno rolling ~1h: `sum(r) 12 barras`
+   - Volatilidad rolling: `std(r)` en 24 barras (~2h) y 96 barras (~1 día)
+   - Rango: `(High-Low)/Close` y ATR(14) normalizado por precio
    - Volumen z-score rolling 96
    - *Time-of-day* cíclico (sin/cos)
 
 - **Evitar leakage intradía**: no usar información posterior al cierre de la barra actual.
 
-**Arquitectura Ensemble (alineada con ventanas y target)**```
+**Arquitectura Ensemble (alineada con ventanas y target)**
+
+```
 Ensemble de 3 modelos LSTM independientes:
 
 Modelo base (x5, distintas inicializaciones/seed):
@@ -548,7 +562,7 @@ Opcional: weighted average con pesos por performance reciente (validación rolli
 ```
 
 **Hiperparámetros de entrenamiento (cierre)**
-- Optimizer: Adam, $lr=1e-3$
+- Optimizer: Adam, `lr = 1e-3`
 - Batch: 256
 - Épocas: hasta 30, EarlyStopping patience 5
 - Regularización: dropout 0.2 + clipping
@@ -565,7 +579,7 @@ Opcional: weighted average con pesos por performance reciente (validación rolli
 
 **Criterio de compra (posición larga)**
 - Umbral por retorno neto esperado:
-   - $\hat{y}^{(H)} > \tau_{buy}$ y $\hat{y}^{(H)}$ > (costos + slippage estimado)
+   - `y_hat(H) > tau_buy` y `y_hat(H)` > (costos + slippage estimado)
    - Inicial: 0.10%–0.35% para 30 min (depende activo)
 - Filtros:
    - RSI(9) < 70
@@ -575,7 +589,7 @@ Opcional: weighted average con pesos por performance reciente (validación rolli
 **Criterio de salida**
 - Stop-loss: basado en volatilidad (p. ej. 1–1.5 × ATR(14) en 5-min) o umbral fijo 0.15%–0.40%
 - Take-profit: 1.5–3 × riesgo (mantener R:R > 1.5)
-- Time-stop: cerrar si pasan $H$ barras sin materializarse
+- Time-stop: cerrar si pasan H barras sin materializarse
 - Regla operativa: no abrir trades cerca del cierre (p. ej. última media hora)
 
 **Criterio de venta corta (short)**:
@@ -608,37 +622,39 @@ Opcional: weighted average con pesos por performance reciente (validación rolli
 - **Ejemplos**: YPF-PBR (petróleo), GGAL-BMA (bancos argentinos), KO-PEP (bebidas), AAPL-MSFT (tech).
 
 **Objetivo (target) recomendado**
-- Predecir el cambio del spread o el spread a horizonte $H$:
-   - $y_t = S_{t+H} - S_t$ o $y_t = S_{t+H}$
+- Predecir el cambio del spread o el spread a horizonte H:
+   - `y_t = S_(t+H) - S_t` o `y_t = S_(t+H)`
 - Horizon: 5–20 días (iniciar en 10).
 
 **Ventana temporal**
 - Frecuencia: diaria (o intradía si tenés data sólida, pero complica ejecución y costos).
 - Training window: 1–2 años.
-- Lookback para estimar $\beta$ y parámetros OU: 60–252 días (iniciar en 120).
+- Lookback para estimar `beta` y parámetros OU: 60–252 días (iniciar en 120).
 - Recalibración: mensual, con chequeo de estabilidad semanal.
 
 **Features de entrada (concretas y estandarizadas)**
-- **Spread**: \( S_t = P_{A,t} - \beta \cdot P_{B,t} \), donde \(\beta\) es el coeficiente de cointegración
-- **Z-score del spread**: \( Z_t = \frac{S_t - \mu_S}{\sigma_S} \)
+- **Spread**: `S_t = P_(A,t) - beta * P_(B,t)`, donde `beta` es el coeficiente de cointegración
+- **Z-score del spread**: `Z_t = (S_t - mu_S) / sigma_S`
 - **Half-life**: Tiempo característico de mean-reversion del spread
-- **Velocidad OU**: \( \theta \) (tasa de reversión a la media)
-- **Volatilidad OU**: \( \sigma \) del proceso estocástico
+- **Velocidad OU**: `theta` (tasa de reversión a la media)
+- **Volatilidad OU**: `sigma` del proceso estocástico
 - **Features auxiliares**: Volume ratio (Vol_A/Vol_B), Correlation rolling 30-day, Relative RSI (RSI_A - RSI_B)
 
 **Preprocesamiento y estabilidad (recomendado)**
 - Alinear calendarios (mismo timestamp/market hours) y tratar faltantes.
-- Estimar $\beta$ en ventana rolling y fijar $S_t$ con ese $\beta$.
+- Estimar `beta` en ventana rolling y fijar `S_t` con ese `beta`.
 - Re-validar cointegración en cada recalibración; si falla, pausar el par.
 
-**Algoritmo k-NN (especificación implementable)**```
+**Algoritmo k-NN (especificación implementable)**
+
+```
 1. Construcción del espacio de estados:
-   - Estado: [S_t, \Delta S_t, Z_t, Corr_{30}, VolumeRatio]
+   - Estado: [S_t, ΔS_t, Z_t, Corr_30, VolumeRatio]
 
 2. Búsqueda de vecinos invariantes:
    - Estandarizar features (train-only)
    - Distancia: Euclidiana (baseline) o Mahalanobis (si hay colinealidad)
-   - k \in {5, 10, 20} (tunable)
+   - k ∈ {5, 10, 20} (tunable)
 
 3. Predicción mutua del centroide:
    - Estimar y_{t} (cambio o nivel futuro del spread) con promedio ponderado por 1/distancia
@@ -651,10 +667,10 @@ Opcional: weighted average con pesos por performance reciente (validación rolli
 ```
 
 **Función de pérdida**
-- MAE sobre spread (o sobre $\Delta S$). Reportar también RMSE.
+- MAE sobre spread (o sobre `delta_S`). Reportar también RMSE.
 
 **Métricas de evaluación**
-- Estadísticas: tasa de convergencia (Z vuelve a 0), tiempo a convergencia, estabilidad de $\beta$
+- Estadísticas: tasa de convergencia (Z vuelve a 0), tiempo a convergencia, estabilidad de `beta`
 - Trading: PnL por trade, Sharpe, MaxDD, exposición neta (debe ser ~0), costos, *hit rate*
 
 ### Lógica de Generación de Señales
@@ -669,7 +685,7 @@ Opcional: weighted average con pesos por performance reciente (validación rolli
 - **Filtros adicionales**:
    - Half-life < 20 días
    - Cointegración estable (p-value test actualizado < 0.05)
-   - Predicción k-NN consistente con convergencia: $\hat{S}_{t+H}$ apunta hacia $\mu$
+   - Predicción k-NN consistente con convergencia: `S_hat(t+H)` apunta hacia `mu`
 
 **Criterio de salida**
 - **Exit normal**: Z-score cruza 0 (spread regresa a media)
@@ -678,7 +694,7 @@ Opcional: weighted average con pesos por performance reciente (validación rolli
 - **Time-stop**: 30 días sin reversión (modelo no aplica)
 
 **Gestión de capital**:
-- Pesos balanceados dollar-neutral: Invertir $X$ en long y $X$ en short
+- Pesos balanceados dollar-neutral: Invertir `X` en long y `X` en short
 - Máximo 2-3 pares activos simultáneamente
 - Tamaño de posición: 15-25% del capital por par
 
@@ -703,7 +719,7 @@ Opcional: weighted average con pesos por performance reciente (validación rolli
 
 Para la fase de diseño (15h), deberás:[1]
 
-1. **Definir formalmente target por estrategia** (precio vs retorno vs spread) y fijar horizonte(s) $H$ (evitar cambiarlo durante backtests).
+1. **Definir formalmente target por estrategia** (precio vs retorno vs spread) y fijar horizonte(s) H (evitar cambiarlo durante backtests).
 
 2. **Especificar arquitecturas + entrenamiento**: hiperparámetros iniciales, regularización, early stopping, clipping, y criterio de selección del mejor modelo (por métrica de validación).
 
@@ -742,8 +758,8 @@ La idea de esta checklist es que cada punto se pueda “tildar” con un entrega
 
 **Objetivo**: implementar un generador de features determinístico (mismo input → mismo output).
 
-- [X] Implementar retornos/log-retornos ($r_t$) y features rolling (retornos, volatilidad, ATR, medias móviles, MACD, RSI, Bollinger %B/bandwidth).
-- [X] Verificar “as-of” time: toda feature en $t$ usa solo datos ≤ $t$.
+- [X] Implementar retornos/log-retornos (`r_t`) y features rolling (retornos, volatilidad, ATR, medias móviles, MACD, RSI, Bollinger %B/bandwidth).
+- [X] Verificar “as-of” time: toda feature en t usa solo datos ≤ t.
 - [ ] (Opcional) Macro/fundamentales/sentimiento: incorporar solo si se puede garantizar timestamp de publicación + lag.
 - [X] Normalización: definir qué se escala (features y/o target) y asegurar fit solo en train.
 
@@ -755,10 +771,10 @@ La idea de esta checklist es que cada punto se pueda “tildar” con un entrega
 
 **Objetivo**: armar datasets (X, y) por estrategia con ventanas temporales.
 
-- [X] E1: construir $y_t^{(90)}$ y secuencias lookback=360.
-- [X] E2: construir $y_t^{(20)}$ y secuencias lookback=60.
-- [ ] E3: construir $y_t^{(H)}$ con $H=6$ barras (30 min) y secuencias lookback=96 (5-min).
-- [ ] E4: construir spread $S_t$, Z-score $Z_t$, half-life, $\beta$ rolling y dataset k-NN.
+- [X] E1: construir `y_t(90)` y secuencias lookback=360.
+- [X] E2: construir `y_t(20)` y secuencias lookback=60.
+- [ ] E3: construir `y_t(H)` con H=6 barras (30 min) y secuencias lookback=96 (5-min).
+- [ ] E4: construir spread `S_t`, Z-score `Z_t`, half-life, `beta` rolling y dataset k-NN.
 
 **Criterio de aceptación**
 - Dimensiones correctas: (n_samples, lookback, n_features) y targets alineados.
@@ -769,7 +785,7 @@ La idea de esta checklist es que cada punto se pueda “tildar” con un entrega
 **Objetivo**: evaluar como serie temporal (sin shuffle) y evitar fuga por solapamiento.
 
 - [X] Implementar walk-forward (expanding o rolling) con 3–5 folds.
-- [X] Agregar embargo/purga simple: entre train y val/test dejar un gap de al menos $H$ días (para E1/E2).
+- [X] Agregar embargo/purga simple: entre train y val/test dejar un gap de al menos H días (para E1/E2).
 - [ ] Definir una métrica de selección por estrategia (cierre):
    - E1/E2: Sharpe neto en validación, con tope de turnover.
    - E3: Profit Factor neto y control de *time-in-market* (muy sensible a costos).
@@ -797,7 +813,7 @@ La idea de esta checklist es que cada punto se pueda “tildar” con un entrega
 
 - [X] Generar candidatos por sector/universo.
 - [ ] Test de cointegración (Engle-Granger y/o Johansen) y filtro por estabilidad.
-- [ ] Estimar $\beta$ rolling, calcular Z-score y half-life.
+- [ ] Estimar `beta` rolling, calcular Z-score y half-life.
 - [ ] Implementar k-NN (k ∈ {5,10,20}) como confirmación (no reemplaza la regla Z).
 
 **Criterio de aceptación**
@@ -809,7 +825,7 @@ La idea de esta checklist es que cada punto se pueda “tildar” con un entrega
 
 - [ ] Implementar simulador diario con: costo round-trip=10 bps, posiciones, rebalanceo y stops (si aplican).
 - [ ] (E3) Implementar simulador intradía con costo round-trip=20 bps, delay de ejecución 1 barra, y soporte long/short.
-- [X] E1/E2: reglas por umbral ($\tau_{buy}$/$\tau_{sell}$) + filtros (RSI/MACD) + time stop.
+- [X] E1/E2: reglas por umbral (`tau_buy`/`tau_sell`) + filtros (RSI/MACD) + time stop.
 - [ ] E4: entradas/salidas por Z-score (±2.0 / 0.25 / stop 3.0 / time-stop 20 días), dollar-neutral.
 - [ ] Reportar métricas netas: CAGR, Sharpe/Sortino, MaxDD, Calmar, hit rate, Profit Factor, turnover.
 
@@ -822,7 +838,7 @@ La idea de esta checklist es que cada punto se pueda “tildar” con un entrega
 
 - [ ] Tablas por estrategia: métricas ML y métricas de trading (train/val/test).
 - [ ] Curvas: equity curve, drawdown, distribución de retornos por trade, turnover en el tiempo.
-- [ ] Análisis de sensibilidad: variar 1–2 hiperparámetros/umbrales (por ejemplo $\tau_{buy}$) y mostrar impacto.
+- [ ] Análisis de sensibilidad: variar 1–2 hiperparámetros/umbrales (por ejemplo `tau_buy`) y mostrar impacto.
 - [ ] Discusión de riesgos: no-estacionariedad, sobreajuste, costos, limitaciones de datos.
 
 **Criterio de aceptación**
@@ -885,7 +901,9 @@ La organización separa claramente **datos → código → resultados**, siguien
 6. Reportes → lee de runs/, genera figuras/tablas en reports/
 ```
 
-**Para E3 intradía (pipeline automatizado):**```bash
+**Para E3 intradía (pipeline automatizado):**
+
+```bash
 # Paso 1 (opcional): solo descarga OHLCV 5-min → data/raw/intraday/
 python -m src.e3.train_pipeline --download-only
 
@@ -895,12 +913,14 @@ python -m src.e3.train_pipeline
 
 ### Ventajas de esta arquitectura
 
- **Reproducible**: mismo config + mismos datos = mismos resultados
- **Auditable**: cada corrida queda guardada con su configuración exacta
- **Modular**: se puede cambiar una parte sin romper las demás
- **Thesis-friendly**: `reports/` tiene todo listo para copiar al documento final
- **Escalable**: fácil agregar nuevas estrategias o fuentes de datos
-**Árbol sugerido**```
+- **Reproducible**: mismo config + mismos datos = mismos resultados
+- **Auditable**: cada corrida queda guardada con su configuración exacta
+- **Modular**: se puede cambiar una parte sin romper las demás
+- **Thesis-friendly**: `reports/` tiene todo listo para copiar al documento final
+- **Escalable**: fácil agregar nuevas estrategias o fuentes de datos
+**Árbol sugerido**
+
+```
 trading_predict/
    data/
       raw/                      # descargas originales (no modificar)
@@ -953,6 +973,7 @@ trading_predict/
          metrics.json
          equity_curve.csv
          predictions.parquet
+
 ```
 
 **Entrypoints prácticos (baseline)**
