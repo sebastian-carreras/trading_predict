@@ -1,14 +1,25 @@
 """Champion/Challenger promotion logic.
 
 Compares a candidate model against the current champion using a configurable
-composite score.  If the candidate's score is better by at least
-``min_improvement`` (default 5 %), it is promoted to champion.
+composite score.  If the candidate's score exceeds the champion's by at least
+``min_improvement`` (code default 5 %; overridden by ``base.yaml``), it is
+promoted to champion.
 
-The composite score is a weighted average of normalised metrics:
+The composite score is a weighted average of the **raw** metric values
+(weights renormalised to sum to 1):
 
-    score = Σ  w_i · metric_i_normalised
+    score = Σ  (w_i / Σw) · metric_i
 
-where the weights and metrics are read from ``config.lifecycle.promotion``.
+Lower-is-better metrics (``ml_mae``, ``ml_rmse``, ``bt_max_drawdown``) are
+inverted as ``1 / (1 + |metric|)`` before weighting so that a higher score is
+always better.  Metrics are **not** rescaled to a common range, so the score
+is dominated by large-magnitude metrics (typically ``bt_sharpe`` /
+``bt_calmar``) — see the caveat below.
+
+The relative comparison ("normalisation") happens at the *score* level, not
+per metric:
+
+    improvement = (candidate_score - champion_score) / champion_score
 
 Design decisions
 ----------------
@@ -17,9 +28,14 @@ Design decisions
   promoted automatically (configurable via ``first_champion_strategy``).
 * **Safety net** — the candidate must have ``bt_sharpe > 0``
   (``require_positive_sharpe``).
-* Metrics are normalised via the champion's value:
-  ``normalised = candidate_metric / abs(champion_metric)``
-  so improvements are expressed as relative ratios regardless of scale.
+
+Caveat
+------
+Because metrics are combined on their raw scales, the composite score is noisy
+run-to-run (empirically ±30-65% for the same model config, driven by shifting
+walk-forward windows).  ``min_improvement`` is therefore a hysteresis knob to
+avoid tie-churn, **not** a statistical significance gate; the real safeguard is
+manual review (``auto_promote=false`` + dry-run default in ``promote_candidate``).
 """
 from __future__ import annotations
 

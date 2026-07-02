@@ -238,7 +238,8 @@ runs/optuna_trials/optuna_studies.db-wal
 AGREGAR DESPUES.MD
 Brainstorm plan.md
 .claude/
-.github/
 models/*
 Repasar - Presentacion/*
 zFuturo/
+# Permitir el template de ejemplo (sin secretos)
+!.env.example

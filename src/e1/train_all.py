@@ -19,9 +19,9 @@ import sys
 from pathlib import Path
 
 try:
-    from ..utils import load_yaml, project_root
+    from ..utils import get_universe_tickers, load_yaml, project_root
 except ImportError:  # pragma: no cover
-    from src.utils import load_yaml, project_root
+    from src.utils import get_universe_tickers, load_yaml, project_root
 
 
 def _parse_tickers(raw: str) -> list[str]:
@@ -41,8 +41,8 @@ def _resolve_default_tickers(config: dict) -> list[str]:
     if merged:
         return merged
 
-    universe = config.get("universe", {}).get("tickers", [])
-    return [ticker for ticker in universe if ticker]
+    # Fallback (raro): sin listas E1, usar el universo derivado completo.
+    return get_universe_tickers(config)
 
 
 def _run_command(command: list[str]) -> int:

@@ -44,7 +44,7 @@ from ..backtest.backtest_intraday import (  # Backtest intraday
     compute_max_drawdown,        # Calcula máxima caída del equity
     compute_profit_factor,       # Calcula profit factor (ganancias/pérdidas)
 )  # Fin import backtest
-from .intraday_data import download_ohlcv_5m, load_ohlcv_csv  # Data intraday
+from .intraday_data import load_ohlcv_csv  # Data intraday
 from .build_features import compute_intraday_features, make_sequences, make_target_return  # Features/target
 from .lstm import LSTMRegressor  # Modelo LSTM
 from .intraday_metrics import directional_accuracy, information_coefficient, mae, rmse  # Métricas
@@ -183,6 +183,7 @@ def run_e3_walk_forward(  # Walk-forward completo para E3
         X_train, X_val, X_test = X[train_idx], X[val_idx], X[test_idx]
         y_train, y_val, y_test = y[train_idx], y[val_idx], y[test_idx]
         ts_test = ts[test_idx]
+        ts_train = ts[train_idx]  # Timestamps de train (para log de ventana completa)
 
         # Z-score scaling: estadísticas solo del train de este fold (sin leakage)
         Xtr2d = X_train.reshape(-1, X_train.shape[-1])
@@ -202,9 +203,12 @@ def run_e3_walk_forward(  # Walk-forward completo para E3
         epochs_ran_fold: list[int] = []  # Épocas corridas por miembro en este fold
         fold_model_objects: list = []  # Referencia a modelos entrenados de este fold
 
+        # Log de fold: train Y test explícitos para evidenciar la ventana CRECIENTE
+        # (expanding). Ver solo el test aparenta ventana deslizante. Unidad = barras 5-min.
         print(
             f"\n  Fold {fold_idx}/{folds}: "
-            f"n_train={len(train_idx)} n_val={len(val_idx)} n_test={len(test_idx)} "
+            f"train[{ts_train[0].date()} -> {ts_train[-1].date()}] n={len(train_idx)} (expanding) | "
+            f"test[{ts_test[0].date()} -> {ts_test[-1].date()}] n={len(test_idx)} | "
             f"embargo={gap_samples} barras"
         )
 
@@ -504,7 +508,7 @@ def _register_e3_candidate(
                 metrics=summary, variant="e3_intraday",
                 feature_names=list(feat_names),
             )
-            print(f"  ✓ Registered {ticker} as candidate in lifecycle registry")
+            print(f"  ✓ {ticker} registrado como candidato en el registro de ciclo de vida")
 
             if auto_promote:
                 try:
@@ -520,7 +524,7 @@ def _register_e3_candidate(
         else:
             print(f"  ⚠️  Guardrails failed for {ticker}: {errors}")
     except Exception as exc:
-        print(f"  Lifecycle registration skipped: {exc}")
+        print(f"  Registracion en el ciclo de vida salteado: {exc}")
 
 
 def run_for_ticker(config: dict, ticker: str, raw_dir: Path, out_dir: Path, use_latest_data: bool = False, register_lifecycle: bool = True, auto_promote: bool = False) -> dict:  # Pipeline E3
@@ -833,13 +837,6 @@ def main() -> None:  # Main
         default="src/config/base.yaml",  # Default
         help="Path to YAML config (relative to trading_predict root is allowed)",  # Help
     )  # Fin arg config
-    parser.add_argument(  # Arg mode
-        "--mode",  # Flag
-        type=str,  # Tipo
-        choices=["download", "run"],  # Choices
-        default="run",  # Default
-        help="download: fetch CSVs; run: train+backtest using existing CSVs",  # Help
-    )  # Fin arg mode
     parser.add_argument(  # Arg tickers
         "--tickers",  # Flag
         type=str,  # Tipo
@@ -847,12 +844,21 @@ def main() -> None:  # Main
         help="Comma-separated tickers override (otherwise uses universe.tickers_by_strategy.e3_intraday)",  # Help
     )  # Fin arg tickers
     parser.add_argument(
+        "--skip-download",
+        action="store_true",
+        help="No descargar datos; usar los existentes (por defecto se descargan datos nuevos, ver data.download en base.yaml)",
+    )
+    parser.add_argument(
+        "--download-only",
+        action="store_true",
+        help="Descargar datos y salir sin entrenar",
+    )
+    parser.add_argument(
         "--use-latest-data",
         action="store_true",
         help=(
-            "Descargar datos frescos y entrenar con el rango extendido hasta hoy "
-            "(ignora data.training_window.intraday.end del config; start se preserva). "
-            "Implica --mode download."
+            "Entrenar con el rango extendido hasta hoy "
+            "(ignora data.training_window.intraday.end del config; start se preserva)."
         ),
     )
     parser.add_argument(
@@ -862,12 +868,11 @@ def main() -> None:  # Main
     )
     args = parser.parse_args()  # Parse args
 
-    # --use-latest-data implica descarga fresca antes de entrenar
-    if args.use_latest_data and args.mode != "download":
-        print("→ --use-latest-data: descargando datos frescos antes de entrenar")
-        _forced_download = True
-    else:
-        _forced_download = False
+    if args.skip_download and args.use_latest_data:
+        print(
+            "⚠️  --skip-download + --use-latest-data: se extiende la ventana hasta hoy "
+            "pero no se descargan datos frescos; puede no haber datos recientes."
+        )
 
     root = project_root()  # Root
     cfg_path = Path(args.config)  # Path config
@@ -884,7 +889,6 @@ def main() -> None:  # Main
         raise ValueError("No tickers provided and config has no universe.tickers_by_strategy.e3_intraday")  # Error
 
     e3 = get_nested(config, ["strategies", "e3_intraday"], {})  # Config E3
-    data_cfg = e3.get("data", {})  # Config data
     thresholds = e3.get("thresholds", {})  # Thresholds
     costs = config.get("costs", {})  # Costos
 
@@ -895,13 +899,17 @@ def main() -> None:  # Main
     import shutil
     shutil.copy(cfg_path, out_base / "config_used.yaml")
 
-    if args.mode == "download" or _forced_download:  # Modo download (o forzado por --use-latest-data)
-        period = str(data_cfg.get("period", "60d"))  # Period
-        interval = str(data_cfg.get("interval", "5m"))  # Interval
-        written = download_ohlcv_5m(tickers, out_dir=raw_dir, period=period, interval=interval)  # Descargar
-        print(f"Downloaded {len(written)} files to {raw_dir}")  # Log
-        if args.mode == "download":
-            return  # Salir en modo download puro; con --use-latest-data seguimos a entrenar
+    # Descarga (config-driven: data.download; opt-out con --skip-download)
+    from ..data.ingest import refresh_data_for_training
+    refresh_data_for_training(
+        config, tickers, granularity="intraday",
+        skip_download=args.skip_download, root=root,
+        raw_dir=raw_dir,
+    )
+
+    if args.download_only:
+        print("\n--download-only: datos descargados, sin entrenar.")
+        return
 
     # MLflow setup: intenta servidor remoto; fallback local robusto (igual que E1)
     mlflow_enabled = False  # Flag MLflow
@@ -1122,7 +1130,7 @@ def main() -> None:  # Main
             print(f"✗ Error en {ticker}: {exc}")  # Log error
 
     pd.DataFrame(summaries).to_csv(out_base / "summary_all.csv", index=False)  # Guardar summary
-    print(f"Wrote run outputs to {out_base}")  # Log salida
+    print(f"Outputs escritos en {out_base}")  # Log salida
 
 
 if __name__ == "__main__":  # Entry point

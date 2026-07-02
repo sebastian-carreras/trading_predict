@@ -5,8 +5,8 @@ Optimización de Hiperparámetros para Estrategia E1 usando Optuna + MLflow
 Este script busca automáticamente los mejores hiperparámetros para la
 estrategia E1 Conservative. Entrena el modelo GRU con split temporal de tuning
 (time_split) para cada combinación de parámetros y optimiza una métrica objetivo
-que combina
-IC (Information Coefficient) y Sharpe ratio.
+que combina Sharpe ratio, Information Coefficient (IC), directional accuracy y
+Calmar ratio, con los mismos pesos que el scoring de promoción del lifecycle (e1).
 
 Nota metodológica: la validación walk-forward se reserva para la fase de
 entrenamiento/evaluación final, fuera del loop de Optuna.
@@ -26,8 +26,8 @@ Parámetros optimizados y rangos de búsqueda:
         - weight_decay:  [1e-6, 1e-2] log scale
     - batch_size:    {32, 64, 128} categórico
 
-Métrica objetivo:
-  0.5 * IC_mean + 0.5 * Sharpe_mean + trade_penalty
+Métrica objetivo (pesos alineados con lifecycle.promotion.per_strategy.e1):
+  0.35 * Sharpe_mean + 0.25 * IC_mean + 0.20 * DirAcc_mean + 0.20 * Calmar_mean + trade_penalty
   (trade_penalty = -5 si <50% de tickers generan trades)
 
 Uso:
@@ -762,6 +762,7 @@ class E1HyperparameterOptimizer:
         self,
         study: optuna.Study,
         output_dir: Path,
+        compact_best_params: bool = False,
     ) -> None:
         """
         Guarda resultados de optimización.
@@ -769,6 +770,11 @@ class E1HyperparameterOptimizer:
         Args:
             study: Estudio de Optuna
             output_dir: Directorio de salida
+            compact_best_params: Si True, escribe best_params_e1.yaml en el esquema
+                compacto consumible por el entrenamiento (thresholds/model), idéntico
+                a una entrada del agregado e1_tuned_params_by_ticker.yaml. Se usa para
+                las carpetas by_ticker/<TICKER>/. Si False (default), escribe el esquema
+                RAW del estudio (optimization + best_params), usado a nivel top-level.
         """
         
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -782,18 +788,23 @@ class E1HyperparameterOptimizer:
         best_params = study.best_params
         best_value = study.best_value
 
-        best_params_yaml = {
-            # Bloque de metadata del estudio para trazabilidad.
-            "optimization": {
-                "study_name": study.study_name,
-                "n_trials": len(study.trials),
-                "best_value": float(best_value),
-                "best_trial": study.best_trial.number,
-            },
-            # Serialización segura de tipos numéricos (evita objetos raros de numpy/optuna).
-            "best_params": {k: float(v) if isinstance(v, (int, float)) else v
-                           for k, v in best_params.items()},
-        }
+        if compact_best_params:
+            # Esquema compacto consumible por el training (thresholds/model),
+            # uniforme con cada entrada de e1_tuned_params_by_ticker.yaml.
+            best_params_yaml = _best_params_to_e1_tuned_schema(best_params)
+        else:
+            best_params_yaml = {
+                # Bloque de metadata del estudio para trazabilidad.
+                "optimization": {
+                    "study_name": study.study_name,
+                    "n_trials": len(study.trials),
+                    "best_value": float(best_value),
+                    "best_trial": study.best_trial.number,
+                },
+                # Serialización segura de tipos numéricos (evita objetos raros de numpy/optuna).
+                "best_params": {k: float(v) if isinstance(v, (int, float)) else v
+                               for k, v in best_params.items()},
+            }
 
         yaml_path = output_dir / "best_params_e1.yaml"
         self._safe_write_file(yaml_path, lambda f: yaml.dump(best_params_yaml, f, default_flow_style=False, sort_keys=False))
@@ -895,7 +906,7 @@ class E1HyperparameterOptimizer:
             fig.update_layout(
                 title="Optimization History (Full Study) - Raw Objective",
                 xaxis_title="Trial",
-                yaxis_title="Objective Raw (0.5*IC + 0.5*Sharpe)",
+                yaxis_title="Objective Raw (0.35*Sharpe + 0.25*IC + 0.20*DirAcc + 0.20*Calmar)",
                 template="plotly_white",
             )
             fig.write_image(str(figures_dir / "optimization_history_raw.png"), width=1200, height=600)
@@ -923,7 +934,7 @@ class E1HyperparameterOptimizer:
             fig.update_layout(
                 title="Optimization History (Current Run) - Raw Objective",
                 xaxis_title="Trial",
-                yaxis_title="Objective Raw (0.5*IC + 0.5*Sharpe)",
+                yaxis_title="Objective Raw (0.35*Sharpe + 0.25*IC + 0.20*DirAcc + 0.20*Calmar)",
                 template="plotly_white",
             )
             fig.write_image(str(figures_dir / "optimization_history_raw_current_run.png"), width=1200, height=600)
@@ -1022,6 +1033,41 @@ class E1HyperparameterOptimizer:
         print(f"\n{'='*80}")
         print("RESULTADOS GUARDADOS EXITOSAMENTE")
         print(f"{'='*80}\n")
+
+
+def _best_params_to_e1_tuned_schema(best_params: Dict) -> Dict:
+    """Convierte best_params flat de Optuna al esquema nested consumido por E1.
+
+    Devuelve el mismo formato compacto (thresholds/model) que se persiste en
+    e1_tuned_params_by_ticker.yaml, manteniendo weight_decay (default 0.0) y
+    early_stopping_patience (fijo en 10 dentro del objective) por compatibilidad
+    con el esquema histórico del agregado.
+    """
+    schema: Dict[str, Dict] = {"thresholds": {}, "model": {}}
+
+    if "tau_buy" in best_params:
+        schema["thresholds"]["tau_buy"] = float(best_params["tau_buy"])
+    if "tau_sell" in best_params:
+        schema["thresholds"]["tau_sell"] = float(best_params["tau_sell"])
+
+    gru_units = []
+    if "gru_units_1" in best_params:
+        gru_units.append(int(best_params["gru_units_1"]))
+    if "gru_units_2" in best_params:
+        gru_units.append(int(best_params["gru_units_2"]))
+    if gru_units:
+        schema["model"]["gru_units"] = gru_units
+
+    if "dropout" in best_params:
+        schema["model"]["dropout"] = float(best_params["dropout"])
+    if "learning_rate" in best_params:
+        schema["model"]["learning_rate"] = float(best_params["learning_rate"])
+    schema["model"]["weight_decay"] = float(best_params.get("weight_decay", 0.0))
+    if "batch_size" in best_params:
+        schema["model"]["batch_size"] = int(best_params["batch_size"])
+    schema["model"]["early_stopping_patience"] = 10
+
+    return {k: v for k, v in schema.items() if v}
 
 
 def main():
@@ -1323,24 +1369,11 @@ def main():
             )
 
             out_ticker = per_ticker_dir / t
-            optimizer.save_results(study, out_ticker)
+            optimizer.save_results(study, out_ticker, compact_best_params=True)
 
             bp = study.best_params
             # Convertir a formato consumible por los pipelines de training
-            overrides_by_ticker[t] = {
-                "thresholds": {
-                    "tau_buy": float(bp.get("tau_buy")),
-                    "tau_sell": float(bp.get("tau_sell")),
-                },
-                "model": {
-                    "gru_units": [int(bp.get("gru_units_1")), int(bp.get("gru_units_2"))],
-                    "dropout": float(bp.get("dropout")),
-                    "learning_rate": float(bp.get("learning_rate")),
-                    "weight_decay": float(bp.get("weight_decay", 0.0)),
-                    "batch_size": int(bp.get("batch_size")),
-                    "early_stopping_patience": 10,
-                },
-            }
+            overrides_by_ticker[t] = _best_params_to_e1_tuned_schema(bp)
             meta_by_ticker[t] = {
                 # Metadata útil para auditoría/seguimiento de calidad del tuning.
                 "study_name": study.study_name,
@@ -1415,20 +1448,7 @@ def main():
             best_trial_number = None
 
         if tickers and has_completed_trials:
-            converted = {
-                "thresholds": {
-                    "tau_buy": float(bp.get("tau_buy")),
-                    "tau_sell": float(bp.get("tau_sell")),
-                },
-                "model": {
-                    "gru_units": [int(bp.get("gru_units_1")), int(bp.get("gru_units_2"))],
-                    "dropout": float(bp.get("dropout")),
-                    "learning_rate": float(bp.get("learning_rate")),
-                    "weight_decay": float(bp.get("weight_decay", 0.0)),
-                    "batch_size": int(bp.get("batch_size")),
-                    "early_stopping_patience": 10,
-                },
-            }
+            converted = _best_params_to_e1_tuned_schema(bp)
 
             # Sincronización por defecto: aplicar best global a todos los tickers evaluados.
             # Los tickers con estudio independiente propio (by_ticker/) tienen prioridad.

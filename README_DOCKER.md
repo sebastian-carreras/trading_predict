@@ -144,7 +144,7 @@ conda activate ia_ceia_18co
 python -m src.train_e1_pipeline --tickers AAPL
 
 # E3 manual
-python -m src.train_e3_pipeline --mode run --tickers SPY
+python -m src.e3.train_pipeline --tickers SPY
 
 # Con tracking MLflow
 export MLFLOW_TRACKING_URI=http://localhost:5050

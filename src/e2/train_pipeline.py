@@ -14,8 +14,8 @@ Flujo:
    10. Tracking en MLflow
 
 Uso:
-    python -m src.e2.train_pipeline
-    python -m src.e2.train_pipeline --tickers AAPL --refresh-data
+    python -m src.e2.train_pipeline                              # descarga datos nuevos + entrena
+    python -m src.e2.train_pipeline --tickers AAPL --skip-download  # usa datos existentes
     python -m src.e2.train_pipeline --tickers NVDA,GOOGL --auto-promote
 """
 
@@ -224,6 +224,8 @@ def _normalize_e2_tuned_entry(per_ticker: dict) -> dict:
         model["dropout"] = per_ticker.get("dropout")
     if per_ticker.get("learning_rate") is not None:
         model["learning_rate"] = per_ticker.get("learning_rate")
+    if per_ticker.get("weight_decay") is not None:
+        model["weight_decay"] = per_ticker.get("weight_decay")
     if per_ticker.get("batch_size") is not None:
         model["batch_size"] = per_ticker.get("batch_size")
     if per_ticker.get("early_stopping_patience") is not None:
@@ -357,6 +359,7 @@ def run_e2_walk_forward(
     dropout: float,
     dense_units: int,
     learning_rate: float,
+    weight_decay: float,
     batch_size: int,
     max_epochs: int,
     patience: int,
@@ -494,6 +497,7 @@ def run_e2_walk_forward(
             X_train_s, y_train_s,
             X_val_s, y_val_s,
             learning_rate=learning_rate,
+            weight_decay=weight_decay,
             batch_size=batch_size,
             max_epochs=max_epochs,
             early_stopping_patience=patience,
@@ -556,7 +560,8 @@ def run_e2_walk_forward(
         last_std_y = std_y
 
         ts_test = ts[test_idx]
-        window_label = f"{ts_test[0].date()} -> {ts_test[-1].date()}"
+        ts_train = ts[train_idx]  # Timestamps de train (para log de ventana completa)
+        window_label = f"{ts_test[0].date()} -> {ts_test[-1].date()}"  # Etiqueta test (usada por plots/CSV)
 
         # Model payload (último fold = más reciente)
         last_model_payload = {
@@ -616,8 +621,12 @@ def run_e2_walk_forward(
 
         ic_str = "nan" if np.isnan(ic) else f"{ic:.3f}"
         sharpe_str = "nan" if np.isnan(sharpe) else f"{sharpe:.2f}"
+        # Log de fold: train Y test explícitos para evidenciar la ventana CRECIENTE
+        # (expanding). Ver solo el test aparenta ventana deslizante.
         print(
-            f"    Fold {fold_idx}: {window_label} | "
+            f"    Fold {fold_idx}: "
+            f"train[{ts_train[0].date()} -> {ts_train[-1].date()}] n={len(train_idx)} (expanding) | "
+            f"test[{window_label}] n={len(test_idx)} | "
             f"MAE={mae:.4f} IC={ic_str} Sharpe={sharpe_str}"
         )
 
@@ -796,6 +805,7 @@ def run_e2_for_ticker(
     dropout = float(model_cfg.get("dropout", 0.2))
     dense_units = int(model_cfg.get("dense_units", 32))
     lr = float(model_cfg.get("learning_rate", 1e-3))
+    wd = float(model_cfg.get("weight_decay", 0.0))
     batch_size = int(model_cfg.get("batch_size", 64))
     max_epochs = int(model_cfg.get("max_epochs", 150))
     patience = int(model_cfg.get("early_stopping_patience", 12))
@@ -859,6 +869,7 @@ def run_e2_for_ticker(
             splits_cfg=splits_cfg,
             lstm_units=lstm_units, dropout=dropout,
             dense_units=dense_units, learning_rate=lr,
+            weight_decay=wd,
             batch_size=batch_size, max_epochs=max_epochs,
             patience=patience, loss=loss, huber_delta=huber_delta,
             tau_buy=tau_buy, tau_sell=tau_sell,
@@ -875,6 +886,7 @@ def run_e2_for_ticker(
         summary["hp_dropout"] = dropout
         summary["hp_dense_units"] = dense_units
         summary["hp_learning_rate"] = lr
+        summary["hp_weight_decay"] = wd
         summary["hp_batch_size"] = batch_size
         summary["hp_tau_buy"] = tau_buy
         summary["hp_tau_sell"] = tau_sell
@@ -909,7 +921,7 @@ def run_e2_for_ticker(
                         feature_names=list(feat_names),
                         hyperparams=hp_info,
                     )
-                    print(f"  ✓ Registered {ticker} as candidate in lifecycle registry")
+                    print(f"  ✓ {ticker} registrado como candidato en el registro de ciclo de vida")
 
                     if auto_promote:
                         try:
@@ -927,7 +939,7 @@ def run_e2_for_ticker(
                 else:
                     print(f"  ⚠️  Guardrails failed for {ticker}: {errors}")
             except Exception as exc:
-                print(f"  Lifecycle registration skipped: {exc}")
+                print(f"  Registracion en el ciclo de vida salteado: {exc}")
 
         pd.Series(summary).to_csv(out_dir / f"{ticker}_summary.csv")
         return summary
@@ -980,6 +992,7 @@ def run_e2_for_ticker(
         X_train_s, y_train_s,
         X_val_s, y_val_s,
         learning_rate=lr,
+        weight_decay=wd,
         batch_size=batch_size,
         max_epochs=max_epochs,
         early_stopping_patience=patience,
@@ -1125,6 +1138,7 @@ def run_e2_for_ticker(
         "hp_dropout": dropout,
         "hp_dense_units": dense_units,
         "hp_learning_rate": lr,
+        "hp_weight_decay": wd,
         "hp_batch_size": batch_size,
         "hp_tau_buy": tau_buy,
         "hp_tau_sell": tau_sell,
@@ -1161,7 +1175,7 @@ def run_e2_for_ticker(
                     feature_names=list(feat_names),
                     hyperparams=hp_info,
                 )
-                print(f"  ✓ Registered {ticker} as candidate in lifecycle registry")
+                print(f"  ✓ {ticker} registrado como candidato en el registro de ciclo de vida")
 
                 if auto_promote:
                     try:
@@ -1179,7 +1193,7 @@ def run_e2_for_ticker(
             else:
                 print(f"  ⚠️  Guardrails failed for {ticker}: {errors}")
         except Exception as exc:
-            print(f"  Lifecycle registration skipped: {exc}")
+            print(f"  Registracion en el ciclo de vida salteado: {exc}")
 
     return summary
 
@@ -1203,17 +1217,27 @@ def main() -> None:
         help="Auto-promover candidato si supera al champion actual",
     )
     parser.add_argument(
-        "--refresh-data", action="store_true",
-        help="Descargar y limpiar datos antes de entrenar (por defecto usa datos existentes)",
+        "--skip-download", action="store_true",
+        help="No descargar datos; usar los existentes (por defecto se descargan datos nuevos, ver data.download en base.yaml)",
+    )
+    parser.add_argument(
+        "--download-only", action="store_true",
+        help="Descargar datos y salir sin entrenar",
     )
     parser.add_argument(
         "--use-latest-data", action="store_true",
         help=(
-            "Descargar datos frescos y entrenar con el rango extendido hasta hoy "
+            "Entrenar con el rango extendido hasta hoy "
             "(ignora data.training_window.daily.end del config; start se preserva)."
         ),
     )
     args = parser.parse_args()
+
+    if args.skip_download and args.use_latest_data:
+        print(
+            "⚠️  --skip-download + --use-latest-data: se extiende la ventana hasta hoy "
+            "pero no se descargan datos frescos; puede no haber datos recientes."
+        )
 
     root = project_root()
     cfg_path = Path(args.config)
@@ -1333,40 +1357,23 @@ def main() -> None:
         print(f"⚠️  MLflow no disponible: {exc}")
 
     # ------------------------------------------------------------------
-    # Descarga y limpieza
+    # Descarga y limpieza (config-driven: data.download; opt-out con --skip-download)
     # ------------------------------------------------------------------
-    if args.refresh_data or args.use_latest_data:
-        print("\nPaso 1/3: Descargando datos...")
-        try:
-            from ..data.download_daily import download_daily_ohlcv
-            written = download_daily_ohlcv(
-                tickers, out_dir=raw_dir, period="10y",
-                skip_existing=False,
-            )
-            print(f"✓ Descargados/actualizados {len(written)} archivos\n")
-        except Exception as exc:
-            print(f"⚠️  Descarga: {exc}\n")
+    from ..data.ingest import refresh_data_for_training
+    refresh_data_for_training(
+        config, tickers, granularity="daily",
+        skip_download=args.skip_download, root=root,
+        raw_dir=raw_dir, clean_dir=clean_dir,
+    )
 
-        print("Paso 2/3: Limpiando datos...")
-        try:
-            from ..data.clean_daily import process_daily_data_with_cleaning
-            reports = process_daily_data_with_cleaning(
-                raw_dir=raw_dir, clean_dir=clean_dir,
-                strategy="forward_fill", min_days=252,
-                remove_zero_volume=True, verbose=False,
-                tickers=list(dict.fromkeys(tickers)),
-            )
-            cleaned = sum(1 for r in reports.values() if r.get("status") == "cleaned")
-            print(f"✓ Limpiados: {cleaned}\n")
-        except Exception as exc:
-            print(f"⚠️  Limpieza: {exc}\n")
-    else:
-        print("\nUsando datos existentes (--refresh-data o --use-latest-data para actualizar)\n")
+    if args.download_only:
+        print("\n--download-only: datos descargados, sin entrenar.")
+        return
 
     # ------------------------------------------------------------------
     # Entrenamiento
     # ------------------------------------------------------------------
-    print("Paso 3/3: Entrenando E2 LSTM...")
+    print("Entrenando E2 LSTM...")
     print("=" * 60)
 
     summaries: list[dict] = []
@@ -1398,6 +1405,7 @@ def main() -> None:
                         "dropout": summary.get("hp_dropout", 0.2),
                         "dense_units": int(summary.get("hp_dense_units", 32)),
                         "learning_rate": summary.get("hp_learning_rate", 1e-3),
+                        "weight_decay": summary.get("hp_weight_decay", 0.0),
                         "batch_size": int(summary.get("hp_batch_size", 64)),
                         "tau_buy": summary.get("hp_tau_buy", 0.025),
                         "tau_sell": summary.get("hp_tau_sell", 0.00),

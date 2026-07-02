@@ -14,7 +14,7 @@ from typing import Iterable
 
 import pandas as pd
 
-from ..utils import ensure_dir, load_yaml, project_root
+from ..utils import ensure_dir, get_universe_tickers, last_csv_timestamp, load_yaml, project_root
 
 
 def _is_argentino(ticker: str) -> bool:
@@ -36,6 +36,8 @@ def download_daily_ohlcv(
     auto_adjust: bool = True,
     skip_existing: bool = True,
     use_iol_fallback: bool = True,
+    incremental: bool = False,
+    overlap_days: int = 5,
 ) -> list[Path]:
     """Descarga OHLCV diario usando yfinance con fallback a IOL API.
 
@@ -45,14 +47,21 @@ def download_daily_ohlcv(
     Args:
         tickers: Lista de símbolos a descargar
         out_dir: Directorio de salida (data/raw/)
-        period: Período histórico (10y = 10 años)
+        period: Período histórico (10y = 10 años). En modo incremental se usa solo
+            como bootstrap cuando el CSV del ticker aún no existe.
         auto_adjust: Si True, ajusta por splits/dividendos
         skip_existing: Si True, omite tickers cuyo CSV ya existe
         use_iol_fallback: Si True, intenta IOL API cuando Yahoo Finance falla (tickers .BA)
+        incremental: Si True y el CSV existe, descarga solo desde la última fecha
+            registrada (menos ``overlap_days``) en lugar del período completo.
+            El resultado se acumula igual (merge + dedup por timestamp).
+        overlap_days: Días de solapamiento re-solicitados en modo incremental
+            (robustez ante barras tardías / correcciones).
 
     Returns:
         Lista de archivos CSV creados/actualizados
     """
+    from datetime import timedelta as _timedelta
     try:
         import yfinance as yf
     except ImportError as exc:
@@ -81,22 +90,40 @@ def download_daily_ohlcv(
         out_path = out_dir / f"{ticker}_daily.csv"
         
         if skip_existing and out_path.exists():
-            print(f"⏭️  {ticker} ya existe - omitido (usa --refresh-data para actualizar)")
+            print(f"⏭️  {ticker} ya existe - omitido (usa --skip-download para reutilizar sin descargar)")
             skipped.append(ticker)
             continue
-        
+
+        # Descarga incremental: si el CSV existe, bajar solo desde la última fecha
+        # (menos overlap) en vez del período completo. Bootstrap con `period` si no existe.
+        fetch_start = None
+        if incremental:
+            last_ts = last_csv_timestamp(out_path)
+            if last_ts is not None:
+                fetch_start = (last_ts - _timedelta(days=overlap_days)).strftime("%Y-%m-%d")
+
         # Intentar Yahoo Finance primero
-        print(f"Descargando {ticker} desde Yahoo Finance...")
+        origen = f"desde {fetch_start} (incremental)" if fetch_start else f"período {period}"
+        print(f"Descargando {ticker} desde Yahoo Finance ({origen})...")
         success = False
-        
+
         try:
-            df = yf.download(
-                tickers=ticker,
-                period=period,
-                auto_adjust=auto_adjust,
-                progress=False,
-                threads=True,
-            )
+            if fetch_start:
+                df = yf.download(
+                    tickers=ticker,
+                    start=fetch_start,
+                    auto_adjust=auto_adjust,
+                    progress=False,
+                    threads=True,
+                )
+            else:
+                df = yf.download(
+                    tickers=ticker,
+                    period=period,
+                    auto_adjust=auto_adjust,
+                    progress=False,
+                    threads=True,
+                )
 
             if df is not None and not df.empty:
                 # Aplanar columnas MultiIndex si existe
@@ -129,8 +156,9 @@ def download_daily_ohlcv(
                 df["timestamp"] = pd.to_datetime(df["timestamp"], format='ISO8601', utc=True)
                 df = df.sort_values("timestamp")
 
-                # Validación básica
-                if len(df) < 252:
+                # Validación básica (solo en bootstrap: en incremental el slice es
+                # deliberadamente corto y este chequeo no aplica al CSV acumulado).
+                if not fetch_start and len(df) < 252:
                     print(f"  ⚠️  {ticker} tiene menos de 1 año de datos ({len(df)} días)")
 
                 chosen_df = df
@@ -150,7 +178,11 @@ def download_daily_ohlcv(
                         from datetime import datetime, timedelta
 
                         end_date = datetime.now().strftime("%Y-%m-%d")
-                        start_date = (datetime.now() - timedelta(days=years * 365)).strftime("%Y-%m-%d")
+                        # En modo incremental acotamos IOL a la misma ventana que yfinance
+                        # (evita re-bajar toda la historia y ganarle siempre por longitud).
+                        start_date = fetch_start or (
+                            datetime.now() - timedelta(days=years * 365)
+                        ).strftime("%Y-%m-%d")
 
                         client = IOLClient()
                         iol_df = client.get_historical_data(ticker, start_date, end_date)
@@ -163,7 +195,18 @@ def download_daily_ohlcv(
 
                 if out_path.exists():
                     existing = pd.read_csv(out_path)
-                    existing["timestamp"] = pd.to_datetime(existing["timestamp"], utc=True)
+                    # format='ISO8601' tolera timestamps mixtos (con/sin microsegundos):
+                    # los datos de IOL traen segundos fraccionarios y los de yfinance no.
+                    # errors='coerce' + dropna: una fila corrupta (append partido que deja
+                    # un número en la columna timestamp) se vuelve NaT y se descarta, en
+                    # vez de abortar el merge y hacer fallar toda la descarga.
+                    existing["timestamp"] = pd.to_datetime(
+                        existing["timestamp"], format="ISO8601", utc=True, errors="coerce"
+                    )
+                    n_bad = int(existing["timestamp"].isna().sum())
+                    if n_bad:
+                        print(f"  🗑️  {ticker}: descartadas {n_bad} filas corruptas del CSV existente")
+                        existing = existing.dropna(subset=["timestamp"]).reset_index(drop=True)
                     before = len(existing)
                     chosen_df = (
                         pd.concat([existing, chosen_df], ignore_index=True)
@@ -237,11 +280,14 @@ def main() -> None:
     root = project_root()
     config = load_yaml(root / "src/config/base.yaml")
 
-    # Universo global
-    tickers = list(config.get("universe", {}).get("tickers", []))
+    # Universo de descarga: unión de tickers_by_strategy + extra_download_tickers
+    tickers = get_universe_tickers(config)
 
     if not tickers:
-        raise ValueError("No tickers found in base.yaml universe.tickers")
+        raise ValueError(
+            "No hay tickers para descargar: revisá universe.tickers_by_strategy "
+            "y universe.extra_download_tickers en base.yaml"
+        )
 
     # Control de argumentos
     force_download = "--force" in sys.argv or "-f" in sys.argv

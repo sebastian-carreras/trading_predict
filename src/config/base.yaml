@@ -7,45 +7,24 @@ project:
   seed: 42
 
 universe:
-  # Universo global (para descarga/limpieza). Es la unión de E1 + E2.
-  tickers:
-    - "YPFD.BA"
-    - "GGAL.BA"
-    - "PAMP.BA"
-    - "BYMA.BA"
-    - "CEPU.BA"
-    - "AAPL"
-    - "MSFT"
-    - "JNJ"
-    - "PG"
-    - "V"
-    - "BBAR.BA"
-    - "BMA.BA"
-    - "EDN.BA"
-    - "TGSU2.BA"
-    - "LOMA.BA"
-    - "NVDA"
-    - "GOOGL"
-    - "AMZN"
-    - "META"
-    - "NFLX"
-    # E3 intradía (activos adicionales)
-    - "TSLA"
-    - "SPY"
-    - "QQQ"
-    - "AMD"
-    # E4 pairs trading (activos adicionales)
-    - "TGSU2.BA"
-    - "TGNO4.BA"
-    - "YPF"
-    - "KO"
-    - "PEP"
-    - "XOM"
-    - "CVX"
-    - "JPM"
-    - "BAC"
-    - "CAT"
-    - "DE"
+  # Universo de descarga/limpieza: NO se lista a mano. Se DERIVA de
+  # tickers_by_strategy (fuente única de verdad) vía
+  # src.utils.get_universe_tickers(). Acá solo van activos reservados que
+  # todavía no pertenecen a una estrategia activa (extras de E3 / E4 futuro),
+  # para que la descarga en batch igual los baje.
+  extra_download_tickers:
+    - "TSLA"     # E3 (reservado, aún no en e3_intraday)
+    - "AMD"      # E3 (reservado, aún no en e3_intraday)
+    - "TGNO4.BA" # E4 pairs trading (reservado)
+    - "YPF"      # E4 pairs trading (reservado)
+    - "KO"       # E4 pairs trading (reservado)
+    - "PEP"      # E4 pairs trading (reservado)
+    - "XOM"      # E4 pairs trading (reservado)
+    - "CVX"      # E4 pairs trading (reservado)
+    - "JPM"      # E4 pairs trading (reservado)
+    - "BAC"      # E4 pairs trading (reservado)
+    - "CAT"      # E4 pairs trading (reservado)
+    - "DE"       # E4 pairs trading (reservado)
 
   # Asignación por estrategia (para entrenar/validar/backtest).
   tickers_by_strategy:
@@ -71,6 +50,27 @@ universe:
       - "EDN.BA"
       - "TGSU2.BA"
       - "LOMA.BA"
+      # EEUU adicionales (con CEDEAR en BYMA para operar en el mercado local)
+      - "LLY"    # Eli Lilly — Salud/Farma
+      - "ISRG"   # Intuitive Surgical — Salud/MedTech
+      - "ABBV"   # AbbVie — Salud/Farma
+      - "VRTX"   # Vertex Pharma — Salud/Biotech
+      - "AVGO"   # Broadcom — Semiconductores
+      - "QCOM"   # Qualcomm — Semiconductores
+      - "NOW"    # ServiceNow — Software
+      - "CRM"    # Salesforce — Software
+      - "ORCL"   # Oracle — Software/Cloud
+      - "MA"     # Mastercard — Financieras/Pagos
+      - "SPGI"   # S&P Global — Financieras/Data
+      - "GS"     # Goldman Sachs — Financieras/Banca
+      - "COST"   # Costco — Consumo/Retail
+      - "HD"     # Home Depot — Consumo discrecional
+      - "WMT"    # Walmart — Consumo/Staples
+      - "MCD"    # McDonald's — Consumo/Restaurantes
+      - "GE"     # GE Aerospace — Industriales/Aeroespacial
+      - "UNP"    # Union Pacific — Industriales/Transporte
+      - "HON"    # Honeywell — Industriales
+      - "TMUS"   # T-Mobile US — Comunicaciones/Telecom
     e3_intraday:
       - "SPY"
       - "AAPL"
@@ -90,6 +90,17 @@ data:
     intraday:     # E3 (5-min)
       start: "2026-01-02"
       end:   "2026-03-03"
+
+  # Descarga de datos al entrenar (E1/E2/E3 train_pipeline y DAGs de Airflow).
+  # Comportamiento por defecto: descargar datos nuevos de forma incremental
+  # (solo las fechas faltantes) y acumularlos en el CSV. Override por corrida:
+  # pasar --skip-download a la CLI para usar los datos existentes sin descargar.
+  download:
+    enabled: true          # descargar datos nuevos por defecto al entrenar
+    incremental: true       # true = solo fechas faltantes (desde la última del CSV - overlap); false = período completo
+    overlap_days: 5         # al bajar incremental, re-solicitar los últimos N días (robustez / dedup)
+    daily_period: "10y"     # período de bootstrap cuando el CSV diario aún no existe
+    intraday_period: "60d"  # período de bootstrap cuando el CSV intradía aún no existe
 
 costs:
   # Costos round-trip (entrada+salida). Usar en backtest neto.
@@ -259,7 +270,10 @@ lifecycle:
   promotion:
     auto_promote: false          # Default conservador; habilitar con --auto-promote CLI flag
     first_champion_strategy: "promote"  # Si no hay champion, promover candidato si pasa guardrails
-    min_improvement: 0.0         # Promover si el candidato es al menos tan bueno como el champion (mejora >= 0). Subir para exigir margen.
+    min_improvement: 0.03        # Histéresis: exige +3% de mejora en el score compuesto para promover.
+                                 # No es un gate estadístico (el ruido run-to-run del score es ±30-65%);
+                                 # solo evita el churn por empates. El gate real es la revisión manual
+                                 # (auto_promote=false + dry-run por defecto en promote_candidate).
     require_positive_sharpe: true  # Safety net: candidato debe tener bt_sharpe > 0
 
     # Scoring weights globales (fallback si la estrategia no tiene overrides)

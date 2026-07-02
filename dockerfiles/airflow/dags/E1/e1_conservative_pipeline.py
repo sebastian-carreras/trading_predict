@@ -61,9 +61,10 @@ def download_daily_data(**context):
     sys.path.insert(0, '/opt/airflow')
     
     from src.data.download_daily import download_daily_ohlcv
+    from src.data.ingest import resolve_download_settings
     from src.utils import load_yaml
     from pathlib import Path
-    
+
     root = Path("/opt/airflow")
     config = load_yaml(root / "src/config/base.yaml")
     
@@ -88,11 +89,15 @@ def download_daily_data(**context):
         f"({'se usará para entrenar' if train_with_new_data else 'STAGING: no se usará para entrenar'})"
     )
 
+    # Config-driven: period + incremental desde data.download (base.yaml), igual que la CLI.
+    dl = resolve_download_settings(config, granularity="daily")
     written = download_daily_ohlcv(
         tickers,
         out_dir=out_dir,
-        period="10y",
+        period=dl["period"],
         skip_existing=False,  # Siempre traer datos frescos (merge + dedupe por timestamp)
+        incremental=dl["incremental"],
+        overlap_days=dl["overlap_days"],
     )
 
     context['task_instance'].xcom_push(key='files_downloaded', value=len(written))

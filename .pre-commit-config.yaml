@@ -1,0 +1,26 @@
+# Pre-commit hooks para trading_predict.
+# Objetivo principal: evitar commitear secretos (defensa para el futuro).
+#
+# Activar UNA sola vez (en el entorno del proyecto, ej. conda ia_ceia_18co):
+#   pip install pre-commit detect-secrets
+#   detect-secrets scan > .secrets.baseline   # línea base de "secretos ya conocidos"
+#   pre-commit install                         # engancha los hooks a git
+#
+# A partir de ahí, cada `git commit` corre estos checks automáticamente.
+
+repos:
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: '(\.env\.example$|package-lock\.json$)'
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files   # bloquea archivos enormes por accidente
+        args: ['--maxkb=5000']
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict

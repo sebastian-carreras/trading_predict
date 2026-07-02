@@ -331,7 +331,7 @@ def run_baseline_for_ticker(
         )
         print(f"✓ Registered {ticker} as e3 baseline in lifecycle registry")
     except Exception as exc:
-        print(f"⚠️  Lifecycle registration skipped: {exc}")
+        print(f"⚠️  Registracion en el ciclo de vida salteado: {exc}")
 
     # 12. MLFLOW TRACKING
     if mlflow_enabled and mlflow is not None:

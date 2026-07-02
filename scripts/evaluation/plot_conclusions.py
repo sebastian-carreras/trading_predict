@@ -1,7 +1,7 @@
 """Generate conclusion-level figures for the thesis final chapter.
 
 Reads champion predictions and backtest CSVs from the model registry and
-produces 8 figures in reports/conclusiones/figuras/:
+produces figures in reports/conclusiones/figuras/:
 
     fig_conclusions_roc.png              — ROC curves (1x3 per strategy)
     fig_conclusions_confusion.png        — Confusion matrices (1x3)
@@ -11,6 +11,9 @@ produces 8 figures in reports/conclusiones/figuras/:
     fig_conclusions_underwater.png       — Drawdown underwater chart (1x3)
     fig_conclusions_rolling_ic.png       — Rolling Spearman IC (1x3)
     fig_conclusions_quantile_returns.png — Prediction quintile analysis (1x3)
+    fig_conclusions_cumulative_return.png  — Realized equity / cumulative return (1x3)
+    fig_conclusions_return_distribution.png — Real-return distribution by predicted side (1x3)
+    fig_conclusions_calibration.png      — Predicted vs realized return scatter (1x3)
 
 Usage:
     python -m scripts.evaluation.plot_conclusions
@@ -146,6 +149,46 @@ def _save(fig: plt.Figure, path: Path) -> None:
     fig.savefig(path, bbox_inches="tight")
     plt.close(fig)
     print(f"[OK] {path.relative_to(ROOT)}")
+
+
+# ---------------------------------------------------------------------------
+# Market split (Argentine ``.BA`` tickers vs US tickers)
+# ---------------------------------------------------------------------------
+
+MARKET_LABELS = {
+    "ar": "Mercado Argentino (BYMA)",
+    "us": "Mercado EE.UU. (NYSE / Nasdaq)",
+}
+
+
+def _is_ar_ticker(ticker: str) -> bool:
+    """Argentine (BYMA) tickers carry the ``.BA`` (Buenos Aires) suffix."""
+    return ticker.upper().endswith(".BA")
+
+
+def _filter_by_market(
+    all_data: dict[str, list[dict]], market: str | None,
+) -> dict[str, list[dict]]:
+    """Keep only the tickers of the requested market.
+
+    ``market`` is ``"ar"``, ``"us"`` or ``None`` (no split). Strategies left
+    without any ticker for that market are dropped so the figure only lays out
+    panels that actually have data (e.g. E3 has no Argentine tickers, so its
+    panel disappears from the AR version instead of rendering empty).
+    """
+    if market is None:
+        return all_data
+    want_ar = market == "ar"
+    filtered: dict[str, list[dict]] = {}
+    for strategy, items in all_data.items():
+        sel = [it for it in items if _is_ar_ticker(it["ticker"]) == want_ar]
+        if sel:
+            filtered[strategy] = sel
+    return filtered
+
+
+def _market_suffix(market: str | None) -> str:
+    return "" if market is None else f"_{market}"
 
 
 # ---------------------------------------------------------------------------
@@ -415,16 +458,22 @@ def fig_rolling_ic(all_data: dict[str, list[dict]], out_dir: Path) -> None:
 # Figure 6: Quantile return analysis
 # ---------------------------------------------------------------------------
 
-def fig_quantile_returns(all_data: dict[str, list[dict]], out_dir: Path) -> None:
+def fig_quantile_returns(
+    all_data: dict[str, list[dict]], out_dir: Path, market: str | None = None,
+) -> None:
     plt.rcParams.update(STYLE)
     n_quantiles = 5
-    fig, axes = plt.subplots(1, 3, figsize=(14, 5))
-    fig.suptitle(
-        "Retorno Medio por Cuantil de Prediccion — Validacion del Skill de Ranking",
-        fontsize=16, fontweight="bold",
-    )
+    data = _filter_by_market(all_data, market)
+    if not data:
+        return
+    fig, axes = plt.subplots(1, len(data), figsize=(4.7 * len(data), 5), squeeze=False)
+    axes = axes[0]
+    title = "Retorno Medio por Cuantil de Prediccion — Validacion del Skill de Ranking"
+    if market:
+        title += f"\n{MARKET_LABELS[market]}"
+    fig.suptitle(title, fontsize=16, fontweight="bold")
 
-    for ax, (strategy, items) in zip(axes, all_data.items()):
+    for ax, (strategy, items) in zip(axes, data.items()):
         cfg = STRATEGY_CONFIG[strategy]
         color = cfg["color"]
 
@@ -464,7 +513,221 @@ def fig_quantile_returns(all_data: dict[str, list[dict]], out_dir: Path) -> None
         ax.legend(fontsize=11)
 
     fig.tight_layout()
-    _save(fig, out_dir / "fig_conclusions_quantile_returns.png")
+    _save(fig, out_dir / f"fig_conclusions_quantile_returns{_market_suffix(market)}.png")
+
+
+# ---------------------------------------------------------------------------
+# Figure 7: Cumulative realized return (equity curve)
+# ---------------------------------------------------------------------------
+
+def fig_cumulative_return(
+    all_data: dict[str, list[dict]], out_dir: Path, market: str | None = None,
+) -> None:
+    """Realized cumulative return of following the champion signals over time.
+
+    A direct, intuitive view of the *real* return (growth of base-100 capital),
+    complementing the ranking-skill view of the quantile-returns figure.
+    """
+    plt.rcParams.update(STYLE)
+    data = _filter_by_market(all_data, market)
+    if not data:
+        return
+    fig, axes = plt.subplots(1, len(data), figsize=(5.0 * len(data), 5), squeeze=False)
+    axes = axes[0]
+    title = "Retorno Acumulado Real — Curva de Capital de los Modelos Champion"
+    if market:
+        title += f"\n{MARKET_LABELS[market]}"
+    fig.suptitle(title, fontsize=16, fontweight="bold")
+
+    for ax, (strategy, items) in zip(axes, data.items()):
+        cfg = STRATEGY_CONFIG[strategy]
+        color = cfg["color"]
+        eq_series: list[pd.Series] = []
+
+        for item in items:
+            bt = item["bt"].copy()
+            eq = bt.set_index("timestamp")["equity_norm"] * 100.0
+            ax.plot(eq.index, eq.values, color=color, alpha=0.22, linewidth=0.9)
+            eq_series.append(eq.rename(item["ticker"]))
+
+        if eq_series:
+            combined = pd.concat(eq_series, axis=1).sort_index().ffill()
+            avg_eq = combined.mean(axis=1).dropna()
+            ax.plot(avg_eq.index, avg_eq.values, color=color, linewidth=2.6,
+                    label="Media tickers", zorder=5)
+            final = float(avg_eq.iloc[-1]) if len(avg_eq) else 100.0
+            ax.text(
+                0.03, 0.30,
+                f"Capital final medio:\n{final:.0f}  ({final - 100:+.0f}%)",
+                transform=ax.transAxes, fontsize=11, va="center", ha="left",
+                bbox=dict(boxstyle="round", fc="white", ec=color, alpha=0.85),
+            )
+
+        ax.axhline(100, color="black", linewidth=1, linestyle="--",
+                   alpha=0.7, label="Capital inicial (100)")
+        ax.set_title(cfg["label"].replace("\n", " "), fontsize=13, fontweight="bold")
+        ax.set_ylabel("Capital (base 100)")
+        ax.legend(fontsize=10, loc="upper left")
+        ax.tick_params(axis="x", rotation=30)
+
+    fig.tight_layout()
+    _save(fig, out_dir / f"fig_conclusions_cumulative_return{_market_suffix(market)}.png")
+
+
+# ---------------------------------------------------------------------------
+# Figure 8: Real-return distribution by predicted direction
+# ---------------------------------------------------------------------------
+
+def fig_return_distribution(
+    all_data: dict[str, list[dict]], out_dir: Path, market: str | None = None,
+) -> None:
+    """Full distribution of the realized return split by the model's call.
+
+    Violin per group ("predice baja" vs "predice sube") shows the whole shape
+    of the real return conditioned on the prediction, not just the binned mean.
+    """
+    plt.rcParams.update(STYLE)
+    data = _filter_by_market(all_data, market)
+    if not data:
+        return
+    fig, axes = plt.subplots(1, len(data), figsize=(5.0 * len(data), 5), squeeze=False)
+    axes = axes[0]
+    title = "Distribucion del Retorno Real segun la Direccion Predicha"
+    if market:
+        title += f"\n{MARKET_LABELS[market]}"
+    fig.suptitle(title, fontsize=16, fontweight="bold")
+
+    for ax, (strategy, items) in zip(axes, data.items()):
+        cfg = STRATEGY_CONFIG[strategy]
+        color = cfg["color"]
+
+        frames = [
+            item["preds"].dropna(subset=["y_true", "y_pred"])[["y_pred", "y_true"]]
+            for item in items
+        ]
+        if not frames:
+            ax.set_visible(False)
+            continue
+        pooled = pd.concat(frames, ignore_index=True)
+
+        down = pooled.loc[pooled["y_pred"] <= 0, "y_true"].values * 100.0
+        up = pooled.loc[pooled["y_pred"] > 0, "y_true"].values * 100.0
+
+        order = [
+            ("Predice baja\n(pred <= 0)", down, "#EF5350"),
+            ("Predice sube\n(pred > 0)", up, color),
+        ]
+        data, labels, body_colors, positions = [], [], [], []
+        for i, (lab, arr, c) in enumerate(order, start=1):
+            if len(arr) >= 5:
+                data.append(arr)
+                labels.append(f"{lab}\nn={len(arr):,}")
+                body_colors.append(c)
+                positions.append(i)
+        if not data:
+            ax.set_visible(False)
+            continue
+
+        parts = ax.violinplot(data, positions=positions, widths=0.7,
+                              showmedians=True, showextrema=False)
+        for body, c in zip(parts["bodies"], body_colors):
+            body.set_facecolor(c)
+            body.set_alpha(0.55)
+            body.set_edgecolor("black")
+            body.set_linewidth(0.8)
+        if "cmedians" in parts:
+            parts["cmedians"].set_color("black")
+            parts["cmedians"].set_linewidth(1.4)
+
+        for pos_i, arr in zip(positions, data):
+            m = float(np.mean(arr))
+            ax.scatter([pos_i], [m], color="white", edgecolor="black",
+                       zorder=6, s=50)
+            ax.annotate(f"media={m:.2f}%", (pos_i, m), textcoords="offset points",
+                        xytext=(12, -2), fontsize=10, fontweight="bold")
+
+        ax.axhline(0, color="gray", linestyle="--", linewidth=1.2, alpha=0.8)
+
+        allv = np.concatenate(data)
+        lo, hi = np.percentile(allv, [1, 99])
+        pad = (hi - lo) * 0.10 + 1e-9
+        ax.set_ylim(lo - pad, hi + pad)
+        ax.set_xticks(positions)
+        ax.set_xticklabels(labels, fontsize=10)
+        ax.set_xlim(0.4, len(order) + 0.6)
+        ax.set_ylabel("Retorno real a horizonte (%)")
+        ax.set_title(cfg["label"].replace("\n", " "), fontsize=13, fontweight="bold")
+
+    fig.tight_layout()
+    _save(fig, out_dir / f"fig_conclusions_return_distribution{_market_suffix(market)}.png")
+
+
+# ---------------------------------------------------------------------------
+# Figure 9: Calibration — predicted vs realized return
+# ---------------------------------------------------------------------------
+
+def fig_calibration_scatter(all_data: dict[str, list[dict]], out_dir: Path) -> None:
+    """Scatter of predicted vs realized return with an OLS fit.
+
+    Shows whether the *magnitude* of the predicted return tracks the real one
+    (slope/correlation), a complementary angle to the quantile-rank view.
+    """
+    plt.rcParams.update(STYLE)
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    fig.suptitle(
+        "Calibracion — Retorno Predicho vs Retorno Real",
+        fontsize=16, fontweight="bold",
+    )
+
+    for ax, (strategy, items) in zip(axes, all_data.items()):
+        cfg = STRATEGY_CONFIG[strategy]
+        color = cfg["color"]
+
+        frames = [
+            item["preds"].dropna(subset=["y_true", "y_pred"])[["y_pred", "y_true"]]
+            for item in items
+        ]
+        if not frames:
+            ax.set_visible(False)
+            continue
+        pooled = pd.concat(frames, ignore_index=True)
+        x = pooled["y_pred"].values * 100.0
+        y = pooled["y_true"].values * 100.0
+        if len(x) < 10:
+            ax.set_visible(False)
+            continue
+
+        ax.scatter(x, y, s=6, alpha=0.12, color=color, edgecolors="none",
+                   rasterized=True)
+
+        slope, intercept = np.polyfit(x, y, 1)
+        r = float(np.corrcoef(x, y)[0, 1])
+        xlo, xhi = np.percentile(x, [1, 99])
+        ylo, yhi = np.percentile(y, [1, 99])
+        xs = np.linspace(xlo, xhi, 100)
+        ax.plot(xs, slope * xs + intercept, color="black", linewidth=2.2,
+                label=f"OLS: y = {slope:.2f}x + {intercept:.2f}")
+
+        lims = [min(xlo, ylo), max(xhi, yhi)]
+        ax.plot(lims, lims, color="gray", linestyle=":", linewidth=1.4,
+                label="Identidad (y=x)")
+        ax.axhline(0, color="gray", linewidth=0.8, alpha=0.5)
+        ax.axvline(0, color="gray", linewidth=0.8, alpha=0.5)
+
+        ax.text(
+            0.04, 0.95, f"r = {r:.3f}\nR2 = {r ** 2:.3f}\npend = {slope:.2f}",
+            transform=ax.transAxes, va="top", fontsize=11,
+            bbox=dict(boxstyle="round", fc="white", ec=color, alpha=0.85),
+        )
+        ax.set_xlim(xlo, xhi)
+        ax.set_ylim(ylo, yhi)
+        ax.set_xlabel("Retorno predicho (%)")
+        ax.set_ylabel("Retorno real (%)")
+        ax.set_title(cfg["label"].replace("\n", " "), fontsize=13, fontweight="bold")
+        ax.legend(fontsize=9, loc="lower right")
+
+    fig.tight_layout()
+    _save(fig, out_dir / "fig_conclusions_calibration.png")
 
 
 # ---------------------------------------------------------------------------
@@ -487,7 +750,12 @@ def main() -> None:
     fig_confusion_matrix(all_data, OUT_DIR)
     fig_underwater(all_data, OUT_DIR)
     fig_rolling_ic(all_data, OUT_DIR)
-    fig_quantile_returns(all_data, OUT_DIR)
+    # Estas tres figuras se generan separadas por mercado: argentino (.BA) vs EE.UU.
+    for market in ("ar", "us"):
+        fig_quantile_returns(all_data, OUT_DIR, market=market)
+        fig_cumulative_return(all_data, OUT_DIR, market=market)
+        fig_return_distribution(all_data, OUT_DIR, market=market)
+    fig_calibration_scatter(all_data, OUT_DIR)
     for strategy_key, items in all_data.items():
         if items:
             fig_monthly_heatmap(items, STRATEGY_CONFIG[strategy_key], OUT_DIR, strategy_key)

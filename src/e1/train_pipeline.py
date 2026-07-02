@@ -720,7 +720,8 @@ def run_e1_walk_forward(  # Walk-forward completo
         last_std_y = std_y
 
         ts_test = ts[test_idx]  # Timestamps de test
-        window_label = f"{ts_test[0].date()} -> {ts_test[-1].date()}"  # Etiqueta de ventana
+        ts_train = ts[train_idx]  # Timestamps de train (para log de ventana completa)
+        window_label = f"{ts_test[0].date()} -> {ts_test[-1].date()}"  # Etiqueta de ventana (test; usada por plots/CSV)
 
         # Guardar payload del último fold (modelo + scalers) para inferencia.
         # Elegimos el último fold porque es el más reciente (más relevante operativamente).
@@ -774,8 +775,15 @@ def run_e1_walk_forward(  # Walk-forward completo
 
         ic_str = "nan" if np.isnan(ic) else f"{ic:.3f}"  # IC formateado
         sharpe_str = "nan" if np.isnan(sharpe) else f"{sharpe:.2f}"  # Sharpe formateado
+        # Log de fold: mostramos train Y test para dejar explícito que la ventana
+        # es CRECIENTE (expanding) — el train siempre arranca en la misma fecha y
+        # solo crece su fin; sin esto, ver únicamente el test da la falsa impresión
+        # de ventana deslizante.
         print(
-            f"    Fold {fold_idx}: {window_label} | MAE={mae:.4f} IC={ic_str} Sharpe={sharpe_str}"  # Log por fold
+            f"    Fold {fold_idx}: "
+            f"train[{ts_train[0].date()} -> {ts_train[-1].date()}] n={len(train_idx)} (expanding) | "
+            f"test[{window_label}] n={len(test_idx)} | "
+            f"MAE={mae:.4f} IC={ic_str} Sharpe={sharpe_str}"
         )
 
         bt.to_csv(out_dir / f"{ticker}_fold{fold_idx}_backtest.csv")  # Guardar backtest del fold
@@ -1074,7 +1082,7 @@ def run_e1_for_ticker(
                         feature_names=list(feat_names),
                         hyperparams=hp_info,
                     )
-                    print(f"  ✓ Registered {ticker} as candidate in lifecycle registry")
+                    print(f"  ✓ {ticker} registrado como candidato en el registro de ciclo de vida")
 
                     # Auto-promotion: compare candidate vs champion
                     if auto_promote:
@@ -1093,7 +1101,7 @@ def run_e1_for_ticker(
                 else:
                     print(f"  ⚠️  Guardrails failed for {ticker}: {errors}")
             except Exception as exc:
-                print(f"  Lifecycle registration skipped: {exc}")
+                print(f"  Registracion en el ciclo de vida salteado: {exc}")
 
         pd.Series(summary).to_csv(out_dir / f"{ticker}_summary.csv")  # Guardar summary per-ticker
         return summary  # Retornar resumen walk-forward
@@ -1363,7 +1371,7 @@ def run_e1_for_ticker(
                     feature_names=list(feat_names),
                     hyperparams=hp_info,
                 )
-                print(f"  ✓ Registered {ticker} as candidate in lifecycle registry")
+                print(f"  ✓ {ticker} registrado como candidato en el registro de ciclo de vida")
 
                 # Auto-promotion: compare candidate vs champion
                 if auto_promote:
@@ -1382,7 +1390,7 @@ def run_e1_for_ticker(
             else:
                 print(f"  ⚠️  Guardrails failed for {ticker}: {errors}")
         except Exception as exc:
-            print(f"  Lifecycle registration skipped: {exc}")
+            print(f"  Registracion en el ciclo de vida salteado: {exc}")
 
     return summary  # Retornar resumen
 
@@ -1407,19 +1415,30 @@ def main() -> None:
         help="Automatically promote candidate to champion if it beats the current champion",
     )
     parser.add_argument(
-        "--refresh-data",
+        "--skip-download",
         action="store_true",
-        help="Descargar y limpiar datos antes de entrenar (por defecto usa datos existentes)",
+        help="No descargar datos; usar los existentes (por defecto se descargan datos nuevos, ver data.download en base.yaml)",
+    )
+    parser.add_argument(
+        "--download-only",
+        action="store_true",
+        help="Descargar datos y salir sin entrenar",
     )
     parser.add_argument(
         "--use-latest-data",
         action="store_true",
         help=(
-            "Descargar datos frescos y entrenar con el rango extendido hasta hoy "
+            "Entrenar con el rango extendido hasta hoy "
             "(ignora data.training_window.daily.end del config; start se preserva)."
         ),
     )
     args = parser.parse_args()  # Parseo de argumentos
+
+    if args.skip_download and args.use_latest_data:
+        print(
+            "⚠️  --skip-download + --use-latest-data: se extiende la ventana hasta hoy "
+            "pero no se descargan datos frescos; puede no haber datos recientes."
+        )
 
     root = project_root()  # Directorio raíz del proyecto
     cfg_path = Path(args.config)  # Path del config
@@ -1468,35 +1487,18 @@ def main() -> None:
     clean_dir = root / "data" / "clean"  # Directorio de datos limpios
 
     # ------------------------------------------------------------------
-    # Descarga y limpieza de datos
+    # Descarga y limpieza (config-driven: data.download; opt-out con --skip-download)
     # ------------------------------------------------------------------
-    if args.refresh_data or args.use_latest_data:
-        print("\nDescargando datos...")
-        try:
-            from ..data.download_daily import download_daily_ohlcv
-            written = download_daily_ohlcv(
-                tickers, out_dir=raw_dir, period="10y",
-                skip_existing=False,
-            )
-            print(f"✓ Descargados/actualizados {len(written)} archivos\n")
-        except Exception as exc:
-            print(f"⚠️  Descarga: {exc}\n")
+    from ..data.ingest import refresh_data_for_training
+    refresh_data_for_training(
+        config, tickers, granularity="daily",
+        skip_download=args.skip_download, root=root,
+        raw_dir=raw_dir, clean_dir=clean_dir,
+    )
 
-        print("Limpiando datos...")
-        try:
-            from ..data.clean_daily import process_daily_data_with_cleaning
-            reports = process_daily_data_with_cleaning(
-                raw_dir=raw_dir, clean_dir=clean_dir,
-                strategy="forward_fill", min_days=252,
-                remove_zero_volume=True, verbose=False,
-                tickers=list(dict.fromkeys(tickers)),
-            )
-            cleaned = sum(1 for r in reports.values() if r.get("status") == "cleaned")
-            print(f"✓ Limpiados: {cleaned}\n")
-        except Exception as exc:
-            print(f"⚠️  Limpieza: {exc}\n")
-    else:
-        print("\nUsando datos existentes (--refresh-data o --use-latest-data para actualizar)\n")
+    if args.download_only:
+        print("\n--download-only: datos descargados, sin entrenar.")
+        return
 
     out_base = root / "runs" / "e1_conservative" / datetime.now().strftime("%Y%m%d_%H%M%S")  # Output run
     ensure_dir(out_base)  # Crear folder de salida

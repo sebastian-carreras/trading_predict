@@ -850,7 +850,7 @@ def main():
                         run_dir=str(ticker_out_dir.relative_to(root)),
                         metrics=summary, variant="e1_simple",
                     )
-                    print(f"  ✓ Registered {ticker} as candidate in lifecycle registry")
+                    print(f"  ✓ {ticker} registrado como candidato en el registro de ciclo de vida")
 
                     # Auto-promotion: compare candidate vs champion
                     if args.auto_promote:
@@ -869,7 +869,7 @@ def main():
                 else:
                     print(f"  ⚠️  Guardrails failed for {ticker}: {errors}")
             except Exception as lc_exc:
-                print(f"  Lifecycle registration skipped: {lc_exc}")
+                print(f"  Registracion en el ciclo de vida salteado: {lc_exc}")
         except Exception as exc:
             # Si falla, loguear error pero continuar con siguiente ticker
             print(f"  ❌ Error: {exc}\n")

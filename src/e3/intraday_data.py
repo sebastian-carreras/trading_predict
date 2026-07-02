@@ -18,13 +18,13 @@ en lugar de sobreescribir. Cada ejecución agrega solo las barras nuevas.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
 import pandas as pd
 
-from ..utils import ensure_dir
+from ..utils import ensure_dir, last_csv_timestamp
 
 try:
     from dotenv import load_dotenv
@@ -41,12 +41,18 @@ _OHLCV_COLS = ["timestamp", "open", "high", "low", "close", "adj_close", "volume
 # Helpers privados: una función por fuente
 # ---------------------------------------------------------------------------
 
-def _fetch_alpaca(ticker: str) -> pd.DataFrame | None:
+def _fetch_alpaca(ticker: str, start: datetime | None = None) -> pd.DataFrame | None:
     """Descarga barras de 5-min desde Alpaca Markets (histórico completo ~2 años).
 
     Requiere variables de entorno:
         ALPACA_API_KEY    — API key de Alpaca
         ALPACA_SECRET_KEY — Secret key de Alpaca
+
+    Args:
+        ticker: Símbolo a descargar.
+        start: Fecha de inicio (UTC-aware). Si es None, usa ~2 años atrás
+            (bootstrap). En modo incremental se pasa la última fecha del CSV
+            para bajar solo barras nuevas.
 
     Retorna DataFrame con columnas estándar OHLCV indexado por timestamp UTC,
     o None si las credenciales no están disponibles o la descarga falla.
@@ -67,8 +73,9 @@ def _fetch_alpaca(ticker: str) -> pd.DataFrame | None:
         return None
 
     try:
-        # Fecha de inicio: 2 años atrás para maximizar historia disponible
-        start = datetime(datetime.now().year - 2, 1, 1, tzinfo=timezone.utc)
+        # Fecha de inicio: la provista (incremental) o 2 años atrás (bootstrap).
+        if start is None:
+            start = datetime(datetime.now().year - 2, 1, 1, tzinfo=timezone.utc)
 
         client = StockHistoricalDataClient(api_key, secret_key)
         request = StockBarsRequest(
@@ -129,8 +136,17 @@ def _fetch_iol_5m(ticker: str) -> pd.DataFrame | None:
     return None
 
 
-def _fetch_yfinance(ticker: str, period: str = "60d", interval: str = "5m") -> pd.DataFrame | None:
+def _fetch_yfinance(
+    ticker: str, period: str = "60d", interval: str = "5m", start: str | None = None
+) -> pd.DataFrame | None:
     """Descarga barras de 5-min desde yfinance (límite ~60 días de historia).
+
+    Args:
+        ticker: Símbolo a descargar.
+        period: Período usado cuando no se pasa `start` (default "60d").
+        interval: Intervalo de barras (default "5m").
+        start: Fecha de inicio "YYYY-MM-DD" (incremental). yfinance intradía solo
+            permite ~60 días de historia, así que start debe caer dentro de ese tope.
 
     Retorna DataFrame con columnas estándar OHLCV, o None si falla.
     """
@@ -141,14 +157,24 @@ def _fetch_yfinance(ticker: str, period: str = "60d", interval: str = "5m") -> p
         return None
 
     try:
-        raw = yf.download(
-            tickers=ticker,
-            period=period,
-            interval=interval,
-            auto_adjust=False,
-            progress=False,
-            threads=False,
-        )
+        if start:
+            raw = yf.download(
+                tickers=ticker,
+                start=start,
+                interval=interval,
+                auto_adjust=False,
+                progress=False,
+                threads=False,
+            )
+        else:
+            raw = yf.download(
+                tickers=ticker,
+                period=period,
+                interval=interval,
+                auto_adjust=False,
+                progress=False,
+                threads=False,
+            )
         if raw is None or raw.empty:
             return None
 
@@ -198,6 +224,8 @@ def download_ohlcv_5m(
     period: str = "60d",
     interval: str = "5m",
     accumulate: bool = True,
+    incremental: bool = False,
+    overlap_days: int = 5,
 ) -> list[Path]:
     """Descarga barras OHLCV de 5-min y acumula en CSV existente.
 
@@ -213,6 +241,10 @@ def download_ohlcv_5m(
         accumulate: Si True (default), mergea con datos existentes en lugar de
                     sobreescribir. Permite construir un historial largo ejecutando
                     periódicamente.
+        incremental: Si True y el CSV existe, descarga solo desde la última barra
+                    registrada (menos ``overlap_days``) en vez del histórico completo
+                    (evita re-bajar ~2 años de Alpaca en cada corrida).
+        overlap_days: Días de solapamiento re-solicitados en modo incremental.
 
     Returns:
         Lista de paths CSV escritos/actualizados.
@@ -225,16 +257,30 @@ def download_ohlcv_5m(
     for ticker in tickers:
         print(f"\nDescargando {ticker} (5-min)...")
 
+        out_path = out_dir / f"{ticker}_5m.csv"
+
+        # Descarga incremental: si el CSV existe, arrancar desde la última barra
+        # (menos overlap). Bootstrap con el histórico completo si no existe.
+        start_dt = None
+        start_str = None
+        if incremental:
+            last_ts = last_csv_timestamp(out_path)
+            if last_ts is not None:
+                start_ts = last_ts - timedelta(days=overlap_days)
+                start_dt = start_ts.to_pydatetime()
+                start_str = start_ts.strftime("%Y-%m-%d")
+                print(f"  ↕️  Incremental: desde {start_str}")
+
         # Elegir cadena de fuentes según mercado
         if _is_argentino(ticker):
             sources = [
                 ("IOL",     lambda t=ticker: _fetch_iol_5m(t)),
-                ("yfinance", lambda t=ticker: _fetch_yfinance(t, period, interval)),
+                ("yfinance", lambda t=ticker: _fetch_yfinance(t, period, interval, start=start_str)),
             ]
         else:
             sources = [
-                ("Alpaca",   lambda t=ticker: _fetch_alpaca(t)),
-                ("yfinance", lambda t=ticker: _fetch_yfinance(t, period, interval)),
+                ("Alpaca",   lambda t=ticker: _fetch_alpaca(t, start=start_dt)),
+                ("yfinance", lambda t=ticker: _fetch_yfinance(t, period, interval, start=start_str)),
             ]
 
         df_new: pd.DataFrame | None = None
@@ -249,8 +295,6 @@ def download_ohlcv_5m(
         if df_new is None or df_new.empty:
             print(f"  ✗ Sin datos para {ticker} en ninguna fuente.")
             continue
-
-        out_path = out_dir / f"{ticker}_5m.csv"
 
         if accumulate and out_path.exists():
             df_existing = pd.read_csv(out_path)

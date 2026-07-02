@@ -111,7 +111,7 @@ La ejecución de E2 guarda artefactos por ticker en `runs/e2_moderate/<timestamp
 - `*_predictions.csv`, `*_summary.csv` y el modelo entrenado `*_model.pth`.
 
 **E3 - Intradía (Ensemble)**```bash
-python -m src.train_e3_pipeline --mode run --tickers SPY
+python -m src.e3.train_pipeline --tickers SPY
 ```
 → Ver [README_E3.md](README_E3.md)
 
@@ -127,7 +127,7 @@ python -m src.train_e3_pipeline --mode run --tickers SPY
  - El MAE mide el error promedio absoluto, siendo más robusto ante outliers, mientras que el 
  - RMSE penaliza más los errores grandes debido a la elevación al cuadrado.
 - Directional Accuracy: % de predicciones con signo correcto
- - Directional Accuracy mide el porcentaje de predicciones donde el modelo acierta el signo correcto del movimiento (alza o baja), independientemente de la magnitud. Accuracy superior al 50% indica capacidad predictiva.
+ - Mide el porcentaje de predicciones donde el modelo acierta el signo correcto del movimiento (alza o baja), independientemente de la magnitud. Accuracy superior al 50% indica capacidad predictiva.
 - IC (Information Coefficient): correlación predicción vs realidad
  - Information Coefficient (IC) representa la correlación de Spearman entre las predicciones del modelo y los retornos reales, evaluando la capacidad del modelo de rankear correctamente los activos. IC > 0.05 suele considerarse significativo en finanzas. IC < 0 indica overfitting o falta de capacidad predictiva.
 
@@ -884,11 +884,11 @@ La organización separa claramente **datos → código → resultados**, siguien
 ```
 
 **Para E3 intradía (pipeline automatizado):**```bash
-# Paso 1: Descarga OHLCV 5-min → data/raw/intraday/
-python -m src.train_e3_pipeline --mode download
+# Paso 1 (opcional): solo descarga OHLCV 5-min → data/raw/intraday/
+python -m src.e3.train_pipeline --download-only
 
-# Paso 2: Entrena + backtest → runs/e3_intraday/<timestamp>/
-python -m src.train_e3_pipeline --mode run
+# Paso 2: Entrena + backtest (descarga datos nuevos por defecto) → runs/e3_intraday/<timestamp>/
+python -m src.e3.train_pipeline
 ```
 
 ### Ventajas de esta arquitectura
@@ -954,7 +954,7 @@ trading_predict/
 ```
 
 **Entrypoints prácticos (baseline)**
-- E3 (intradía): `python -m src.train_e3_pipeline --mode download` y luego `python -m src.train_e3_pipeline --mode run`.
+- E3 (intradía): `python -m src.e3.train_pipeline --download-only` (opcional) y luego `python -m src.e3.train_pipeline`.
 
 **Entry points mínimos (orden recomendado)**
 1. `src/data/download.py` → baja OHLCV + SPY

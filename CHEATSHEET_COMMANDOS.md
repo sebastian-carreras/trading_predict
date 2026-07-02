@@ -201,12 +201,14 @@ python -m src.e1.train_all
 # Entrena e1_conservative solo para AAPL y MSFT
 python -m src.e1.train_all --tickers AAPL,MSFT
 
-# Entrena e1_conservative para todos los tickers del universo (sin refrescar datos)
+# Entrena e1_conservative para todo el universo (descarga datos nuevos incrementales por defecto)
 python -m src.e1.train_pipeline
-# Entrena e1_conservative solo para AAPL
+# Entrena e1_conservative solo para AAPL (descarga incremental + entrena)
 python -m src.e1.train_pipeline --tickers AAPL
-# Descarga datos frescos de yfinance antes de entrenar para AAPL y MSFT
-python -m src.e1.train_pipeline --tickers AAPL,MSFT --refresh-data
+# Entrena sin descargar: usa los datos existentes en disco
+python -m src.e1.train_pipeline --tickers AAPL,MSFT --skip-download
+# Solo descarga datos nuevos, sin entrenar
+python -m src.e1.train_pipeline --tickers AAPL,MSFT --download-only
 # Entrena AAPL y promueve automáticamente el candidate a champion si supera el umbral
 python -m src.e1.train_pipeline --tickers AAPL --auto-promote
 
@@ -222,12 +224,14 @@ python -m src.e1.train_simple_pipeline --auto-promote
 ### E2 — Moderate / Baseline
 
 ```bash
-# Entrena e2_moderate para cada ticker del universo (sin refrescar datos)
+# Entrena e2_moderate para todo el universo (descarga datos nuevos incrementales por defecto)
 python -m src.e2.train_pipeline
-# Entrena e2_moderate solo para NVDA y GOOGL
+# Entrena e2_moderate solo para NVDA y GOOGL (descarga incremental + entrena)
 python -m src.e2.train_pipeline --tickers NVDA,GOOGL
-# Descarga datos frescos de yfinance antes de entrenar para NVDA y GOOGL
-python -m src.e2.train_pipeline --tickers NVDA,GOOGL --refresh-data
+# Entrena sin descargar: usa los datos existentes en disco
+python -m src.e2.train_pipeline --tickers NVDA,GOOGL --skip-download
+# Solo descarga datos nuevos, sin entrenar
+python -m src.e2.train_pipeline --tickers NVDA,GOOGL --download-only
 # Entrena NVDA y GOOGL y promueve automáticamente los candidates que superen el umbral
 python -m src.e2.train_pipeline --tickers NVDA,GOOGL --auto-promote
 
@@ -239,19 +243,21 @@ python -m src.e2.train_baseline --tickers NVDA
 
 ```bash
 # Solo descarga datos intradía (barras de 5 min) para el universo completo sin entrenar
-python -m src.e3.train_pipeline --mode download
-# Descarga datos intradía para los tickers SPY, AAPL, NVDA y QQQ
-python -m src.e3.train_pipeline --mode download --tickers SPY,AAPL,NVDA,QQQ
+python -m src.e3.train_pipeline --download-only
+# Descarga datos intradía para los tickers SPY, AAPL, NVDA y QQQ (sin entrenar)
+python -m src.e3.train_pipeline --download-only --tickers SPY,AAPL,NVDA,QQQ
 
-# Entrena e3_intraday para todos los tickers del universo (datos ya descargados)
+# Entrena e3_intraday para todo el universo (descarga datos nuevos incrementales por defecto)
 python -m src.e3.train_pipeline
 # Entrena e3_intraday solo para SPY y AAPL
 python -m src.e3.train_pipeline --tickers SPY,AAPL
-# Descarga datos intradía frescos hasta hoy y entrena e3_intraday (rango extendido)
+# Entrena sin descargar: usa los CSVs ya presentes en data/raw/intraday
+python -m src.e3.train_pipeline --tickers SPY,AAPL --skip-download
+# Entrena con rango extendido hasta hoy (extiende la ventana; la descarga es default)
 python -m src.e3.train_pipeline --tickers SPY,AAPL --use-latest-data
 # Entrena SPY y AAPL y promueve automáticamente los candidates que superen el composite score
 python -m src.e3.train_pipeline --tickers SPY,AAPL --auto-promote
-# Combina datos frescos + auto-promoción para SPY
+# Combina rango extendido + auto-promoción para SPY
 python -m src.e3.train_pipeline --tickers SPY --use-latest-data --auto-promote
 
 # Entrena el baseline de E3 para SPY (lee CSVs ya descargados en data/raw/intraday)
@@ -371,13 +377,13 @@ python scripts/optimization/optimize_e3_hyperparameters.py --n_trials 20 --batch
 ```bash
 # Indica al pipeline de E1 dónde leer los mejores hiperparámetros por ticker encontrados por Optuna
 export E1_TUNED_PARAMS_PATH=reports/hyperparameter_optimization/e1_tuned_params_by_ticker.yaml
-# Entrena E1 para AAPL y MSFT usando los hiperparámetros tuneados + datos frescos
-python -m src.e1.train_pipeline --tickers AAPL,MSFT --refresh-data
+# Entrena E1 para AAPL y MSFT usando los hiperparámetros tuneados (descarga datos nuevos por defecto)
+python -m src.e1.train_pipeline --tickers AAPL,MSFT
 
 # Indica al pipeline de E2 dónde leer los mejores hiperparámetros por ticker encontrados por Optuna
 export E2_TUNED_PARAMS_PATH=reports/hyperparameter_optimization/e2_tuned_params_by_ticker.yaml
-# Entrena E2 para NVDA y GOOGL usando los hiperparámetros tuneados + datos frescos
-python -m src.e2.train_pipeline --tickers NVDA,GOOGL --refresh-data
+# Entrena E2 para NVDA y GOOGL usando los hiperparámetros tuneados (descarga datos nuevos por defecto)
+python -m src.e2.train_pipeline --tickers NVDA,GOOGL
 
 # Path de tuneo per-ticker de E3 ya viene configurado en base.yaml (strategies.e3_intraday.tuned_params_path)
 # Forzar override apuntando a un YAML alternativo:
@@ -427,8 +433,8 @@ tail -n 20 reports/hyperparameter_optimization/e3_all_trials.csv
 ### E1
 
 ```bash
-# Paso 1: entrena e1_conservative para AAPL descargando datos frescos → genera un nuevo candidate en el registry
-python -m src.e1.train_pipeline --tickers AAPL --refresh-data
+# Paso 1: entrena e1_conservative para AAPL (descarga datos nuevos por defecto) → genera un nuevo candidate en el registry
+python -m src.e1.train_pipeline --tickers AAPL
 # Paso 2: verifica en el dashboard que las métricas del candidate son razonables antes de promover
 python -m src.dashboard.checker --strategy e1_conservative
 # Paso 3: dry-run de promoción para ver si el candidate supera al champion (sin modificar el registry)
@@ -440,8 +446,8 @@ python -m scripts.evaluation.promote_candidate --strategy e1 --tickers AAPL --ex
 ### E2
 
 ```bash
-# Paso 1: entrena e2_moderate para NVDA y GOOGL descargando datos frescos → nuevos candidates
-python -m src.e2.train_pipeline --tickers NVDA,GOOGL --refresh-data
+# Paso 1: entrena e2_moderate para NVDA y GOOGL (descarga datos nuevos por defecto) → nuevos candidates
+python -m src.e2.train_pipeline --tickers NVDA,GOOGL
 # Paso 2: verifica métricas del candidate en el dashboard
 python -m src.dashboard.checker --strategy e2_moderate
 # Paso 3: dry-run de promoción para todos los candidates de E2
@@ -453,9 +459,9 @@ python -m scripts.evaluation.promote_candidate --strategy e2 --execute
 ### E3
 
 ```bash
-# Paso 1a: descarga datos intradía (barras 5 min) para SPY y AAPL
-python -m src.e3.train_pipeline --mode download --tickers SPY,AAPL
-# Paso 1b: entrena e3_intraday para SPY y AAPL con los datos descargados → nuevos candidates
+# Paso 1a: (opcional) solo descarga datos intradía (barras 5 min) para SPY y AAPL
+python -m src.e3.train_pipeline --download-only --tickers SPY,AAPL
+# Paso 1b: entrena e3_intraday para SPY y AAPL (descarga datos nuevos por defecto) → nuevos candidates
 python -m src.e3.train_pipeline --tickers SPY,AAPL
 # Paso 2: verifica métricas del candidate en el dashboard
 python -m src.dashboard.checker --strategy e3_intraday
@@ -503,6 +509,8 @@ python -m scripts.evaluation.compare_e3_models
 python -m scripts.evaluation.compare_e1_models --baseline-run runs/e1_baseline/20251015_120000 --model-run runs/e1_conservative/20251020_153000
 # Compara versiones históricas de E1 (e1_simple vs e1_conservative)
 python -m scripts.evaluation.compare_e1_versions
+# Compara champion vs baseline (E1 y E2) restringido al universo de acciones de EEUU (sin tickers .BA)
+python -m scripts.evaluation.compare_us_only
 ```
 
 ### Comparativo cross-strategy
@@ -518,14 +526,19 @@ python -m scripts.evaluation.stability_analysis
 python -m scripts.evaluation.requirements_validation
 ```
 
-### Validación retrospectiva y guardrails
+### Validación retrospectiva y replay de decisiones
 
 ```bash
 # Validación retrospectiva del champion de E1 (replay sobre histórico)
 python -m scripts.evaluation.e1_retrospective_validation
-# Aplica guardrails Phase 1 sobre los summaries más recientes de E1
-python -m scripts.evaluation.e1_simple_guardrails
+# Recomputa el IC de E3 con Spearman (en lugar del Pearson guardado) para ensemble LSTM y baseline Ridge
+python -m scripts.evaluation.recompute_ic_e3_spearman
+# Repite la decisión de lifecycle de E3 usando Spearman-IC y muestra si cambiaría la promoción
+python -m scripts.evaluation.replay_lifecycle_e3
 ```
+
+> Los guardrails Phase 1 ya no son un script suelto: viven en `src/lifecycle/guardrails.py`
+> (aplicados dentro de la promoción) y se ejercitan con `pytest tests/test_guardrails.py`.
 
 ### Figuras de conclusiones 
 
@@ -544,11 +557,134 @@ python -m scripts.evaluation.plot_conclusions
 #   fig_conclusions_monthly_heatmap_e2.png — Heatmap de retornos mensuales E2 (promedio 11 tickers)
 #   fig_conclusions_monthly_heatmap_e3.png — Heatmap de retornos mensuales E3 intraday (4 tickers)
 
+# Figura de estabilidad walk-forward: IC y Sharpe por fold, ticker estable vs inestable
+# (usa runs/e1_conservative/20260615_050125 con V estable e YPFD.BA inestable por defecto)
+python -m scripts.evaluation.plot_walkforward_stability
+# Igual, apuntando a un run y eligiendo el par de tickers estable/inestable a contrastar
+python -m scripts.evaluation.plot_walkforward_stability --run runs/e1_conservative/20260615_050125 --stable V --unstable YPFD.BA
+#   → reports/conclusiones/figuras/fig_conclusions_walkforward_stability.png
+
 # Abre el directorio de figuras de conclusiones en el Finder
 open reports/conclusiones/figuras/
 ```
 
-## 8. Tests
+## 8. API de predicción (FastAPI)
+
+La API sirve los **champions** del registry para inferencia (señal BUY/SELL/HOLD a
+partir de la última predicción walk-forward). **No** ejecuta órdenes. Puerto `8800`.
+
+```bash
+# Levanta el stack completo (Airflow + MLflow + FastAPI) — la API queda en el perfil "all"
+docker compose --profile all up -d
+# Abre la documentación interactiva (Swagger UI)
+open http://localhost:8800/docs
+
+# Ejecutar la API en local sin Docker (levanta uvicorn en 0.0.0.0:8800)
+python dockerfiles/fastapi/app.py
+# Equivalente con recarga en caliente para desarrollo
+uvicorn dockerfiles.fastapi.app:app --reload --port 8800
+```
+
+### Endpoints (estrategia = e1 | e2 | e3)
+
+```bash
+# Metadata de la API: nombre, estado y estrategias soportadas
+curl http://localhost:8800/
+# Healthcheck de readiness: relee el registry y valida que haya champions (503 si no)
+curl http://localhost:8800/health
+# Champions registrados, agrupados por estrategia (ticker, variant, promoted_at)
+curl http://localhost:8800/models/status
+# Predicción + señal del champion E1 (90 días) para AAPL
+curl http://localhost:8800/predict/e1/AAPL
+# Predicción + señal del champion E2 (20 días) para NVDA
+curl http://localhost:8800/predict/e2/NVDA
+# Predicción + señal del champion E3 (intradía) para SPY
+curl http://localhost:8800/predict/e3/SPY
+```
+
+## 9. Orquestación (Airflow)
+
+Los DAGs viven en `dockerfiles/airflow/dags/<E1|E2|E3|E4>/`. Se ejecutan dentro del
+contenedor de Airflow (perfil `airflow`); UI en el puerto `8080`.
+
+```bash
+# Levanta Airflow (webserver + scheduler + postgres) en background
+docker compose --profile airflow up -d
+# Abre la UI de Airflow (login por defecto airflow/airflow)
+open http://localhost:8080
+
+# Valida sintaxis y estructura de TODOS los DAGs sin levantar Airflow
+python scripts/airflow/validate_dags.py
+# Valida un DAG puntual por nombre
+python scripts/airflow/validate_dags.py --dag e1_conservative_pipeline
+```
+
+### DAGs disponibles
+
+```text
+# --- E1 (GRU, 90 días) ---
+e1_baseline_linear_regression      # baseline Linear Regression de E1
+e1_simple_pipeline                 # variante e1_simple (retirada)
+e1_conservative_pipeline           # champion E1 (semanal, lunes 2 AM)
+e1_optuna_hyperparameter_tuning    # búsqueda Optuna de hiperparámetros E1
+# --- E2 (LSTM, 20 días) ---
+e2_simple_pipeline                 # variante e2_simple (retirada)
+e2_moderate_pipeline               # champion E2
+e2_optuna_hyperparameter_tuning    # búsqueda Optuna de hiperparámetros E2
+# --- E3 (LSTM ensemble, intradía) ---
+e3_intraday_pipeline               # pipeline E3 intradía (barras 5 min)
+# --- E4 (pairs trading) ---
+e4_pairs_trading_pipeline          # entrenamiento de pares k-NN + OU
+e4_monthly_recalibration           # recalibración mensual de los pares
+```
+
+## 10. Stack Docker (perfiles y puertos)
+
+```bash
+# Copia el template de variables de entorno antes del primer up
+cp .env.example .env
+
+# Perfiles disponibles (docker compose --profile <perfil> up -d):
+#   dashboard  → MLflow + MinIO + Postgres            (monitoreo / tracking)
+#   mlflow     → MLflow + MinIO + Postgres            (tracking de experimentos)
+#   airflow    → Airflow + MLflow + MinIO + Postgres  (orquestación)
+#   all        → todo lo anterior + FastAPI           (stack completo)
+#   debug      → contenedor airflow-cli para inspección
+
+# Levanta el stack completo
+docker compose --profile all up -d
+# Detiene y elimina los contenedores del stack
+docker compose --profile all down
+
+# Puertos (override en .env):
+#   Airflow UI   → http://localhost:8080   (AIRFLOW_PORT)
+#   MLflow UI    → http://localhost:5050   (MLFLOW_PORT)
+#   FastAPI docs → http://localhost:8800/docs (FASTAPI_PORT)
+#   MinIO API    → http://localhost:9000   (MINIO_PORT)
+#   MinIO consola→ http://localhost:9001   (MINIO_PORT_UI)
+#   Postgres     → localhost:5432          (PG_PORT)
+```
+
+## 11. Datos y trading en vivo (IOL)
+
+```bash
+# Limpia los datos diarios (data/clean/) y genera reporte de calidad en JSON
+python scripts/data/run_data_cleaning.py
+# Limpieza rellenando nulos por interpolación lineal
+python scripts/data/run_data_cleaning.py --interpolate
+# Limpieza eliminando filas con nulos
+python scripts/data/run_data_cleaning.py --drop
+
+# --- Integración InvertirOnline (IOL) — requiere credenciales en .env ---
+# Consulta el portafolio actual de la cuenta IOL
+python scripts/trading/iol_get_portfolio.py
+# Lista precios en tiempo real (ambiente PRODUCCIÓN) de las acciones de E1 Simple
+python scripts/trading/iol_list_e1_prices.py
+# Trading en vivo con E1 Simple contra la API IOL (ambiente de PRUEBA — no producción)
+python scripts/trading/e1_simple_iol_live_trade.py
+```
+
+## 12. Tests
 
 ```bash
 # Corre toda la suite de tests
@@ -577,9 +713,12 @@ pytest tests/ --cov=src --cov-report=term-missing
 pytest tests/ -k "registry or guardrails" -v
 ```
 
-## 9. Notas rápidas
+## 13. Notas rápidas
 
 - `src.dashboard.checker --view history` exige `--strategy` y `--ticker`.
 - `scripts.evaluation.promote_candidate` usa `--strategy e1` por default si no se especifica `--strategy`.
 - En dashboard, las claves válidas de estrategia son las de `src/config/dashboard_thresholds.yaml`.
 - En lifecycle, el filtro `--strategy` usa prefijos de registry: `e1`, `e2`, `e3`, `e4`.
+- La API (`/predict/{strategy}/{ticker}`) usa la familia (`e1`/`e2`/`e3`), no la variant key.
+- Los guardrails Phase 1 son parte de `src/lifecycle/` (no un script suelto); se validan con `pytest tests/test_guardrails.py`.
+- Puertos por defecto en `.env`: Airflow 8080, MLflow 5050, FastAPI 8800, MinIO 9000/9001, Postgres 5432.

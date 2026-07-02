@@ -41,6 +41,40 @@ def get_nested(mapping: dict[str, Any], keys: list[str], default: Any = None) ->
     return cursor
 
 
+def get_universe_tickers(config: dict[str, Any]) -> list[str]:
+    """Universo de descarga/limpieza, derivado de la config.
+
+    Fuente única de verdad: ``universe.tickers_by_strategy`` (unión de todas las
+    estrategias) más ``universe.extra_download_tickers`` (activos reservados que
+    aún no pertenecen a una estrategia activa, p.ej. futuros E4). El orden es
+    estable y sin duplicados.
+
+    Retrocompatible: si todavía existe la lista manual ``universe.tickers`` (o
+    algún fork la reintroduce), sus tickers también se incluyen.
+    """
+    universe_cfg = config.get("universe", {}) if isinstance(config, dict) else {}
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def _add(items: Any) -> None:
+        for ticker in items or []:
+            if isinstance(ticker, str):
+                ticker = ticker.strip()
+            if ticker and ticker not in seen:
+                seen.add(ticker)
+                ordered.append(ticker)
+
+    by_strategy = universe_cfg.get("tickers_by_strategy", {}) or {}
+    if isinstance(by_strategy, dict):
+        for tickers in by_strategy.values():
+            _add(tickers)
+
+    _add(universe_cfg.get("extra_download_tickers", []))
+    _add(universe_cfg.get("tickers", []))  # retrocompat / override manual
+
+    return ordered
+
+
 def get_training_window(
     config: dict[str, Any],
     granularity: str = "daily",
@@ -103,6 +137,32 @@ def apply_training_window(
         f"({len(filtered)} rows, granularity={granularity}, use_latest={use_latest})"
     )
     return filtered
+
+
+def last_csv_timestamp(path: Path) -> "Any":
+    """Return the latest `timestamp` (UTC pd.Timestamp) in an OHLCV CSV, or None.
+
+    Used by the incremental download path to know from which date to fetch new
+    bars. Returns None if the file is missing, empty, or has no parseable
+    `timestamp` column — callers treat None as "no prior data" (bootstrap).
+    """
+    import pandas as pd  # local import: utils.py avoids a global pandas dep
+
+    if path is None or not Path(path).exists():
+        return None
+
+    try:
+        df = pd.read_csv(path, usecols=["timestamp"])
+    except Exception:
+        return None
+
+    if df.empty or "timestamp" not in df.columns:
+        return None
+
+    ts = pd.to_datetime(df["timestamp"], utc=True, errors="coerce").dropna()
+    if ts.empty:
+        return None
+    return ts.max()
 
 
 def resolve_lifecycle_paths(

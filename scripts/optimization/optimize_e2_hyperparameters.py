@@ -5,7 +5,8 @@ Optimización de Hiperparámetros para Estrategia E2 usando Optuna + MLflow
 Este script busca automáticamente los mejores hiperparámetros para la
 estrategia E2 Moderate. Entrena el modelo LSTM con split temporal de tuning
 (time_split) para cada combinación de parámetros y optimiza una métrica objetivo
-que combina Sharpe ratio, Profit Factor y CAGR.
+que combina Sharpe ratio, Information Coefficient (IC), directional accuracy y
+Calmar ratio, con los mismos pesos que el scoring de promoción del lifecycle (e2).
 
 Nota metodológica: la validación walk-forward se reserva para la fase de
 entrenamiento/evaluación final, fuera del loop de Optuna.
@@ -22,10 +23,11 @@ Parámetros optimizados y rangos de búsqueda:
 
   Entrenamiento:
     - learning_rate: [5e-5, 5e-3] log scale
+    - weight_decay:  [1e-6, 1e-2] log scale
     - batch_size:    {32, 64, 128} categórico
 
-Métrica objetivo:
-  0.4 * Sharpe_mean + 0.3 * min(PF_mean, 3.0) + 0.3 * CAGR_mean * 10 + trade_penalty
+Métrica objetivo (pesos alineados con lifecycle.promotion.per_strategy.e2):
+  0.30 * Sharpe_mean + 0.20 * IC_mean + 0.30 * DirAcc_mean + 0.20 * Calmar_mean + trade_penalty
   (trade_penalty = -5 si <50% de tickers generan trades)
 
 Uso:
@@ -107,6 +109,7 @@ DISPLAY_PARAM_KEYS = [
     "lstm_units_2",
     "dropout",
     "learning_rate",
+    "weight_decay",
     "batch_size",
 ]
 
@@ -117,6 +120,7 @@ OPTIMIZED_PARAM_KEYS = [
     "lstm_units_2",
     "dropout",
     "learning_rate",
+    "weight_decay",
     "batch_size",
 ]
 
@@ -341,6 +345,7 @@ class E2HyperparameterOptimizer:
         self.lstm_units_2_bounds = {"min": 32, "max": 128, "step": 16}
         self.dropout_bounds = {"min": 0.1, "max": 0.4, "step": 0.05}
         self.learning_rate_bounds = {"min": 5e-5, "max": 5e-3, "log": True}
+        self.weight_decay_bounds = {"min": 1e-6, "max": 1e-2, "log": True}
 
         # Opciones de batch size
         default_batch_sizes = batch_size_choices or [32, 64, 128]
@@ -370,6 +375,7 @@ class E2HyperparameterOptimizer:
         update_bounds(self.lstm_units_2_bounds, "lstm_units_2")
         update_bounds(self.dropout_bounds, "dropout")
         update_bounds(self.learning_rate_bounds, "learning_rate")
+        update_bounds(self.weight_decay_bounds, "weight_decay")
 
         def validate_bounds(bounds: Dict[str, float], name: str) -> None:
             # Guardrails básicos del espacio de búsqueda.
@@ -386,6 +392,7 @@ class E2HyperparameterOptimizer:
         validate_bounds(self.lstm_units_2_bounds, "lstm_units_2")
         validate_bounds(self.dropout_bounds, "dropout")
         validate_bounds(self.learning_rate_bounds, "learning_rate")
+        validate_bounds(self.weight_decay_bounds, "weight_decay")
 
         print(f"✓ Inicializado optimizador para {len(self.tickers)} tickers")
         print(f"  Tickers: {', '.join(self.tickers[:5])}{'...' if len(self.tickers) > 5 else ''}")
@@ -455,7 +462,7 @@ class E2HyperparameterOptimizer:
             trial: Trial de Optuna con suggestions
 
         Returns:
-            Métrica objetivo (combinación de Sharpe ratio, profit factor y CAGR)
+            Métrica objetivo (combinación de Sharpe, IC, directional accuracy y Calmar)
         """
 
         from contextlib import nullcontext
@@ -478,6 +485,7 @@ class E2HyperparameterOptimizer:
 
             # Entrenamiento
             learning_rate = self._suggest_float(trial, "learning_rate", self.learning_rate_bounds)
+            weight_decay = self._suggest_float(trial, "weight_decay", self.weight_decay_bounds)
             batch_size = trial.suggest_categorical("batch_size", self.batch_size_choices)
 
             # Early stopping (fijar patience para consistencia)
@@ -516,6 +524,7 @@ class E2HyperparameterOptimizer:
                 "lstm_units": [lstm_units_1, lstm_units_2],
                 "dropout": dropout,
                 "learning_rate": learning_rate,
+                "weight_decay": weight_decay,
                 "batch_size": batch_size,
                 "early_stopping_patience": early_stopping_patience,
             }
@@ -627,6 +636,7 @@ class E2HyperparameterOptimizer:
                     "lstm_units_2": lstm_units_2,
                     "dropout": dropout,
                     "learning_rate": learning_rate,
+                    "weight_decay": weight_decay,
                     "batch_size": batch_size,
                     "trial_number": trial.number,
                     "validation_method": self.validation_method,
@@ -697,7 +707,7 @@ class E2HyperparameterOptimizer:
                 f"time={trial_seconds:.1f}s | "
                 f"tau=({tau_buy:.3f},{tau_sell:.3f}) "
                 f"lstm=[{lstm_units_1},{lstm_units_2}] do={dropout:.2f} "
-                f"lr={learning_rate:.6f} bs={batch_size}"
+                f"lr={learning_rate:.6f} wd={weight_decay:.6f} bs={batch_size}"
             )
 
             return objective_value
@@ -785,6 +795,7 @@ class E2HyperparameterOptimizer:
         self,
         study: optuna.Study,
         output_dir: Path,
+        compact_best_params: bool = False,
     ) -> None:
         """
         Guarda resultados de optimización.
@@ -792,6 +803,11 @@ class E2HyperparameterOptimizer:
         Args:
             study: Estudio de Optuna
             output_dir: Directorio de salida
+            compact_best_params: Si True, escribe best_params_e2.yaml en el esquema
+                compacto consumible por el entrenamiento (thresholds/model), idéntico
+                a una entrada del agregado e2_tuned_params_by_ticker.yaml. Se usa para
+                las carpetas by_ticker/<TICKER>/. Si False (default), escribe el esquema
+                RAW del estudio (optimization + best_params), usado a nivel top-level.
         """
 
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -814,19 +830,24 @@ class E2HyperparameterOptimizer:
             best_value = float(study.best_value)
             best_trial_number = study.best_trial.number
 
-            best_params_yaml = {
-                "optimization": {
-                    "study_name": study.study_name,
-                    "n_trials": len(study.trials),
-                    "n_completed_trials": len(completed_trials),
-                    "best_value": best_value,
-                    "best_trial": best_trial_number,
-                },
-                "best_params": {
-                    k: float(v) if isinstance(v, (int, float)) else v
-                    for k, v in best_params.items()
-                },
-            }
+            if compact_best_params:
+                # Esquema compacto consumible por el training (thresholds/model),
+                # uniforme con cada entrada de e2_tuned_params_by_ticker.yaml.
+                best_params_yaml = _best_params_to_e2_tuned_schema(best_params)
+            else:
+                best_params_yaml = {
+                    "optimization": {
+                        "study_name": study.study_name,
+                        "n_trials": len(study.trials),
+                        "n_completed_trials": len(completed_trials),
+                        "best_value": best_value,
+                        "best_trial": best_trial_number,
+                    },
+                    "best_params": {
+                        k: float(v) if isinstance(v, (int, float)) else v
+                        for k, v in best_params.items()
+                    },
+                }
 
             yaml_path = output_dir / "best_params_e2.yaml"
             self._safe_write_file(yaml_path, lambda f: yaml.dump(best_params_yaml, f, default_flow_style=False, sort_keys=False))
@@ -933,7 +954,7 @@ class E2HyperparameterOptimizer:
             fig.update_layout(
                 title="Optimization History (Full Study) - Raw Objective",
                 xaxis_title="Trial",
-                yaxis_title="Objective Raw (0.4*Sharpe + 0.3*PF + 0.3*CAGR*10)",
+                yaxis_title="Objective Raw (0.30*Sharpe + 0.20*IC + 0.30*DirAcc + 0.20*Calmar)",
                 template="plotly_white",
             )
             fig.write_image(str(figures_dir / "e2_optimization_history_raw.png"), width=1200, height=600)
@@ -961,7 +982,7 @@ class E2HyperparameterOptimizer:
             fig.update_layout(
                 title="Optimization History (Current Run) - Raw Objective",
                 xaxis_title="Trial",
-                yaxis_title="Objective Raw (0.4*Sharpe + 0.3*PF + 0.3*CAGR*10)",
+                yaxis_title="Objective Raw (0.30*Sharpe + 0.20*IC + 0.30*DirAcc + 0.20*Calmar)",
                 template="plotly_white",
             )
             fig.write_image(str(figures_dir / "e2_optimization_history_raw_current_run.png"), width=1200, height=600)
@@ -1100,6 +1121,8 @@ def _best_params_to_e2_tuned_schema(best_params: Dict) -> Dict:
         schema["model"]["dropout"] = float(best_params["dropout"])
     if "learning_rate" in best_params:
         schema["model"]["learning_rate"] = float(best_params["learning_rate"])
+    if "weight_decay" in best_params:
+        schema["model"]["weight_decay"] = float(best_params["weight_decay"])
     if "batch_size" in best_params:
         schema["model"]["batch_size"] = int(best_params["batch_size"])
     if "early_stopping_patience" in best_params:
@@ -1251,6 +1274,18 @@ def main():
         help="Máximo para learning_rate (default: 5e-3)",
     )
     parser.add_argument(
+        "--weight_decay_min",
+        type=float,
+        default=None,
+        help="Mínimo para weight_decay (default: 1e-6)",
+    )
+    parser.add_argument(
+        "--weight_decay_max",
+        type=float,
+        default=None,
+        help="Máximo para weight_decay (default: 1e-2)",
+    )
+    parser.add_argument(
         "--batch_sizes",
         type=str,
         default=None,
@@ -1322,6 +1357,7 @@ def main():
     maybe_add_override("tau_sell", args.tau_sell_min, args.tau_sell_max)
     maybe_add_override("dropout", args.dropout_min, args.dropout_max)
     maybe_add_override("learning_rate", args.learning_rate_min, args.learning_rate_max)
+    maybe_add_override("weight_decay", args.weight_decay_min, args.weight_decay_max)
     maybe_add_override("lstm_units_1", args.lstm_units_1_min, args.lstm_units_1_max)
     maybe_add_override("lstm_units_2", args.lstm_units_2_min, args.lstm_units_2_max)
 
@@ -1392,7 +1428,7 @@ def main():
             )
 
             out_ticker = per_ticker_dir / t
-            optimizer.save_results(study, out_ticker)
+            optimizer.save_results(study, out_ticker, compact_best_params=True)
 
             bp = study.best_params
             overrides_by_ticker[t] = _best_params_to_e2_tuned_schema(bp)

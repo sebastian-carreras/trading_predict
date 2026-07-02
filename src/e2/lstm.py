@@ -133,6 +133,7 @@ class LSTMRegressor:
         y_val: np.ndarray,
         *,
         learning_rate: float = 1e-3,
+        weight_decay: float = 0.0,
         batch_size: int = 64,
         max_epochs: int = 150,
         early_stopping_patience: int = 12,
@@ -157,7 +158,11 @@ class LSTMRegressor:
             criterion = torch.nn.SmoothL1Loss(beta=huber_delta)
 
         # AdamW según especificación
-        optim = torch.optim.AdamW(self.model.parameters(), lr=learning_rate)
+        optim = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=learning_rate,
+            weight_decay=weight_decay,
+        )
 
         best_val = float("inf")
         best_state = None

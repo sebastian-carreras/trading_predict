@@ -21,9 +21,10 @@ Academic final project for FIUBA's AI Specialization. Builds an AI system to sup
 # Activate Python environment
 conda activate ia_ceia_18co
 
-# Train E1 (Conservative, GRU, 90-day)
+# Train E1 (Conservative, GRU, 90-day) — descarga datos nuevos incrementales por defecto
 python -m src.e1.train_pipeline --tickers AAPL,MSFT
-python -m src.e1.train_pipeline --tickers YPFD.BA --refresh-data --auto-promote
+python -m src.e1.train_pipeline --tickers YPFD.BA --auto-promote
+python -m src.e1.train_pipeline --tickers AAPL --skip-download   # usa datos existentes, sin descargar
 
 # Train E2 (Moderate, LSTM, 20-day)
 python -m src.e2.train_pipeline --tickers AAPL

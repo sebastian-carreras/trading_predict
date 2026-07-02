@@ -66,9 +66,10 @@ def download_intraday_data(**context):
     sys.path.insert(0, '/opt/airflow')
     
     from src.e3.intraday_data import download_ohlcv_5m
+    from src.data.ingest import resolve_download_settings
     from src.utils import load_yaml
     from pathlib import Path
-    
+
     root = Path("/opt/airflow")
     config = load_yaml(root / "src/config/base.yaml")
     
@@ -98,8 +99,8 @@ def download_intraday_data(**context):
     out_dir = canonical_dir if train_with_new_data else staging_dir
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    e3_cfg = config.get("strategies", {}).get("e3_intraday", {})
-    period = e3_cfg.get("data", {}).get("period", "60d")
+    # Config-driven: period + incremental desde data.download (base.yaml), igual que la CLI.
+    dl = resolve_download_settings(config, granularity="intraday")
 
     print(f"[E3][download] Tickers seleccionados: {tickers}")
     print(
@@ -112,8 +113,10 @@ def download_intraday_data(**context):
         written_paths = download_ohlcv_5m(
             tickers=tickers,
             out_dir=out_dir,
-            period=period,
+            period=dl["period"],
             interval="5m",
+            incremental=dl["incremental"],
+            overlap_days=dl["overlap_days"],
         )
         downloaded = [p.stem.replace("_5m", "") for p in written_paths]
         print(f"✓ Downloaded {len(downloaded)} tickers: {downloaded}")
