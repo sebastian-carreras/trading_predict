@@ -124,7 +124,7 @@ python -m src.e3.train_pipeline --tickers SPY
 
 **Métricas ML (offline)**:
 - MAE, RMSE: error de predicción
- - El MAE mide el error promedio absoluto, siendo más robusto ante outliers, mientras que el 
+ - El MAE mide el error promedio absoluto, siendo más robusto ante outliers, mientras que el
  - RMSE penaliza más los errores grandes debido a la elevación al cuadrado.
 - Directional Accuracy: % de predicciones con signo correcto
  - Mide el porcentaje de predicciones donde el modelo acierta el signo correcto del movimiento (alza o baja), independientemente de la magnitud. Accuracy superior al 50% indica capacidad predictiva.
@@ -137,16 +137,16 @@ python -m src.e3.train_pipeline --tickers SPY
 **Métricas de Trading (online)**:
 - CAGR, Sharpe, Sortino
  - El CAGR (Compound Annual Growth Rate) mide el retorno anualizado compuesto de la estrategia/inversión. En ventanas menores a 1 año, el CAGR sigue siendo válido como **anualización**, pero puede volverse más ruidoso/volátil (la anualización amplifica retornos cortos). Por eso conviene interpretarlo junto con Max Drawdown, Sharpe/Sortino, Calmar, Profit Factor y hit rate.
- - El Sharpe Ratio evalúa el retorno ajustado por riesgo de una inversión o estrategia de trading, siendo una métrica estándar para comparar estrategias. Se compara con un retorno libre de riesgo y la volatilidad de la estrategia/inversión (objetivos típicos: E1 ≥0.9, E2 ≥0.8, E4 ≥1.0) 
+ - El Sharpe Ratio evalúa el retorno ajustado por riesgo de una inversión o estrategia de trading, siendo una métrica estándar para comparar estrategias. Se compara con un retorno libre de riesgo y la volatilidad de la estrategia/inversión (objetivos típicos: E1 ≥0.9, E2 ≥0.8, E4 ≥1.0)
  - El Sortino: retorno ajustado (rendimiento) por riesgo (volatilidad negativa). Se enfoca en la volatilidad negativa (downside), siendo más relevante para inversionistas que solo se preocupan por pérdidas.
 
 - Profit Factor, Hit Rate: calidad de operaciones
  - El Profit Factor es el ratio entre ganancias brutas totales y pérdidas brutas totales (objetivo mínimo 1.2-1.4 para estrategia intradía E3)
- - Hit Rate es el porcentaje de operaciones ganadoras sobre el total (idealmente > 50% ) 
+ - Hit Rate es el porcentaje de operaciones ganadoras sobre el total (idealmente > 50% )
 
 - Max Drawdown, Calmar: control de pérdidas
  - El Max Drawdown representa el peor escenario de pérdida que experimentó una estrategia de trading o inversión durante un período específico. Esta métrica cuantifica el "dolor" financiero máximo al que estuvo expuesto un inversionista entre un punto máximo y su subsecuente mínimo. Un Max Drawdown bajo es crucial para estrategias conservadoras (E1) y moderadas (E2), ya que refleja la capacidad de la estrategia para proteger el capital en mercados adversos.
- - El ratio de Calmar divide el CAGR por el Max Drawdown absoluto, proporcionando una medida de retorno ajustado por pérdida máxima, particularmente relevante para inversionistas con baja tolerancia al riesgo. 
+ - El ratio de Calmar divide el CAGR por el Max Drawdown absoluto, proporcionando una medida de retorno ajustado por pérdida máxima, particularmente relevante para inversionistas con baja tolerancia al riesgo.
   - Visto de otra manera el Max Drawdown se parece al máximo “estrés psicológico” del inversor, mientras el CAGR es el “beneficio económico medio”.
   - El “dolor máximo” (max drawdown) tiene dos efectos que no ves si mirás solo el riesgo promedio: aumenta el "riesgo de ruina" y aumenta el riesgo de que abandones la estrategia justo antes de que funcione
 - Turnover: frecuencia de rebalanceo
@@ -175,10 +175,10 @@ runs/<estrategia>/<YYYYMMDD_HHMMSS>/
 
 **Principios fundamentales** (críticos en tesis):
 
- **Features "as-of"**: toda variable en timestamp `t` usa solo datos ≤ `t`  
- **Normalización correcta**: scaler fit solo en train, aplicado a val/test  
- **Split temporal**: walk-forward (expanding/rolling) + helper `temporal_train_val_split` para evitar fugas y pérdida de muestras en validación, nunca shuffle  
- **Embargo**: gap de H días entre train y validación para evitar solapamiento  
+ **Features "as-of"**: toda variable en timestamp `t` usa solo datos ≤ `t`
+ **Normalización correcta**: scaler fit solo en train, aplicado a val/test
+ **Split temporal**: walk-forward (expanding/rolling) + helper `temporal_train_val_split` para evitar fugas y pérdida de muestras en validación, nunca shuffle
+ **Embargo**: gap de H días entre train y validación para evitar solapamiento
  **Costos realistas**: backtesting incluye comisiones + slippage
 
 ## Estado del Proyecto
@@ -233,7 +233,7 @@ Ver cada README específico para comandos detallados.
 
 ## Contexto Académico
 
-Proyecto final - Posgrado en Inteligencia Artificial FIUBA  
+Proyecto final - Posgrado en Inteligencia Artificial FIUBA
 **Fases de desarrollo** (plan de trabajo):
 
 1.  Investigación y análisis
@@ -353,7 +353,9 @@ Para poder implementar y evaluar de punta a punta sin bloquearse por disponibili
 - **Sentimiento (si hay pipeline)**
    - Score agregado semanal con ventana cerrada (p. ej. lunes 00:00–domingo 23:59) y se aplica desde el lunes siguiente
 
-**Arquitectura de red (GRU)**```
+**Arquitectura de red (GRU)**
+
+```
 Input: (sequence_length=360, features=F)
 ↓
 GRU 1 (128 units, return_sequences=True, recurrent_dropout=0.1)
@@ -632,15 +634,15 @@ Opcional: weighted average con pesos por performance reciente (validación rolli
 **Algoritmo k-NN (especificación implementable)**```
 1. Construcción del espacio de estados:
    - Estado: [S_t, \Delta S_t, Z_t, Corr_{30}, VolumeRatio]
-   
+
 2. Búsqueda de vecinos invariantes:
    - Estandarizar features (train-only)
    - Distancia: Euclidiana (baseline) o Mahalanobis (si hay colinealidad)
    - k \in {5, 10, 20} (tunable)
-   
+
 3. Predicción mutua del centroide:
    - Estimar y_{t} (cambio o nivel futuro del spread) con promedio ponderado por 1/distancia
-   
+
 4. Modelado OU:
    dS_t = θ(μ - S_t)dt + σdW_t
    - θ: velocidad de reversión (estimado por MLE)
@@ -660,7 +662,7 @@ Opcional: weighted average con pesos por performance reciente (validación rolli
 **Criterio de entrada (long-short, dollar-neutral)**
 - **Condición 1**: Z-score > +2.0 (spread anormalmente alto)
   - **Acción**: Short activo A, Long activo B (apostar a convergencia)
-  
+
 - **Condición 2**: Z-score < -2.0 (spread anormalmente bajo)
   - **Acción**: Long activo A, Short activo B
 
@@ -893,10 +895,10 @@ python -m src.e3.train_pipeline
 
 ### Ventajas de esta arquitectura
 
- **Reproducible**: mismo config + mismos datos = mismos resultados  
- **Auditable**: cada corrida queda guardada con su configuración exacta  
- **Modular**: se puede cambiar una parte sin romper las demás  
- **Thesis-friendly**: `reports/` tiene todo listo para copiar al documento final  
+ **Reproducible**: mismo config + mismos datos = mismos resultados
+ **Auditable**: cada corrida queda guardada con su configuración exacta
+ **Modular**: se puede cambiar una parte sin romper las demás
+ **Thesis-friendly**: `reports/` tiene todo listo para copiar al documento final
  **Escalable**: fácil agregar nuevas estrategias o fuentes de datos
 **Árbol sugerido**```
 trading_predict/
@@ -1099,4 +1101,3 @@ timestamp, ticker, open, high, low, close, volume, [indicadores técnicos calcul
 [9](https://www.youtube.com/watch?v=bPlk9oqkbmw)
 [10](https://www.sciencedirect.com/science/article/abs/pii/S0957417425021153)
 [11](https://www.sciencedirect.com/science/article/pii/S2667305324001236)
-
