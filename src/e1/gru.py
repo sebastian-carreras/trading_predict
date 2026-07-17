@@ -131,6 +131,7 @@ class GRURegressor:
         early_stopping_patience: int = 15,
         loss: str = "huber",
         huber_delta: float = 1.0,
+        verbose: bool = True,
     ) -> TrainResult:
         """Entrena el modelo GRU."""
         torch = self.torch
@@ -163,6 +164,7 @@ class GRURegressor:
 
         for epoch in range(1, max_epochs + 1):
             self.model.train()
+            train_losses = []
             for xb, yb in loader:
                 optim.zero_grad(set_to_none=True)
                 pred = self.model(xb)
@@ -170,6 +172,7 @@ class GRURegressor:
                 l.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 optim.step()
+                train_losses.append(float(l.item()))
 
             self.model.eval()
             with torch.no_grad():
@@ -177,7 +180,18 @@ class GRURegressor:
                 val_loss = float(criterion(val_pred, yva).item())
 
             ran = epoch
-            if val_loss < best_val:
+            pct_complete = 100.0 * epoch / max_epochs
+            is_best = val_loss < best_val
+
+            if verbose and (epoch % 5 == 0 or epoch == 1 or is_best or epoch == max_epochs):
+                status = "✓" if is_best else " "
+                train_loss_avg = float(np.mean(train_losses))
+                print(
+                    f"    Epoch {epoch:3d}/{max_epochs} ({pct_complete:5.1f}%): "
+                    f"train_loss={train_loss_avg:.6f} val_loss={val_loss:.6f} {status}"
+                )
+
+            if is_best:
                 best_val = val_loss
                 best_state = {
                     k: v.detach().cpu().clone()
@@ -187,10 +201,15 @@ class GRURegressor:
             else:
                 bad_epochs += 1
                 if bad_epochs >= early_stopping_patience:
+                    if verbose:
+                        print(f"    Early stopping at epoch {epoch} ({pct_complete:5.1f}%, patience={early_stopping_patience})")
                     break
 
         if best_state is not None:
             self.model.load_state_dict(best_state)
+
+        if verbose:
+            print(f"    Training complete: {ran} epochs, best_val_loss={best_val:.6f}")
 
         return TrainResult(best_val_loss=best_val, epochs_ran=ran)
 

@@ -163,7 +163,7 @@ strategies:
     frequency: "1D"
     lookback_days: 60
     horizon_days: 20
-    rebalance: "weekly"
+    rebalance: "daily"   # Metadata declarativa (no la lee el código; el backtest usa holding_period_days). Diario para reflejar el retrain diario.
 
     thresholds:
       tau_buy: 0.025       # +2.5% predicho → señal compra
@@ -275,6 +275,15 @@ lifecycle:
                                  # solo evita el churn por empates. El gate real es la revisión manual
                                  # (auto_promote=false + dry-run por defecto en promote_candidate).
     require_positive_sharpe: true  # Safety net: candidato debe tener bt_sharpe > 0
+
+    # Comparación JUSTA: re-backtestea al champion (inferencia congelada) contra el
+    # candidato sobre una ventana OOS común (fechas posteriores al train_data_end del
+    # champion, que NINGUNO de los dos vio) en lugar de comparar métricas guardadas de
+    # ventanas distintas. Ver src/lifecycle/reevaluation.py.
+    fair_window: true
+    # Mínimo de muestras OOS comunes para confiar en la comparación justa. Debajo de
+    # esto se MANTIENE al champion (evidencia fresca insuficiente).
+    min_eval_samples: 30
 
     # Scoring weights globales (fallback si la estrategia no tiene overrides)
     scoring_weights:

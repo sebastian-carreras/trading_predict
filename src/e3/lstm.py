@@ -137,11 +137,12 @@ class LSTMRegressor:
             # Print progress every 5 epochs or on improvement
             train_loss_avg = float(np.mean(train_losses))
             is_best = val_loss < best_val
-            
+            pct_complete = 100.0 * epoch / max_epochs
+
             if verbose and (epoch % 5 == 0 or epoch == 1 or is_best or epoch == max_epochs):
                 status = "✓" if is_best else " "
-                print(f"    Epoch {epoch:3d}/{max_epochs}: train_loss={train_loss_avg:.6f} val_loss={val_loss:.6f} {status}")
-            
+                print(f"    Epoch {epoch:3d}/{max_epochs} ({pct_complete:5.1f}%): train_loss={train_loss_avg:.6f} val_loss={val_loss:.6f} {status}")
+
             if is_best:
                 best_val = val_loss
                 best_state = {k: v.detach().cpu().clone() for k, v in self.model.state_dict().items()}
@@ -150,7 +151,7 @@ class LSTMRegressor:
                 bad_epochs += 1
                 if bad_epochs >= early_stopping_patience:
                     if verbose:
-                        print(f"    Early stopping at epoch {epoch} (patience={early_stopping_patience})")
+                        print(f"    Early stopping at epoch {epoch} ({pct_complete:5.1f}%, patience={early_stopping_patience})")
                     break
 
         if best_state is not None:

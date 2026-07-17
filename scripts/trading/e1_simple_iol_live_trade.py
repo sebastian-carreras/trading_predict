@@ -466,9 +466,11 @@ def main():
     if not args.dry_run:
         try:
             import mlflow
-            
-            project_root = Path(__file__).parent.parent
-            mlflow_uri = "sqlite:///" + str(project_root / "runs" / "mlflow_local" / "mlflow.db")
+
+            root = Path(__file__).resolve().parents[2]
+            mlflow_uri = os.getenv("MLFLOW_TRACKING_URI", "").strip()
+            if not mlflow_uri:
+                mlflow_uri = "sqlite:///" + str(root / "runs" / "mlflow_local" / "mlflow.db")
             mlflow.set_tracking_uri(mlflow_uri)
             mlflow.set_experiment("E1_Simple_Production_Tracking")
             

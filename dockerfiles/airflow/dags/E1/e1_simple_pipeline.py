@@ -41,7 +41,7 @@ dag = DAG(
     'e1_simple_pipeline',
     default_args=default_args,
     description='Pipeline E1 Simple: GRU simplificado sin walk-forward',
-    schedule_interval='0 3 * * 1',  # Lunes 3 AM (después del E1 Conservative)
+    schedule_interval=None,  # Solo manual: la automatización diaria corre únicamente e1_conservative
     catchup=False,
     tags=['trading', 'e1', 'simple', 'gru', 'simplified'],
     params={
@@ -173,7 +173,7 @@ def train_e1_simple_with_mlflow(**context):
             return 1e8 if v > 0 else -1e8
         return v
     
-    mlflow.set_experiment("E1_Simple_Strategy")
+    mlflow.set_experiment("E1_Simple")
     
     root = Path("/opt/airflow")
     config = load_yaml(root / "src/config/base.yaml")

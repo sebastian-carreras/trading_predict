@@ -11,10 +11,15 @@ Flujo:
 
 from datetime import datetime, timedelta
 from airflow import DAG
+from airflow.datasets import Dataset
 from airflow.operators.python import PythonOperator
 import mlflow
 import os
 import json
+
+# Dataset que este pipeline "produce" al terminar. daily_report se programa
+# sobre [DATASET_E1, DATASET_E2] y arranca cuando AMBOS se actualizan.
+DATASET_E2 = Dataset("trading://registry/e2_moderate")
 
 # Configuración MLflow
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
@@ -34,14 +39,14 @@ dag = DAG(
     'e2_moderate_pipeline',
     default_args=default_args,
     description='Pipeline E2: Predicción de retornos a 20 días (LSTM)',
-    schedule_interval='0 3 * * 1',  # Lunes 3 AM (después de E1)
+    schedule_interval='0 8 * * *',  # Diario 08:00 UTC (05:00 ART) — retrain diario en paralelo con E1
     catchup=False,
     tags=['trading', 'e2', 'moderate', 'lstm'],
     params={
         'tickers': 'BBAR.BA, BMA.BA, EDN.BA, TGSU2.BA, LOMA.BA, NVDA, GOOGL, AMZN, META, NFLX',
         'use_tuned_params': 'True',
         'tuned_params_path': 'reports/hyperparameter_optimization/e2_tuned_params_by_ticker.yaml',
-        'train_with_new_data': 'False',  # False = descargar a staging sin usarlo; True = refrescar datos canónicos y entrenar con ellos
+        'train_with_new_data': 'True',  # True = refresca datos canónicos y re-entrena con ellos (retrain diario con data fresca)
     },
 )
 
@@ -144,12 +149,12 @@ def train_e2_with_mlflow(**context):
     import sys
     sys.path.insert(0, '/opt/airflow')
     
-    from src.e2.train_pipeline import run_e2_for_ticker
+    from src.e2.train_pipeline import run_e2_for_ticker, load_ohlcv_csv
     from src.utils import load_yaml, ensure_dir
     from pathlib import Path
     import pandas as pd
-    
-    mlflow.set_experiment("E2_Moderate")
+
+    mlflow.set_experiment("E2_Moderate_Strategy")
 
     root = Path("/opt/airflow")
     config = load_yaml(root / "src/config/base.yaml")
@@ -197,6 +202,31 @@ def train_e2_with_mlflow(**context):
     # preferencia interna por data/clean). Los datos frescos solo llegan acá si
     # se corrió la descarga con train_with_new_data=True.
     raw_dir = root / "data" / "raw" / "daily"
+
+    # --- Dedup: no re-entrenar un modelo idéntico ---
+    # Si el champion ya se entrenó con datos hasta la última fecha limpia disponible,
+    # reentrenar produciría (casi) el mismo modelo. Saltamos ese ticker.
+    from src.lifecycle.registry import ModelRegistry
+    _registry = ModelRegistry(root / "models" / "registry.json")
+    _clean_dir = root / "data" / "clean"
+    _kept = []
+    for _t in tickers:
+        _champ = _registry.get_champion("e2", _t)
+        _tde = _champ.get("train_data_end") if _champ else None
+        if _tde:
+            _cpath = _clean_dir / f"{_t}_daily.csv"
+            try:
+                _latest = load_ohlcv_csv(_cpath).index.max() if _cpath.exists() else None
+            except Exception:
+                _latest = None
+            if _latest is not None and str(_latest.date()) <= str(_tde):
+                print(f"[E2][dedup] {_t}: sin datos nuevos desde train_data_end={_tde} "
+                      f"(último={_latest.date()}) — se omite retrain")
+                continue
+        _kept.append(_t)
+    if not _kept:
+        return "E2: todos los tickers omitidos por dedup (sin datos nuevos)"
+    tickers = _kept
 
     # Directorio de salida con timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -400,7 +430,13 @@ def promote_champions(**context):
     sys.path.insert(0, '/opt/airflow')
     from pathlib import Path
     from src.lifecycle.registry import ModelRegistry
-    from src.lifecycle.promotion import evaluate_and_promote
+    from src.lifecycle.promotion import (
+        compute_score,
+        evaluate_and_promote,
+        get_strategy_promotion_config,
+    )
+    from src.lifecycle import reevaluation
+    from src.e2.train_pipeline import load_ohlcv_csv
     from src.utils import load_yaml
 
     run_dir = context['task_instance'].xcom_pull(task_ids='train_e2_models', key='run_dir')
@@ -412,22 +448,52 @@ def promote_champions(**context):
     promo_cfg = config.get("lifecycle", {}).get("promotion", {})
     registry = ModelRegistry(root / "models" / "registry.json")
 
+    # Loader de OHLCV limpio (para la comparación justa: re-backtest del champion).
+    _clean_dir = root / "data" / "clean"
+    def _ohlcv_loader(tk):
+        p = _clean_dir / f"{tk}_daily.csv"
+        return load_ohlcv_csv(p) if p.exists() else None
+
     promoted, kept = [], []
     print("=" * 60)
-    print("PROMOCIÓN E2: candidato vs champion")
+    print("PROMOCIÓN E2: candidato vs champion (ventana OOS común)")
     print("=" * 60)
     for ticker_dir in sorted(Path(run_dir).iterdir()):
         if not ticker_dir.is_dir():
             continue
         ticker = ticker_dir.name
         try:
-            d = evaluate_and_promote(registry, "e2", ticker, promo_cfg)
+            # Force-promote SOLO si el champion no es servible Y el candidato no
+            # es peor en score. Un hipo de servibilidad NO debe reemplazar un
+            # modelo mejor por uno peor (fue la causa de la regresión del
+            # 2026-07-15: `force = not servable` a secas promovió 29 modelos
+            # peores). Si el champion es servible, comparación normal.
+            champ = registry.get_champion("e2", ticker)
+            force = False
+            if champ and not reevaluation.is_champion_servable(
+                "e2", ticker, registry, _ohlcv_loader(ticker)
+            ):
+                cand = registry.get_candidate("e2", ticker)
+                weights = get_strategy_promotion_config(promo_cfg, "e2").get("scoring_weights", {})
+                cand_score, _ = compute_score((cand or {}).get("metrics", {}), weights)
+                champ_score, _ = compute_score(champ.get("metrics", {}), weights)
+                force = cand_score >= champ_score
+                if not force:
+                    print(f"  ⚠️  {ticker}: champion no servible pero candidato peor "
+                          f"(cand={cand_score:.4f} < champ={champ_score:.4f}) — NO se fuerza")
+            d = evaluate_and_promote(
+                registry, "e2", ticker, promo_cfg,
+                ohlcv_loader=_ohlcv_loader, full_config=config, force=force,
+            )
             scores = f"cand={d.candidate_score:.4f} vs champ={d.champion_score:.4f}"
+            mode = d.comparison_mode + ("+force" if force else "")
+            if d.eval_n_samples is not None:
+                mode += f" W={d.eval_window_start}..{d.eval_window_end} n={d.eval_n_samples}"
             if d.promoted:
-                print(f"  ★ PROMOVIDO   {ticker}: {d.reason} [{scores}, mejora={d.improvement_pct * 100:+.1f}%]")
+                print(f"  ★ PROMOVIDO   {ticker}: {d.reason} [{scores}, mejora={d.improvement_pct * 100:+.1f}%] ({mode})")
                 promoted.append(ticker)
             else:
-                print(f"  ↳ NO promovido {ticker}: {d.reason} [{scores}]")
+                print(f"  ↳ NO promovido {ticker}: {d.reason} [{scores}] ({mode})")
                 kept.append(ticker)
         except Exception as e:
             print(f"  ⚠️  Error evaluando {ticker}: {e}")
@@ -464,6 +530,7 @@ task_promote = PythonOperator(
 task_notify = PythonOperator(
     task_id='notify_api',
     python_callable=notify_api_model_ready,
+    outlets=[DATASET_E2],  # Al terminar, marca el dataset → habilita a daily_report
     dag=dag,
 )
 

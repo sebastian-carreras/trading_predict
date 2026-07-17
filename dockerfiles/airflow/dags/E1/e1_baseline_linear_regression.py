@@ -38,7 +38,7 @@ dag = DAG(
     'e1_baseline_linear_regression',
     default_args=default_args,
     description='Pipeline E1 Baseline: Regresión Lineal para comparación con GRU',
-    schedule_interval='0 3 * * 1',  # Lunes 3 AM (1 hora después del GRU)
+    schedule_interval=None,  # Solo manual: el baseline es piso de comparación, no necesita retrain diario
     catchup=False,
     tags=['trading', 'e1', 'baseline', 'linear_regression', 'comparison'],
     params={
@@ -137,7 +137,7 @@ def train_baseline_with_mlflow(**context):
     from pathlib import Path
     import pandas as pd
     
-    mlflow.set_experiment("E1_Baseline_LinearRegression")
+    mlflow.set_experiment("E1_Baseline")
     
     root = Path("/opt/airflow")
     config = load_yaml(root / "src/config/base.yaml")

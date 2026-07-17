@@ -11,12 +11,14 @@ Endpoints:
 - GET /health                    - Health check detallado
 - GET /models/status             - Champions registrados por estrategia
 - GET /predict/{strategy}/{ticker} - Predicción + señal del champion (e1|e2|e3)
+- GET /leaderboard               - Ranking de champions (mismo cálculo que el CLI)
 
 La superficie del demo es la UI de Swagger en /docs.
 """
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,9 @@ from typing import Any
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Response
 
+# La API reutiliza DIRECTAMENTE el script del CLI: cualquier cambio en la lógica
+# de leaderboard.py (scoring, deltas, columnas) se refleja acá sin tocar la API.
+from scripts.evaluation.leaderboard import add_deltas, build_leaderboard
 from src.lifecycle.registry import ModelRegistry
 from src.utils import get_nested, load_yaml, project_root
 
@@ -157,6 +162,7 @@ def read_root():
         "service": "Trading Predict API",
         "status": "running",
         "strategies": list(SUPPORTED_STRATEGIES),
+        "endpoints": ["/health", "/models/status", "/predict/{strategy}/{ticker}", "/leaderboard"],
         "docs": "/docs",
     }
 
@@ -235,7 +241,11 @@ def predict(strategy: str, ticker: str):
             detail=f"Estrategia '{strategy}' no soportada. Use: {SUPPORTED_STRATEGIES}",
         )
 
-    champion = REGISTRY.get_champion(strategy, ticker)
+    # Registry fresco en cada request (igual que /health y /leaderboard): la
+    # instancia global REGISTRY se cachea al arrancar el proceso y quedaría
+    # desactualizada tras una promoción/reentrenamiento posterior.
+    registry = ModelRegistry(_REGISTRY_PATH)
+    champion = registry.get_champion(strategy, ticker)
     if champion is None:
         raise HTTPException(
             status_code=404,
@@ -268,6 +278,94 @@ def predict(strategy: str, ticker: str):
     if "pred_std" in pred:
         response["pred_std"] = pred["pred_std"]
     return response
+
+
+def _json_safe(value: Any) -> Any:
+    """Convertir escalares de pandas/numpy a tipos nativos JSON-serializables.
+
+    - numpy scalars (np.int64/np.float64) -> int/float de Python.
+    - NaN -> None (JSON no admite NaN; aparece cuando falta una métrica o delta).
+    """
+    if value is None:
+        return None
+    if hasattr(value, "item"):  # numpy scalar
+        value = value.item()
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    return value
+
+
+def _leaderboard_records(df: pd.DataFrame) -> list[dict[str, Any]]:
+    """DataFrame del leaderboard -> lista de dicts JSON-safe (todas las columnas)."""
+    return [
+        {key: _json_safe(val) for key, val in row.items()}
+        for row in df.to_dict(orient="records")
+    ]
+
+
+@app.get("/leaderboard")
+def leaderboard(strategies: str = "e1,e2", top: int | None = None):
+    """Ranking de champions — mismo cálculo que ``python -m scripts.evaluation.leaderboard``.
+
+    Reutiliza directamente ``build_leaderboard`` + ``add_deltas`` del script CLI, por lo
+    que rankea por el score compuesto de la promoción y agrega el delta de score/rank
+    contra el snapshot previo (``reports/dashboard/leaderboard_history.jsonl``). Es de
+    solo lectura: NO escribe el CSV ni el history (a diferencia del CLI, que persiste).
+
+    Args:
+        strategies: estrategias a rankear, separadas por coma (default: ``e1,e2``).
+        top: si se indica, devuelve solo las primeras N filas (el resumen usa el total).
+
+    Returns:
+        ``rows`` con todas las columnas del leaderboard (rank, strategy, ticker, variant,
+        score, deltas, trend, y las métricas bt_/ml_) + un ``summary`` de tendencias.
+    """
+    requested = [s.strip().lower() for s in strategies.split(",") if s.strip()]
+    if not requested:
+        raise HTTPException(
+            status_code=400, detail="Indicá al menos una estrategia (ej: strategies=e1,e2)."
+        )
+    unknown = [s for s in requested if s not in SUPPORTED_STRATEGIES]
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Estrategia(s) no soportada(s): {unknown}. Use: {list(SUPPORTED_STRATEGIES)}",
+        )
+    if top is not None and top < 1:
+        raise HTTPException(status_code=400, detail="top debe ser >= 1.")
+
+    # Registry fresco en cada request para reflejar promociones recientes
+    # (la instancia global REGISTRY se cachea al arrancar el proceso).
+    registry = ModelRegistry(_REGISTRY_PATH)
+    df = build_leaderboard(registry, CONFIG, requested)
+    df = add_deltas(df)
+
+    generated_at = datetime.now(timezone.utc).isoformat()
+    if df.empty:
+        return {
+            "strategies": requested,
+            "generated_at": generated_at,
+            "count": 0,
+            "total_champions": 0,
+            "rows": [],
+            "summary": {"improving": 0, "worsening": 0, "flat": 0, "new": 0},
+        }
+
+    view = df.head(top) if top else df
+    summary = {
+        "improving": int((df["trend"] == "up").sum()),
+        "worsening": int((df["trend"] == "down").sum()),
+        "flat": int((df["trend"] == "flat").sum()),
+        "new": int((df["trend"] == "new").sum()),
+    }
+    return {
+        "strategies": requested,
+        "generated_at": generated_at,
+        "count": int(len(view)),
+        "total_champions": int(len(df)),
+        "rows": _leaderboard_records(view),
+        "summary": summary,
+    }
 
 
 if __name__ == "__main__":

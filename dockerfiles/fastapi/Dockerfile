@@ -18,4 +18,8 @@ COPY dockerfiles/fastapi/app.py /app/app.py
 # Copiar código fuente del proyecto (para cargar modelos)
 COPY src /app/src
 
+# Copiar los scripts: la API reutiliza scripts/evaluation/leaderboard.py
+# (build_leaderboard + add_deltas) como única fuente de verdad del ranking.
+COPY scripts /app/scripts
+
 EXPOSE 8800

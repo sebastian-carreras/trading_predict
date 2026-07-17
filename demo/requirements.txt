@@ -1,0 +1,5 @@
+# En Hugging Face Spaces (SDK: Gradio), gradio lo provee el SDK vía sdk_version
+# del README — no hace falta listarlo acá. Estas son solo las deps extra.
+# Para correr local: pip install gradio pandas plotly
+pandas>=2.0
+plotly>=5.20

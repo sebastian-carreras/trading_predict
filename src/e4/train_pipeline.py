@@ -424,7 +424,7 @@ def main(  # Main
     mlflow_enabled = False
     mlflow = None
     tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "").strip()
-    experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "E4_Pairs")
+    experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "E4_Pairs_Trading_Strategy")
     try:
         import mlflow as _mlflow  # type: ignore
 

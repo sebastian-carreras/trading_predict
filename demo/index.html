@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>trading_predict — ML Trading MLOps Demo</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #171a21; --panel2: #1e222b; --border: #2a2f3a;
+    --text: #e6e8ec; --muted: #9aa2b1; --accent: #6ea8fe; --green: #4ade80;
+    --red: #f87171; --amber: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 24px 20px 64px; }
+  header h1 { font-size: 1.7rem; margin: 0 0 6px; }
+  header p { color: var(--muted); margin: 4px 0; }
+  .disclaimer {
+    background: var(--panel2); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 8px; padding: 12px 16px; margin: 16px 0; font-size: 0.92rem; color: var(--muted);
+  }
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid var(--border); margin: 20px 0 0; }
+  .tab {
+    background: none; border: none; color: var(--muted); padding: 10px 16px; cursor: pointer;
+    font-size: 0.95rem; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  .panel { display: none; padding: 22px 0; }
+  .panel.active { display: block; }
+  h2 { font-size: 1.25rem; margin: 0 0 4px; }
+  h3 { font-size: 1.05rem; margin: 22px 0 10px; }
+  .sub { color: var(--muted); font-size: 0.88rem; margin: 0 0 14px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .grid2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+  @media (max-width: 780px) { .grid3, .grid2 { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px;
+  }
+  .card h4 { margin: 0 0 2px; font-size: 1rem; }
+  .card .cdesc { color: var(--muted); font-size: 0.82rem; margin-bottom: 10px; }
+  .metric { display: flex; justify-content: space-between; padding: 4px 0; font-size: 0.92rem; }
+  .metric span:first-child { color: var(--muted); }
+  .metric span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; }
+  img.fig { width: 100%; border-radius: 8px; border: 1px solid var(--border); background: #fff; }
+  figure { margin: 0; }
+  figcaption { color: var(--muted); font-size: 0.8rem; margin-top: 6px; text-align: center; }
+  select {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 12px; font-size: 0.95rem; margin-right: 10px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+  th, td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+  th:nth-child(-n+2), td:nth-child(-n+2) { text-align: left; }
+  th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--bg); }
+  .tbl-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+  .badge { padding: 2px 8px; border-radius: 999px; font-size: 0.78rem; font-weight: 600; }
+  .buy { background: rgba(74,222,128,.15); color: var(--green); }
+  .sell { background: rgba(248,113,113,.15); color: var(--red); }
+  .hold, .na { background: rgba(154,162,177,.15); color: var(--muted); }
+  .up { color: var(--green); } .down { color: var(--red); } .flat, .new { color: var(--muted); }
+  .metric-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 14px 0; }
+  @media (max-width: 780px) { .metric-row { grid-template-columns: repeat(2, 1fr); } }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .stat .lbl { color: var(--muted); font-size: 0.78rem; }
+  .stat .val { font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .note { color: var(--muted); font-size: 0.84rem; margin: 8px 0; }
+  .warn {
+    background: rgba(251,191,36,.08); border: 1px solid rgba(251,191,36,.35); border-radius: 8px;
+    padding: 12px 16px; margin: 14px 0; color: #f4d38a; font-size: 0.9rem;
+  }
+  .chart { width: 100%; height: 360px; }
+  details { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin-top: 16px; }
+  summary { cursor: pointer; font-weight: 600; }
+  a { color: var(--accent); }
+  ul { padding-left: 20px; } li { margin: 6px 0; }
+  code { background: var(--panel2); padding: 1px 6px; border-radius: 5px; font-size: 0.85em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>📈 trading_predict — ML Trading MLOps system</h1>
+    <p>Return prediction with deep learning (GRU/LSTM) across 3 strategies, with a model registry,
+       champion/challenger promotion, leakage-aware <strong>walk-forward</strong> validation and drift
+       monitoring. Portfolio project (CEIA-FIUBA final work).</p>
+    <div class="disclaimer">
+      🎓 <strong>Portfolio demo, not a trading tool.</strong> No order execution, no financial advice.
+      All figures are <strong>out-of-sample</strong> walk-forward results of the champion models, read
+      from pre-computed artifacts.
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="overview">Overview</button>
+    <button class="tab" data-tab="perf">Strategy performance</button>
+    <button class="tab" data-tab="vs">Champion vs Baseline</button>
+    <button class="tab" data-tab="drift">Drift &amp; Stability</button>
+    <button class="tab" data-tab="method">Methodology</button>
+  </nav>
+
+  <!-- Overview -->
+  <section class="panel active" id="overview">
+    <h2 id="ov-title">Champion models in production</h2>
+    <p class="sub">Medians recomputed live from <code>models/registry.json</code> (not hard-coded).</p>
+    <div class="grid3" id="ov-cards"></div>
+    <div class="grid2" style="margin-top:18px">
+      <figure><img class="fig" data-fig="fig_sharpe_boxplot_by_strategy.png"><figcaption>Sharpe distribution by strategy</figcaption></figure>
+      <figure><img class="fig" data-fig="fig_risk_return_scatter.png"><figcaption>Risk vs return per champion</figcaption></figure>
+    </div>
+    <details>
+      <summary>🏗️ MLOps architecture</summary>
+      <figure style="margin-top:12px"><img class="fig" data-fig="architecture.png"><figcaption>Ingest → features → walk-forward → registry → serving</figcaption></figure>
+    </details>
+  </section>
+
+  <!-- Performance -->
+  <section class="panel" id="perf">
+    <div style="margin-bottom:12px">
+      <select id="strat-sel"></select>
+      <span class="sub" id="strat-desc"></span>
+    </div>
+    <div class="tbl-wrap"><table id="lb-table"></table></div>
+
+    <h3>🔎 Per-ticker drilldown</h3>
+    <select id="ticker-sel"></select>
+    <div class="metric-row" id="tk-metrics"></div>
+    <p class="note" id="tk-note"></p>
+    <div class="grid2">
+      <div><div class="chart" id="equity-chart"></div></div>
+      <div><div class="chart" id="preds-chart"></div></div>
+    </div>
+    <div class="grid2" style="margin-top:16px">
+      <figure><img class="fig" id="fig-heatmap"><figcaption>Monthly returns</figcaption></figure>
+      <figure><img class="fig" id="fig-cumret"><figcaption>Cumulative return</figcaption></figure>
+    </div>
+  </section>
+
+  <!-- Champion vs Baseline -->
+  <section class="panel" id="vs">
+    <p class="sub">Each champion is compared against a fixed <strong>baseline</strong> (linear regression for E1)
+      that acts as a sanity floor and is never promoted. Promotion requires beating the incumbent by ≥5% on a
+      composite score (<code>0.35·Sharpe + 0.25·IC + 0.20·DirAcc + 0.20·Calmar</code>).</p>
+    <div id="vs-blocks"></div>
+  </section>
+
+  <!-- Drift -->
+  <section class="panel" id="drift">
+    <p class="sub">The system monitors whether champions <strong>degrade over time</strong> (concept drift) and
+      whether the feature distribution <strong>shifts</strong> vs training (data drift, via <strong>KS/PSI</strong>
+      tests in <code>src/lifecycle/drift.py</code>).</p>
+    <div class="metric-row" id="drift-counts"></div>
+    <p class="sub">Δ of each champion's composite score vs the previous daily snapshot.</p>
+    <div class="grid2" style="margin-top:8px">
+      <figure><img class="fig" data-fig="fig_champion_stability_sharpe.png"><figcaption>Champion Sharpe over time</figcaption></figure>
+      <figure><img class="fig" data-fig="fig_champion_stability_ic.png"><figcaption>Champion IC over time</figcaption></figure>
+    </div>
+  </section>
+
+  <!-- Methodology -->
+  <section class="panel" id="method">
+    <h3>Honest, leakage-aware validation</h3>
+    <ul>
+      <li><strong>Walk-forward CV with embargo</strong> (≥ prediction horizon) between train and test — never
+        evaluated on information the model couldn't have had.</li>
+      <li><strong>Z-score computed on the train fold only</strong> (stats never see val/test → no data snooping).</li>
+      <li><strong>Huber loss</strong> (robust to price outliers), not MSE.</li>
+      <li><strong>Registry as single source of truth</strong>, atomic writes, champion/challenger promotion with
+        guardrails (reject NaN/Inf, Sharpe &lt; 0, IC worse than baseline).</li>
+    </ul>
+    <div class="warn" id="e3-warn"></div>
+    <h3>Model diagnostics</h3>
+    <div class="grid3">
+      <figure><img class="fig" data-fig="fig_conclusions_walkforward_stability.png"><figcaption>Walk-forward stability</figcaption></figure>
+      <figure><img class="fig" data-fig="fig_conclusions_rolling_ic.png"><figcaption>Rolling IC</figcaption></figure>
+      <figure><img class="fig" data-fig="fig_conclusions_calibration.png"><figcaption>Calibration</figcaption></figure>
+    </div>
+    <h3>Hyperparameter optimization (Optuna)</h3>
+    <div class="grid2">
+      <figure><img class="fig" data-fig="param_importances.png"><figcaption>Hyperparameter importance</figcaption></figure>
+      <figure><img class="fig" data-fig="optimization_history.png"><figcaption>Optimization history</figcaption></figure>
+    </div>
+    <p class="note" style="margin-top:20px">
+      Source: <a href="https://github.com/sebastian-carreras/trading_predict" target="_blank">github.com/sebastian-carreras/trading_predict</a>
+      · Stack: PyTorch · scikit-learn · MLflow · Airflow · FastAPI · Docker
+    </p>
+  </section>
+</div>
+
+<script>
+const STRATS = ["e1","e2","e3"];
+const META = {
+  e1: {name: "E1 · Conservative", desc: "GRU · 90-day horizon · daily"},
+  e2: {name: "E2 · Moderate", desc: "LSTM · 20-day horizon · daily"},
+  e3: {name: "E3 · Intraday", desc: "LSTM ensemble · 30-min · documented negative result"},
+};
+const REGION = {e1: "ar", e2: "us", e3: "us"};
+const LB_COLS = ["rank","ticker","score","bt_sharpe","ml_ic","ml_directional_accuracy","bt_calmar","bt_max_drawdown","signal","trend"];
+const COL_LABEL = {rank:"#", ticker:"Ticker", score:"Score", bt_sharpe:"Sharpe", ml_ic:"IC",
+  ml_directional_accuracy:"Dir.Acc", bt_calmar:"Calmar", bt_max_drawdown:"MaxDD", signal:"Signal", trend:"Trend"};
+
+let champions = [], headline = {}, leaderboard = [];
+
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/);
+  const headers = lines[0].split(",");
+  return lines.slice(1).map(line => {
+    const cells = line.split(",");
+    const o = {};
+    headers.forEach((h, i) => o[h] = cells[i]);
+    return o;
+  });
+}
+function num(v) { const n = parseFloat(v); return isNaN(n) ? null : n; }
+function fmt(v, pct=false, dec=2) {
+  if (v === null || v === undefined || v === "" || (typeof v === "number" && isNaN(v))) return "—";
+  const n = typeof v === "number" ? v : parseFloat(v);
+  if (isNaN(n)) return String(v);
+  return pct ? (n*100).toFixed(1) + "%" : n.toFixed(dec);
+}
+function figURL(name) { return "assets/figures/" + name; }
+function bindFigures(root=document) {
+  root.querySelectorAll("img.fig[data-fig]").forEach(img => {
+    img.src = figURL(img.dataset.fig);
+    img.onerror = () => { const f = img.closest("figure"); if (f) f.style.display = "none"; };
+  });
+}
+
+async function load() {
+  const [c, h, lbText] = await Promise.all([
+    fetch("assets/champions.json").then(r => r.json()),
+    fetch("assets/headline.json").then(r => r.json()),
+    fetch("assets/leaderboard.csv").then(r => r.text()),
+  ]);
+  champions = c; headline = h; leaderboard = parseCSV(lbText);
+  bindFigures();
+  renderOverview();
+  renderVs();
+  renderDrift();
+  renderMethod();
+  initPerf();
+}
+
+function renderOverview() {
+  const by = headline.by_strategy || {};
+  document.getElementById("ov-title").textContent =
+    (headline.total_champions || champions.length) + " champion models in production";
+  document.getElementById("ov-cards").innerHTML = STRATS.map(s => {
+    const i = by[s] || {};
+    return `<div class="card">
+      <h4>${META[s].name}</h4>
+      <div class="cdesc">${META[s].desc}</div>
+      <div class="metric"><span>Champions</span><span>${i.n_champions ?? 0}</span></div>
+      <div class="metric"><span>Sharpe (median)</span><span>${fmt(i.median_sharpe)}</span></div>
+      <div class="metric"><span>Dir. accuracy (median)</span><span>${fmt(i.median_directional_accuracy, true)}</span></div>
+      <div class="metric"><span>IC (median)</span><span>${fmt(i.median_ic, false, 3)}</span></div>
+    </div>`;
+  }).join("");
+}
+
+function renderVs() {
+  document.getElementById("vs-blocks").innerHTML = STRATS.map(s => {
+    const figs = [
+      [`fig_${s}_vs_baseline_ml.png`, "ML quality"],
+      [`fig_${s}_vs_baseline_trading_retorno.png`, "Return"],
+      [`fig_${s}_vs_baseline_trading_riesgo.png`, "Risk"],
+    ].map(([f, cap]) => `<figure><img class="fig" data-fig="${f}"><figcaption>${cap}</figcaption></figure>`).join("");
+    return `<h3>${META[s].name}</h3><div class="grid3">${figs}</div>`;
+  }).join("");
+  bindFigures(document.getElementById("vs-blocks"));
+}
+
+function renderDrift() {
+  const counts = {up:0, down:0, flat:0, new:0};
+  leaderboard.forEach(r => { if (counts[r.trend] !== undefined) counts[r.trend]++; });
+  const cells = [["▲ Improving","up","up"],["▼ Worsening","down","down"],["= Stable","flat","flat"],["★ New","new","new"]];
+  document.getElementById("drift-counts").innerHTML = cells.map(([lbl,k,cls]) =>
+    `<div class="stat"><div class="lbl">${lbl}</div><div class="val ${cls}">${counts[k]}</div></div>`).join("");
+}
+
+function renderMethod() {
+  const e3 = (headline.by_strategy || {}).e3 || {};
+  document.getElementById("e3-warn").innerHTML =
+    `⚠️ <strong>Documented negative result (E3 intraday):</strong> median Sharpe <strong>${fmt(e3.median_sharpe)}</strong>
+     — the intraday strategy <strong>does not beat transaction costs</strong>. Reported as-is, not hidden: an honest
+     negative result is worth more than a dressed-up one.`;
+}
+
+function lbRowsFor(s) {
+  let rows = leaderboard.filter(r => r.strategy === s);
+  if (rows.length) return rows.map(r => ({
+    rank: r.rank, ticker: r.ticker, score: num(r.score), bt_sharpe: num(r.bt_sharpe),
+    ml_ic: num(r.ml_ic), ml_directional_accuracy: num(r.ml_directional_accuracy),
+    bt_calmar: num(r.bt_calmar), bt_max_drawdown: num(r.bt_max_drawdown), signal: r.signal, trend: r.trend,
+  }));
+  // fallback from champions.json
+  return champions.filter(c => c.strategy === s).sort((a,b) => (b.metrics.bt_sharpe||-9)-(a.metrics.bt_sharpe||-9))
+    .map((c, i) => ({rank: i+1, ticker: c.ticker, score: null, bt_sharpe: c.metrics.bt_sharpe,
+      ml_ic: c.metrics.ml_ic, ml_directional_accuracy: c.metrics.ml_directional_accuracy,
+      bt_calmar: c.metrics.bt_calmar, bt_max_drawdown: c.metrics.bt_max_drawdown, signal: c.signal, trend: ""}));
+}
+
+function renderTable(s) {
+  const rows = lbRowsFor(s);
+  const head = "<tr>" + LB_COLS.map(c => `<th>${COL_LABEL[c]}</th>`).join("") + "</tr>";
+  const body = rows.map(r => "<tr>" + LB_COLS.map(c => {
+    let v = r[c];
+    if (c === "signal") return `<td><span class="badge ${String(v||"").toLowerCase()||"na"}">${v||"—"}</span></td>`;
+    if (c === "trend") { const m={up:"▲",down:"▼",flat:"=",new:"★"}; return `<td class="${v||""}">${m[v]||""}</td>`; }
+    if (c === "ml_directional_accuracy" || c === "bt_max_drawdown") return `<td>${fmt(v, true)}</td>`;
+    if (c === "ml_ic") return `<td>${fmt(v, false, 3)}</td>`;
+    if (c === "score" || c === "bt_sharpe" || c === "bt_calmar") return `<td>${fmt(v)}</td>`;
+    return `<td>${v ?? "—"}</td>`;
+  }).join("") + "</tr>").join("");
+  document.getElementById("lb-table").innerHTML = head + body;
+}
+
+const plotLayout = (title) => ({
+  title: {text: title, font: {size: 14, color: "#e6e8ec"}},
+  paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+  font: {color: "#9aa2b1", size: 11}, margin: {l: 48, r: 12, t: 40, b: 36},
+  xaxis: {gridcolor: "#2a2f3a"}, yaxis: {gridcolor: "#2a2f3a"},
+  legend: {orientation: "h", y: 1.12}, height: 360,
+});
+const plotCfg = {responsive: true, displayModeBar: false};
+
+async function renderTicker(s, t) {
+  const champ = champions.find(c => c.strategy === s && c.ticker === t);
+  const box = document.getElementById("tk-metrics");
+  if (!champ) { box.innerHTML = ""; return; }
+  const m = champ.metrics || {};
+  const sigCls = String(champ.signal || "na").toLowerCase();
+  const stats = [
+    ["Sharpe", fmt(m.bt_sharpe)], ["Dir. acc.", fmt(m.ml_directional_accuracy, true)],
+    ["IC", fmt(m.ml_ic, false, 3)], ["Calmar", fmt(m.bt_calmar)],
+    ["Total return", fmt(m.bt_total_return, true)], ["CAGR", fmt(m.bt_cagr, true)],
+    ["Max drawdown", fmt(m.bt_max_drawdown, true)],
+    ["Signal", `<span class="badge ${sigCls}">${champ.signal || "—"}</span>`],
+  ];
+  box.innerHTML = stats.map(([l, v]) => `<div class="stat"><div class="lbl">${l}</div><div class="val">${v}</div></div>`).join("");
+  const thr = champ.thresholds || {};
+  document.getElementById("tk-note").innerHTML =
+    `Last walk-forward prediction: <strong>${fmt(champ.predicted_return, true)}</strong> on
+     ${String(champ.prediction_date || "").slice(0,10)} · τ_buy=${thr.tau_buy} / τ_sell=${thr.tau_sell}.
+     It's the last walk-forward prediction, not a real-time inference.`;
+
+  // Equity curve
+  if (champ.backtest_csv) {
+    try {
+      const rows = parseCSV(await fetch("assets/" + champ.backtest_csv).then(r => r.text()));
+      Plotly.newPlot("equity-chart",
+        [{x: rows.map(r => r.timestamp), y: rows.map(r => num(r.equity)), type: "scatter", mode: "lines",
+          line: {color: "#6ea8fe"}, name: "equity"}],
+        plotLayout("Equity curve (walk-forward, net of costs)"), plotCfg);
+    } catch (e) { document.getElementById("equity-chart").innerHTML = ""; }
+  } else { document.getElementById("equity-chart").innerHTML = ""; }
+
+  // Pred vs actual
+  if (champ.predictions_csv) {
+    try {
+      const rows = parseCSV(await fetch("assets/" + champ.predictions_csv).then(r => r.text()));
+      const x = rows.map(r => r.timestamp);
+      Plotly.newPlot("preds-chart", [
+        {x, y: rows.map(r => num(r.y_true)), type: "scatter", mode: "lines", name: "actual", line: {color: "#9aa2b1"}},
+        {x, y: rows.map(r => num(r.y_pred)), type: "scatter", mode: "lines", name: "predicted", line: {color: "#4ade80"}},
+      ], plotLayout("Predicted vs actual (out-of-sample return)"), plotCfg);
+    } catch (e) { document.getElementById("preds-chart").innerHTML = ""; }
+  } else { document.getElementById("preds-chart").innerHTML = ""; }
+
+  // Support figures
+  const hm = document.getElementById("fig-heatmap"), cr = document.getElementById("fig-cumret");
+  hm.closest("figure").style.display = ""; cr.closest("figure").style.display = "";
+  hm.src = figURL(`fig_conclusions_monthly_heatmap_${s}.png`);
+  hm.onerror = () => hm.closest("figure").style.display = "none";
+  cr.src = figURL(`fig_conclusions_cumulative_return_${REGION[s]}.png`);
+  cr.onerror = () => cr.closest("figure").style.display = "none";
+}
+
+function renderStrategy(s) {
+  document.getElementById("strat-desc").textContent = META[s].desc;
+  renderTable(s);
+  const tickers = champions.filter(c => c.strategy === s).map(c => c.ticker).sort();
+  const tsel = document.getElementById("ticker-sel");
+  tsel.innerHTML = tickers.map(t => `<option value="${t}">${t}</option>`).join("");
+  if (tickers.length) renderTicker(s, tickers[0]);
+}
+
+function initPerf() {
+  const ssel = document.getElementById("strat-sel");
+  ssel.innerHTML = STRATS.map(s => `<option value="${s}">${META[s].name}</option>`).join("");
+  ssel.onchange = () => renderStrategy(ssel.value);
+  document.getElementById("ticker-sel").onchange = e => renderTicker(ssel.value, e.target.value);
+  renderStrategy("e1");
+}
+
+// Tabs
+document.getElementById("tabs").addEventListener("click", e => {
+  const btn = e.target.closest(".tab"); if (!btn) return;
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+  btn.classList.add("active");
+  document.getElementById(btn.dataset.tab).classList.add("active");
+  window.dispatchEvent(new Event("resize")); // reflow Plotly if hidden
+});
+
+load().catch(err => {
+  document.querySelector(".wrap").insertAdjacentHTML("beforeend",
+    `<div class="warn">Failed to load demo data: ${err}</div>`);
+});
+</script>
+</body>
+</html>

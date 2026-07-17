@@ -226,6 +226,7 @@ python -m src.e1.train_simple_pipeline --auto-promote
 ```bash
 # Entrena e2_moderate para todo el universo (descarga datos nuevos incrementales por defecto)
 python -m src.e2.train_pipeline
+python -m src.e2.train_pipeline --use-latest-data
 # Entrena e2_moderate solo para NVDA y GOOGL (descarga incremental + entrena)
 python -m src.e2.train_pipeline --tickers NVDA,GOOGL
 # Entrena sin descargar: usa los datos existentes en disco

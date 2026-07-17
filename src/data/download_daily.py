@@ -100,6 +100,14 @@ def download_daily_ohlcv(
         if incremental:
             last_ts = last_csv_timestamp(out_path)
             if last_ts is not None:
+                last_date = last_ts.tz_convert("UTC").normalize()
+                today = pd.Timestamp.now(tz="UTC").normalize()
+                if last_date >= today:
+                    # Ya tenemos datos hasta hoy: no puede haber una barra más nueva
+                    # que Yahoo Finance pueda devolver, así que evitamos el request.
+                    print(f"⏭️  {ticker} ya está al día (última fecha {last_date.date()}) - sin descarga")
+                    skipped.append(ticker)
+                    continue
                 fetch_start = (last_ts - _timedelta(days=overlap_days)).strftime("%Y-%m-%d")
 
         # Intentar Yahoo Finance primero

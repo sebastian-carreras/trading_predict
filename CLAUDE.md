@@ -29,23 +29,43 @@ python -m src.e1.train_pipeline --tickers AAPL --skip-download   # usa datos exi
 # Train E2 (Moderate, LSTM, 20-day)
 python -m src.e2.train_pipeline --tickers AAPL
 
+# Train E3 (Intraday, LSTM, 30-min) — needs rework, ver PORTFOLIO.md (resultado negativo)
+python -m src.e3.train_pipeline --tickers SPY
+python -m src.e3.train_pipeline --download-only   # solo descarga datos intradiarios
+
 # Train baselines
 python -m src.e1.train_baseline
 python -m src.e2.train_baseline
+
+# Runner E1 completo (baseline + simple + conservative)
+python -m src.e1.train_all
+python -m src.e1.train_all --tickers AAPL,MSFT
 
 # Run tests
 pytest tests/
 
 # Run a single test file
-pytest tests/test_registry.py -v
+pytest tests/test_registry_atomicity.py -v
+
+# What CI actually runs (.github/workflows/ci.yml, Python 3.10 & 3.12 matrix)
+python -m pytest -v
 
 # Docker (full stack: Airflow + MLflow + FastAPI)
 cp .env.example .env
-docker-compose --profile all up -d
-# Airflow UI: http://localhost:8080 | MLflow UI: http://localhost:5050 | API: http://localhost:8800/docs
+docker-compose --profile all up -d      # Airflow + MLflow + FastAPI + Postgres + MinIO
+docker-compose --profile mlflow up -d   # MLflow + Postgres only
+docker-compose --profile airflow up -d  # Airflow only
+# Airflow UI: http://localhost:8080 | MLflow UI: http://localhost:5050 | API: http://localhost:8800/docs | MinIO: http://localhost:9001
+
+bash scripts/mlflow/up_transparent_mlflow.sh   # sync local (non-Docker) MLflow runs into the Docker MLflow UI
+
+# Pre-commit (secret scanning), one-time setup
+pip install pre-commit detect-secrets
+detect-secrets scan > .secrets.baseline
+pre-commit install
 ```
 
-**No Makefile** — all commands are run as `python -m src.<module>`.
+**No Makefile** — all commands are run as `python -m src.<module>` (or `python -m scripts.<module>` / `python scripts/<path>.py`, see below).
 
 ---
 
@@ -59,6 +79,8 @@ docker-compose --profile all up -d
 | E2 Moderate | LSTM [128,64] | 20-day | daily | Champion |
 | E3 Intraday | LSTM | 30-min | 5-min | need to rework (TODO) |
 | E4 Pairs Trading | k-NN + OU | — | daily | Disabled (TODO) |
+
+See `PORTFOLIO.md` for current out-of-sample walk-forward results per strategy (E1 median Sharpe 1.09, E2 0.75, E3 −3.2 — documented negative result, doesn't beat intraday costs).
 
 ### Training Pipeline Flow (E1/E2)
 
@@ -95,6 +117,20 @@ Per `(strategy, ticker)`:
 - Promote only if improvement ≥ 5% over champion
 - Audit trail: `models/metrics_log.jsonl`
 
+### Orchestration — Airflow (`dockerfiles/airflow/dags/`)
+
+- Per-strategy retraining DAGs: `E1/e1_conservative_pipeline.py`, `e1_simple_pipeline.py`, `e1_baseline_linear_regression.py`, `e1_optuna_tuning.py`; `E2/e2_moderate_pipeline.py`, `e2_simple_pipeline.py`, `e2_optuna_tuning.py`; `E3/e3_intraday_pipeline.py`; `E4/e4_pairs_trading_pipeline.py`, `e4_monthly_recalibration.py`.
+- `reporting/daily_report.py` is **data-aware**, not clock-scheduled — it triggers only after both E1 and E2 finish retraining (`Dataset("trading://registry/e1_conservative")`, `.../e2_moderate`). Task chain: `refresh_dashboard` → `leaderboard` → `refresh_history_reports` → `stability_analysis`.
+- Trigger a DAG manually: `docker exec -it airflow_webserver airflow dags trigger e1_conservative_pipeline`
+- Validate DAGs: `python scripts/airflow/validate_dags.py`
+
+### Leaderboard & Reporting
+
+`scripts/evaluation/leaderboard.py` ranks all champions in `models/registry.json` using the **same composite score** as promotion (`src.lifecycle.promotion.compute_score`), diffs against `reports/dashboard/leaderboard_history.jsonl` to show score/rank deltas, flags champions "stale" (>10 days since training), and writes `reports/dashboard/leaderboard_latest.csv`.
+```bash
+python -m scripts.evaluation.leaderboard --strategies e1,e2 --top 10
+```
+
 ### Key Files
 
 | File | Purpose |
@@ -106,6 +142,21 @@ Per `(strategy, ticker)`:
 | `src/lifecycle/guardrails.py` | Phase 1 validation rules |
 | `models/registry.json` | Live model registry (do not edit manually) |
 | `runs/<variant>/<ts>/<TICKER>/` | Immutable per-run outputs (model.pth, predictions.csv, metrics.json, plots/) |
+
+### `scripts/` layout
+
+Reorganized into subfolders (see `scripts/README.md` for the authoritative, current list — the root `README.md` still references pre-reorg script paths, don't trust those):
+```
+scripts/
+├── data/          run_data_cleaning.py
+├── optimization/  optimize_e1/e2/e3_hyperparameters.py, analyze_optuna_db.py
+├── evaluation/    leaderboard.py, stability_analysis.py, compare_*.py, promote_candidate.py
+├── trading/       e1_simple_iol_live_trade.py, iol_list_e1_prices.py
+├── airflow/       validate_dags.py
+└── mlflow/        up_transparent_mlflow.sh, cleanup_init_test_runs.py
+```
+
+> Several README_E*.md / QUICKSTART_*.md files linked from the root `README.md` no longer exist in the repo — that content was consolidated into `PORTFOLIO.md` and `docs/`. Prefer those over chasing dead links in `README.md`.
 
 ### Custom Claude Skills (`.claude/commands/`)
 

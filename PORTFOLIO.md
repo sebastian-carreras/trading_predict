@@ -2,6 +2,8 @@
 
 ![CI](https://github.com/sebastian-carreras/trading_predict/actions/workflows/ci.yml/badge.svg)
 
+**▶️ Live demo:** https://huggingface.co/spaces/chatoxz/trading-predict-demo
+
 An end-to-end **machine-learning system** that turns OHLCV market data into buy/sell/hold
 signals across multiple strategies and horizons — with a full **MLOps lifecycle** around the
 models: walk-forward validation, a champion/challenger model registry, automated promotion
@@ -40,11 +42,11 @@ champion models** in each strategy.
 | Strategy | Model | Horizon | Champions | Median Sharpe | Median Dir. Acc | Verdict |
 |---|---|---|:--:|:--:|:--:|---|
 | **E1 — Conservative** | GRU, 2-layer (Optuna-tuned) | 90 d | 10 | **1.09** | **68%** | ✅ Strongest; beats baseline on every metric |
-| **E2 — Moderate** | LSTM, 2-layer | 20 d | 11 | 0.75 | 61% | 🟡 Works, but rank-IC ≈ 0 (weak) |
-| **E3 — Intraday** | LSTM ensemble | 30 min | 4 | **−3.2** | 48% | 🔴 Negative result — does not beat costs; needs rework |
+| **E2 — Moderate** | LSTM, 2-layer | 20 d | 31 | 0.56 | 56% | 🟡 Mixed — directional edge, but median Sharpe ≈ baseline over a broad universe |
+| **E3 — Intraday** | LSTM ensemble | 30 min | 4 | **−2.6** | 49% | 🔴 Negative result — does not beat costs; needs rework |
 | **E4 — Pairs trading** | k-NN + Ornstein-Uhlenbeck | 10 d | — | — | — | ⚪ Specified, not implemented (roadmap) |
 
-**25 champion models** in production across strategies, over a mixed US + Argentine (BYMA)
+**45 champion models** in production across strategies, over a mixed US + Argentine (BYMA)
 equity universe.
 
 ### The models add value over the baseline
@@ -53,10 +55,14 @@ Median across champions vs. the fixed baseline (Linear Regression for E1):
 
 | Metric | E1 champion | E1 baseline | E2 champion | E2 baseline |
 |---|:--:|:--:|:--:|:--:|
-| Sharpe | **1.09** | 0.87 | **0.75** | 0.61 |
-| Directional accuracy | **68.2%** | 57.6% | **60.6%** | 50.8% |
-| Information Coefficient | **0.124** | −0.016 | −0.022 | −0.017 |
-| Calmar | **1.25** | 0.75 | 0.59 | 0.54 |
+| Sharpe | **1.09** | 0.87 | 0.56 | 0.61 |
+| Directional accuracy | **68.2%** | 57.6% | **55.9%** | 50.8% |
+| Information Coefficient | **0.124** | −0.016 | **0.03** | −0.017 |
+| Calmar | **1.25** | 0.75 | 0.45 | 0.54 |
+
+E1 clearly adds value over the baseline on every metric. E2, after broadening to a 31-ticker
+universe, only leads on directional accuracy and rank-IC — on risk-adjusted return (Sharpe/Calmar)
+it sits at roughly the linear baseline. Reported as-is.
 
 E1's best per-ticker champions: **BYMA.BA** (Sharpe 1.63), **PAMP.BA** (1.38), **GGAL.BA**
 (1.30), **CEPU.BA** (1.24).
@@ -126,9 +132,10 @@ Leakage is the #1 way backtests lie. The guardrails here are structural:
   directional accuracy across 10 tickers, beating the linear baseline on every metric.
   *Caveat:* max drawdowns are large (median ~37%, higher on volatile Argentine names) — well
   above the strategy's original <15% design target. Sharpe is good; capital-preservation is not.
-- **E2 — Moderate (LSTM, 20-day).** Works and beats the baseline, but the rank-IC hovers around
-  zero — the edge comes from directional timing more than from ranking assets. A shorter horizon
-  with a noisier signal.
+- **E2 — Moderate (LSTM, 20-day).** Broadened to 31 tickers. Across that wider universe the median
+  Sharpe (~0.56) sits at roughly the linear baseline; the edge is in directional accuracy (56% vs
+  51%) and a modest positive rank-IC (0.03), not in risk-adjusted return. The weakest of the
+  "working" strategies — a shorter horizon with a noisier signal, reported honestly.
 - **E3 — Intraday (LSTM ensemble, 30-min).** **A documented negative result.** Net of the 20 bps
   intraday cost, Sharpe is strongly negative and directional accuracy sits below 50% — the
   strategy does not beat its costs. Kept in the repo transparently as a strategy that needs a
@@ -151,8 +158,8 @@ Leakage is the #1 way backtests lie. The guardrails here are structural:
 - [x] Optuna tuning + MLflow tracking
 - [x] Dockerized stack (Airflow + MLflow + FastAPI)
 - [x] **CI (GitHub Actions + pytest)**
-- [ ] Production monitoring / drift detection (KS + PSI on live feature distributions)
-- [ ] Hosted live demo
+- [x] Drift detection (KS + PSI) — `src/lifecycle/drift.py` + tests (live wiring into Airflow pending)
+- [x] Hosted live demo — [huggingface.co/spaces/chatoxz/trading-predict-demo](https://huggingface.co/spaces/chatoxz/trading-predict-demo)
 - [ ] Rework E3 (currently a negative result)
 - [ ] Implement E4 (pairs trading)
 

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "crafting-effective-readmes": {
+      "source": "softaworks/agent-toolkit",
+      "sourceType": "github",
+      "skillPath": "skills/crafting-effective-readmes/SKILL.md",
+      "computedHash": "c931a8c22160e8925400778fcb2266b5d1df762f3052edba65f72479f79f2d6c"
+    },
+    "trading-signal": {
+      "source": "binance/binance-skills-hub",
+      "sourceType": "github",
+      "skillPath": "skills/binance-web3/trading-signal/SKILL.md",
+      "computedHash": "3c68477564ce42bec4e8db6602a96e5ed4b780119f872f7ac74b9ed0f9fe7e05"
+    }
+  }
+}

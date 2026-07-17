@@ -8,8 +8,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import torch
-
 from .registry import ModelRegistry
 
 
@@ -60,6 +58,8 @@ class ModelLoader:
         model_path = self._get_model_path(strategy, ticker, stage)
         if model_path is None or not model_path.exists():
             return None
+        import torch  # Lazy: entornos sin torch (ej. FastAPI) solo leen predicciones guardadas.
+
         return torch.load(model_path, map_location="cpu", weights_only=False)
 
     def _get_model_path(

@@ -43,8 +43,15 @@ class ModelRegistry:
         mlflow_run_id: str | None = None,
         feature_names: list[str] | None = None,
         hyperparams: dict[str, Any] | None = None,
+        train_data_end: str | None = None,
     ) -> None:
-        """Register a freshly-trained model as *candidate*."""
+        """Register a freshly-trained model as *candidate*.
+
+        ``train_data_end`` is the last date of the training data window (ISO
+        string). It is the cutoff used by the fair-comparison logic to build a
+        common out-of-sample window vs. the champion, so it must follow the
+        model through promotion (``promote_to_champion`` copies the whole dict).
+        """
         tickers = self._ensure_strategy_tickers(strategy)
         entry = tickers.setdefault(ticker, _empty_ticker())
         candidate_entry: dict[str, Any] = {
@@ -54,6 +61,8 @@ class ModelRegistry:
             "mlflow_run_id": mlflow_run_id,
             "metrics": _clean_metrics(metrics),
         }
+        if train_data_end is not None:
+            candidate_entry["train_data_end"] = str(train_data_end)
         if feature_names is not None:
             candidate_entry["features"] = list(feature_names)
         if hyperparams is not None:
@@ -192,6 +201,87 @@ class ModelRegistry:
         champion["reason"] = reason
         entry.setdefault("retired", []).insert(0, champion)
         entry["champion"] = None
+        self._save()
+        return True
+
+    def restore_champion_from_retired(
+        self,
+        strategy: str,
+        ticker: str,
+        *,
+        index: int = 0,
+        reason: str = "rollback_restore",
+    ) -> dict[str, Any] | None:
+        """Restore a retired model back to champion (undo a bad promotion).
+
+        Pops ``retired[index]`` and installs it as champion. The current
+        champion (if any) is pushed to the front of the retired list, stamped
+        with ``retired_at``/``reason``. The restored model's own retirement
+        bookkeeping (``retired_at``/``reason``) is cleared.
+
+        Returns the restored entry, or ``None`` if there is no retired model at
+        ``index`` (or no such strategy/ticker).
+        """
+        tickers = self._get_strategy_tickers(strategy)
+        if tickers is None:
+            return None
+        entry = tickers.get(ticker)
+        if entry is None:
+            return None
+        retired = entry.get("retired", [])
+        if not retired or index >= len(retired):
+            return None
+
+        restored = retired.pop(index)
+        restored.pop("retired_at", None)
+        restored.pop("reason", None)
+
+        current = entry.get("champion")
+        if current is not None:
+            current["retired_at"] = _now_iso()
+            current["reason"] = reason
+            retired.insert(0, current)
+
+        entry["retired"] = retired[:5]  # enforce keep_last_n
+        entry["champion"] = restored
+        self._save()
+        return restored
+
+    def set_recent_metrics(
+        self,
+        strategy: str,
+        ticker: str,
+        metrics: dict[str, Any],
+        *,
+        asof: str | None = None,
+        window_start: str | None = None,
+        window_end: str | None = None,
+        n_samples: int | None = None,
+    ) -> bool:
+        """Attach freshly re-backtested metrics to the current champion.
+
+        These are the champion's metrics recomputed on a recent out-of-sample
+        window (see ``lifecycle.reevaluation``). The original training-time
+        ``metrics`` are left untouched; consumers (e.g. the leaderboard) can
+        prefer ``recent_metrics`` when present to reflect *current* quality.
+
+        Returns True if a champion existed and was updated.
+        """
+        tickers = self._get_strategy_tickers(strategy)
+        if tickers is None:
+            return False
+        entry = tickers.get(ticker)
+        if entry is None or entry.get("champion") is None:
+            return False
+        champion = entry["champion"]
+        champion["recent_metrics"] = _clean_metrics(metrics)
+        champion["recent_metrics_asof"] = asof or _now_iso()
+        if window_start is not None:
+            champion["recent_metrics_window_start"] = str(window_start)
+        if window_end is not None:
+            champion["recent_metrics_window_end"] = str(window_end)
+        if n_samples is not None:
+            champion["recent_metrics_n_samples"] = int(n_samples)
         self._save()
         return True
 

@@ -205,8 +205,9 @@ def run_e3_walk_forward(  # Walk-forward completo para E3
 
         # Log de fold: train Y test explícitos para evidenciar la ventana CRECIENTE
         # (expanding). Ver solo el test aparenta ventana deslizante. Unidad = barras 5-min.
+        fold_pct = 100.0 * fold_idx / folds
         print(
-            f"\n  Fold {fold_idx}/{folds}: "
+            f"\n  Fold {fold_idx}/{folds} ({fold_pct:5.1f}%): "
             f"train[{ts_train[0].date()} -> {ts_train[-1].date()}] n={len(train_idx)} (expanding) | "
             f"test[{ts_test[0].date()} -> {ts_test[-1].date()}] n={len(test_idx)} | "
             f"embargo={gap_samples} barras"
@@ -916,7 +917,7 @@ def main() -> None:  # Main
     mlflow = None  # Ref MLflow
     tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "").strip()  # Tracking URI
     remote_check_timeout_seconds = float(os.getenv("MLFLOW_REMOTE_CHECK_TIMEOUT_SECONDS", "1.5"))
-    experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "E3_Intraday")  # Experimento
+    experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "E3_Intraday_Strategy")  # Experimento
 
     local_sqlite_dir = root / "runs" / "mlflow_local"
     ensure_dir(local_sqlite_dir)

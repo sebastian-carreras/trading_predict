@@ -18,12 +18,14 @@ Diferencias con baseline:
 - Verifica data/clean/ antes de descargar
 """
 
+import os
 import sys
 import argparse
 import pandas as pd
 import numpy as np
 from pathlib import Path
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
 import mlflow
 
 # Agregar src al path
@@ -432,7 +434,9 @@ def main():
     parser.add_argument("--mlflow-docker", action="store_true", help="Usar MLflow en Docker")
     
     args = parser.parse_args()
-    
+
+    load_dotenv()  # Cargar .env (MLFLOW_TRACKING_URI, etc.)
+
     # Paths
     root = project_root()
     data_dir = root / "data" / "clean"
@@ -533,7 +537,12 @@ def main():
     # 5. Guardar en MLflow
     if oot_metrics:
         try:
-            mlflow_uri = "http://localhost:5050" if args.mlflow_docker else f"sqlite:///{root}/runs/mlflow_local/mlflow.db"
+            if args.mlflow_docker:
+                mlflow_uri = "http://localhost:5050"
+            else:
+                mlflow_uri = os.getenv("MLFLOW_TRACKING_URI", "").strip()
+                if not mlflow_uri:
+                    mlflow_uri = f"sqlite:///{root}/runs/mlflow_local/mlflow.db"
             mlflow.set_tracking_uri(mlflow_uri)
             mlflow.set_experiment("E1_Simple_Retrospective_Validation")
             

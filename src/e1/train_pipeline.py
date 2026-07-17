@@ -779,8 +779,9 @@ def run_e1_walk_forward(  # Walk-forward completo
         # es CRECIENTE (expanding) — el train siempre arranca en la misma fecha y
         # solo crece su fin; sin esto, ver únicamente el test da la falsa impresión
         # de ventana deslizante.
+        fold_pct = 100.0 * fold_idx / folds
         print(
-            f"    Fold {fold_idx}: "
+            f"    Fold {fold_idx}/{folds} ({fold_pct:5.1f}%): "
             f"train[{ts_train[0].date()} -> {ts_train[-1].date()}] n={len(train_idx)} (expanding) | "
             f"test[{window_label}] n={len(test_idx)} | "
             f"MAE={mae:.4f} IC={ic_str} Sharpe={sharpe_str}"
@@ -984,6 +985,9 @@ def run_e1_for_ticker(
     ohlcv = apply_training_window(
         ohlcv, config, granularity="daily", use_latest=use_latest_data, ticker=ticker,
     )
+    # Último día de la ventana de entrenamiento: cutoff para la comparación justa
+    # champion-vs-candidate (ventana OOS común). Ver lifecycle.reevaluation.
+    train_data_end = str(ohlcv.index.max().date()) if len(ohlcv) else None
 
     # Features
     features = compute_e1_features(ohlcv)  # Features E1
@@ -1081,6 +1085,7 @@ def run_e1_for_ticker(
                         metrics=summary, variant="e1_conservative",
                         feature_names=list(feat_names),
                         hyperparams=hp_info,
+                        train_data_end=train_data_end,
                     )
                     print(f"  ✓ {ticker} registrado como candidato en el registro de ciclo de vida")
 
@@ -1370,6 +1375,7 @@ def run_e1_for_ticker(
                     metrics=summary, variant="e1_conservative",
                     feature_names=list(feat_names),
                     hyperparams=hp_info,
+                    train_data_end=train_data_end,
                 )
                 print(f"  ✓ {ticker} registrado como candidato en el registro de ciclo de vida")
 

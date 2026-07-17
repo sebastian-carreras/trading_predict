@@ -42,7 +42,7 @@ dag = DAG(
     'e2_simple_pipeline',
     default_args=default_args,
     description='Pipeline E2 Simple: Predicción de retornos a 20 días (LSTM simplificado)',
-    schedule_interval='0 4 * * 1',  # Lunes 4 AM (después de E2 Moderate)
+    schedule_interval=None,  # Solo manual: la automatización diaria corre únicamente e2_moderate
     catchup=False,
     tags=['trading', 'e2', 'simple', 'lstm', 'simplified'],
     params={

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.trading.morning-caffeinate</string>
+
+    <!-- Al dispararse, mantiene la Mac despierta 90 min (5400s):
+         -i evita idle sleep, -s evita system sleep (solo con cargador). -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/caffeinate</string>
+        <string>-i</string>
+        <string>-s</string>
+        <string>-t</string>
+        <string>5400</string>
+    </array>
+
+    <!-- Hora LOCAL. 04:52 = 2 min después del wake de pmset (04:50), para que
+         la Mac ya esté despierta cuando arranca caffeinate. Cubre el retrain de
+         E1/E2 (08:00 UTC = 05:00 ART) + el daily_report que corre a continuación. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>52</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/morning-caffeinate.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/morning-caffeinate.log</string>
+</dict>
+</plist>

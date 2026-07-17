@@ -37,6 +37,12 @@ from urllib.parse import urlparse        # Para parsear la URI de MLflow y extra
 import numpy as np    # (importado pero no usado directamente — posiblemente usado indirectamente por pandas)
 import pandas as pd   # Para manipular datos tabulares (DataFrames) en todo el módulo
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # Cargar .env (MLFLOW_TRACKING_URI, etc.) igual que los train_pipeline
+except ImportError:
+    pass
+
 # Importaciones internas del proyecto
 from ..utils import ensure_dir, load_yaml, project_root  # Utilidades: crear dirs, cargar YAML, raíz del proyecto
 from ..lifecycle.promotion import (  # Scoring de promoción champion/challenger
@@ -232,6 +238,29 @@ def _get_mlflow_client() -> Any | None:
     return None
 
 
+# Runs de E2 anteriores al rename de métricas ML (pre 2026-02) loguearon estos
+# nombres sin el prefijo "ml_". Se mapean acá para que el dashboard siga
+# mostrando datos de esos runs viejos sin tener que re-entrenar.
+_LEGACY_METRIC_ALIASES: dict[str, str] = {
+    "ml_mae": "mae",
+    "ml_rmse": "rmse",
+    "ml_ic": "ic",
+    "ml_directional_accuracy": "directional_accuracy",
+}
+
+
+def _apply_legacy_metric_aliases(df: pd.DataFrame) -> pd.DataFrame:
+    """Completa columnas ml_* faltantes/NaN con sus equivalentes legacy sin prefijo."""
+    for new_key, old_key in _LEGACY_METRIC_ALIASES.items():
+        if old_key not in df.columns:
+            continue
+        if new_key in df.columns:
+            df[new_key] = df[new_key].combine_first(df[old_key])
+        else:
+            df[new_key] = df[old_key]
+    return df
+
+
 def _mlflow_runs_for_experiment(
     experiment_name: str,
     max_results: int = 200,
@@ -276,7 +305,7 @@ def _mlflow_runs_for_experiment(
                 row[f"tag.{k}"] = v
             rows.append(row)
 
-        return pd.DataFrame(rows)
+        return _apply_legacy_metric_aliases(pd.DataFrame(rows))
 
     except Exception:
         return pd.DataFrame()

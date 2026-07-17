@@ -195,6 +195,10 @@ services:
       - ./runs:/app/runs
       - ./models:/app/models
       - ./src/config:/app/config_project
+      # scripts montado en vivo: editar leaderboard.py se refleja en la API (con --reload)
+      - ./scripts:/app/scripts
+      # reports: para que /leaderboard lea el history y calcule los deltas de score/rank
+      - ./reports:/app/reports
     command: >
       uvicorn app:app
       --host 0.0.0.0

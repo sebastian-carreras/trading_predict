@@ -623,8 +623,9 @@ def run_e2_walk_forward(
         sharpe_str = "nan" if np.isnan(sharpe) else f"{sharpe:.2f}"
         # Log de fold: train Y test explícitos para evidenciar la ventana CRECIENTE
         # (expanding). Ver solo el test aparenta ventana deslizante.
+        fold_pct = 100.0 * fold_idx / folds
         print(
-            f"    Fold {fold_idx}: "
+            f"    Fold {fold_idx}/{folds} ({fold_pct:5.1f}%): "
             f"train[{ts_train[0].date()} -> {ts_train[-1].date()}] n={len(train_idx)} (expanding) | "
             f"test[{window_label}] n={len(test_idx)} | "
             f"MAE={mae:.4f} IC={ic_str} Sharpe={sharpe_str}"
@@ -831,6 +832,9 @@ def run_e2_for_ticker(
     ohlcv = apply_training_window(
         ohlcv, config, granularity="daily", use_latest=use_latest_data, ticker=ticker,
     )
+    # Último día de la ventana de entrenamiento: cutoff para la comparación justa
+    # champion-vs-candidate (ventana OOS común). Ver lifecycle.reevaluation.
+    train_data_end = str(ohlcv.index.max().date()) if len(ohlcv) else None
 
     # ---------- Features y target ----------
     features = compute_e2_features(ohlcv)
@@ -920,6 +924,7 @@ def run_e2_for_ticker(
                         metrics=summary, variant="e2_moderate",
                         feature_names=list(feat_names),
                         hyperparams=hp_info,
+                        train_data_end=train_data_end,
                     )
                     print(f"  ✓ {ticker} registrado como candidato en el registro de ciclo de vida")
 
@@ -1174,6 +1179,7 @@ def run_e2_for_ticker(
                     metrics=summary, variant="e2_moderate",
                     feature_names=list(feat_names),
                     hyperparams=hp_info,
+                    train_data_end=train_data_end,
                 )
                 print(f"  ✓ {ticker} registrado como candidato en el registro de ciclo de vida")
 
@@ -1276,7 +1282,7 @@ def main() -> None:
     remote_check_timeout = float(
         os.getenv("MLFLOW_REMOTE_CHECK_TIMEOUT_SECONDS", "1.5"),
     )
-    experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "E2_Moderate")
+    experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "E2_Moderate_Strategy")
 
     local_sqlite_dir = root / "runs" / "mlflow_local"
     ensure_dir(local_sqlite_dir)

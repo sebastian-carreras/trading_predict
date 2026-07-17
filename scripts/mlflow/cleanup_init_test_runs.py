@@ -11,6 +11,8 @@ import os
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # Agregar src al path para imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -31,8 +33,10 @@ def cleanup_init_test_runs(tracking_uri: str | None = None) -> None:
         print("❌ MLflow no está instalado")
         return
 
+    load_dotenv()  # Cargar .env (MLFLOW_TRACKING_URI, etc.)
+
     root = project_root()
-    
+
     # Determinar tracking URI
     if tracking_uri is None:
         tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "").strip()

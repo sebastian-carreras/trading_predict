@@ -243,3 +243,14 @@ Repasar - Presentacion/*
 zFuturo/
 # Permitir el template de ejemplo (sin secretos)
 !.env.example
+
+# Demo hosteada: versionar el CÓDIGO de la demo (index.html, app.py,
+# bundle_assets.py, README…) pese a los patrones globales de arriba (*.csv, *.png).
+!demo/
+!demo/**
+# Los assets (~17 MB, regenerables con `python -m demo.bundle_assets` y ya
+# desplegados en HF Spaces) NO van al repo, para mantenerlo liviano.
+demo/assets/
+# Nunca los cachés de Python del paquete demo.
+demo/**/__pycache__/
+demo/**/*.py[cod]

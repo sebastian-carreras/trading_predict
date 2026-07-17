@@ -341,7 +341,7 @@ strategies:
   # ----------------------------------------------------------
   e2_moderate:
     display_name: "E2 Moderate"
-    experiment_name: "E2_Moderate"
+    experiment_name: "E2_Moderate_Strategy"
     description: "LSTM 2 capas, walk-forward, horizon 20d"
 
     metrics:
@@ -494,7 +494,7 @@ strategies:
   # ----------------------------------------------------------
   e3_intraday:
     display_name: "E3 Intraday"
-    experiment_name: "E3_Intraday"
+    experiment_name: "E3_Intraday_Strategy"
     description: "LSTM Ensemble (3 members), 5-min bars, horizon 6 bars"
 
     metrics:
@@ -548,7 +548,7 @@ strategies:
   # ----------------------------------------------------------
   e4_pairs:
     display_name: "E4 Pairs"
-    experiment_name: "E4_Pairs"
+    experiment_name: "E4_Pairs_Trading_Strategy"
     description: "Pairs trading, KNN signals, cointegración"
 
     metrics:

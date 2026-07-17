@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.trading.ensure-docker</string>
+
+    <!-- Corre el script que abre Docker Desktop y levanta el stack.
+         Se instala en /usr/local/bin (ruta local estable, NO en iCloud). -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/usr/local/bin/ensure-docker-up.sh</string>
+    </array>
+
+    <!-- REQUERIDO: ruta local al repo trading_predict. Reemplazar el placeholder
+         por tu ruta real (este valor NO se versiona con datos personales). -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>TRADING_PREDICT_DIR</key>
+        <string>/CHANGE/ME/path/to/trading_predict</string>
+    </dict>
+
+    <!-- Hora LOCAL. 04:51 = 1 min después del wake de pmset (04:50), dejando
+         ~9 min para que Docker + el stack estén arriba antes del retrain (05:00 ART). -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>4</integer>
+        <key>Minute</key>
+        <integer>51</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/ensure-docker-up.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/ensure-docker-up.log</string>
+</dict>
+</plist>
