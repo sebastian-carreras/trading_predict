@@ -52,7 +52,7 @@ e4_pairs:
 Cada par descubierto recibe un **quality_score** (0-1) calculado como:
 
 ```python
-quality_score = 
+quality_score =
     (1 - pvalue) * 0.4 +                    # 40% - Fuerza de cointegración
     (1 - correlation_stability) * 0.3 +      # 30% - Estabilidad
     min(30 / half_life, 1.0) * 0.3          # 30% - Half-life (ideal ~30 días)
@@ -176,7 +176,7 @@ Si `discovery.enabled = false`, usa pares fijos:
 e4_pairs:
   discovery:
     enabled: false
-  
+
   pairs:  # Se usan estos
     - ["PAMP.BA", "CEPU.BA"]
     - ["TGSU2.BA", "TGNO4.BA"]

@@ -142,7 +142,7 @@ def clean_ohlcv_data(
     if remove_zero_volume and "volume" in df_clean.columns:
         zero_volume_mask = df_clean["volume"] == 0
         zero_volume_count = zero_volume_mask.sum()
-        
+
         if zero_volume_count > 0:
             df_clean = df_clean[~zero_volume_mask].reset_index(drop=True)
             if verbose:
@@ -295,20 +295,20 @@ def process_daily_data_with_cleaning(
                 print(f"  ⚠️  Nulos detectados en: {', '.join(report['features_with_nulls'])}")
                 for feat in report["features_with_nulls"]:
                     print(f"     - {feat}: {report['null_counts'][feat]} ({report['null_percentages'][feat]}%)")
-            
+
             if report["zero_volume_days"] > 0:
                 print(f"  ⚠️  {report['zero_volume_days']} días con volumen=0")
-            
+
             if report["duplicate_timestamps"] > 0:
                 print(f"  ⚠️  {report['duplicate_timestamps']} timestamps duplicados")
-            
+
             if report["data_gaps_days"]:
                 print(f"  ⚠️  {len(report['data_gaps_days'])} gaps grandes en serie temporal (>{4} días)")
 
         # Aplicar limpieza
         df_clean = clean_ohlcv_data(
-            df, 
-            strategy=strategy, 
+            df,
+            strategy=strategy,
             remove_zero_volume=remove_zero_volume,
             verbose=verbose
         )
@@ -332,19 +332,19 @@ def process_daily_data_with_cleaning(
     print(f"\n{'='*80}")
     print("RESUMEN DE LIMPIEZA")
     print(f"{'='*80}")
-    
+
     total_tickers = len(reports)
     cleaned = sum(1 for r in reports.values() if r.get("status") == "cleaned")
     rejected = sum(1 for r in reports.values() if r.get("status") == "rejected")
-    
+
     print(f"Total tickers procesados: {total_tickers}")
     print(f"  ✓ Limpiados: {cleaned}")
     print(f"  ❌ Rechazados: {rejected}")
-    
+
     # Tickers con más problemas
     tickers_with_issues = [
-        (ticker, len(r["features_with_nulls"])) 
-        for ticker, r in reports.items() 
+        (ticker, len(r["features_with_nulls"]))
+        for ticker, r in reports.items()
         if r["features_with_nulls"]
     ]
     if tickers_with_issues:
@@ -398,7 +398,7 @@ def main() -> None:
     report_path = clean_dir / "data_quality_report.json"
     with open(report_path, "w") as f:
         json.dump(reports, f, indent=2, default=str)
-    
+
     print(f"📄 Reporte de calidad guardado en: {report_path}")
 
 

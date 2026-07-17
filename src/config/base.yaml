@@ -111,7 +111,7 @@ splits:
   method: "walk_forward"
   folds: 5
   # Si H=90, embargo >= 90 días.
-  # El embargo debe ser >= al horizonte de predicción para evitar leakage.  
+  # El embargo debe ser >= al horizonte de predicción para evitar leakage.
   # embargo_days = horizon_days es la regla mínima
   # El embargo descarta N días entre el fin de train y el inicio de test,
   # rompiendo la correlación y evitando que el modelo "vea" información futura.

@@ -63,7 +63,7 @@ def download_daily_data(**context):
     """Task 1: Descargar datos diarios con control skip_existing."""
     import sys
     sys.path.insert(0, '/opt/airflow')
-    
+
     from src.data.download_daily import download_daily_ohlcv
     from src.data.ingest import resolve_download_settings
     from src.utils import load_yaml
@@ -71,7 +71,7 @@ def download_daily_data(**context):
 
     root = Path("/opt/airflow")
     config = load_yaml(root / "src/config/base.yaml")
-    
+
     # Obtener tickers del parámetro del DAG o del config
     tickers_param = context['params'].get('tickers', '').strip()
     if tickers_param:
@@ -83,7 +83,7 @@ def download_daily_data(**context):
             .get("tickers_by_strategy", {})
             .get("e2_moderate", [])
         )
-    
+
     # train_with_new_data controla si los datos recién descargados se USAN para
     # entrenar. Por defecto (False) se descargan a un directorio de staging y los
     # datos canónicos (data/raw/daily) que consume el entrenamiento NO se tocan.
@@ -122,14 +122,14 @@ def clean_daily_data(**context):
     """Task 1.5: Limpiar datos descargados."""
     import sys
     sys.path.insert(0, '/opt/airflow')
-    
+
     from src.data.clean_daily import process_daily_data_with_cleaning
     from pathlib import Path
-    
+
     root = Path("/opt/airflow")
     raw_dir = root / "data/raw/daily"
     clean_dir = root / "data/clean"
-    
+
     print("Ejecutando limpieza y validación de datos...")
     reports = process_daily_data_with_cleaning(
         raw_dir=raw_dir,
@@ -139,7 +139,7 @@ def clean_daily_data(**context):
         remove_zero_volume=True,
         verbose=True,
     )
-    
+
     total_cleaned = sum(1 for r in reports.values() if r.get("status") == "ok")
     return f"Limpiados {total_cleaned} archivos"
 
@@ -148,7 +148,7 @@ def train_e2_with_mlflow(**context):
     """Task 2: Entrenar modelos E2 (LSTM) con MLflow tracking."""
     import sys
     sys.path.insert(0, '/opt/airflow')
-    
+
     from src.e2.train_pipeline import run_e2_for_ticker, load_ohlcv_csv
     from src.utils import load_yaml, ensure_dir
     from pathlib import Path
@@ -188,7 +188,7 @@ def train_e2_with_mlflow(**context):
     else:
         os.environ.pop('E2_TUNED_PARAMS_PATH', None)
         os.environ.pop('TUNED_PARAMS_PATH', None)
-    
+
     # Tickers
     tickers = context['task_instance'].xcom_pull(task_ids='download_daily_data', key='tickers_to_train')
     if not tickers:
@@ -197,7 +197,7 @@ def train_e2_with_mlflow(**context):
             .get("tickers_by_strategy", {})
             .get("e2_moderate", [])
         )
-    
+
     # El entrenamiento siempre lee los datos canónicos (data/raw/daily, con
     # preferencia interna por data/clean). Los datos frescos solo llegan acá si
     # se corrió la descarga con train_with_new_data=True.
@@ -232,12 +232,12 @@ def train_e2_with_mlflow(**context):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = root / "runs" / "e2_moderate" / timestamp
     ensure_dir(out_dir)
-    
+
     # Entrenar cada ticker en un run de MLflow
     results = []
     for ticker in tickers:
         ticker_out = out_dir / ticker
-        
+
         with mlflow.start_run(run_name=f"E2_{ticker}_{timestamp}"):
             mlflow.log_param("use_tuned_params", use_tuned_params)
             mlflow.log_param("tuned_params_path", tuned_params_path if use_tuned_params else "")
@@ -255,7 +255,7 @@ def train_e2_with_mlflow(**context):
             mlflow.log_param("lookback_days", config.get("strategies", {}).get("e2_moderate", {}).get("lookback_days", 60))
             mlflow.log_param("horizon_days", config.get("strategies", {}).get("e2_moderate", {}).get("horizon_days", 20))
             mlflow.log_param("timestamp", timestamp)
-            
+
             # Loggear hiperparámetros del modelo
             model_cfg = config.get("strategies", {}).get("e2_moderate", {}).get("model", {})
             mlflow.log_params({
@@ -267,7 +267,7 @@ def train_e2_with_mlflow(**context):
                 "max_epochs": model_cfg.get("max_epochs", 150),
                 "early_stopping_patience": model_cfg.get("early_stopping_patience", 12),
             })
-            
+
             # Loggear filtros
             filters_cfg = config.get("strategies", {}).get("e2_moderate", {}).get("filters", {})
             mlflow.log_params({
@@ -277,14 +277,14 @@ def train_e2_with_mlflow(**context):
                 "volume_zscore_window": filters_cfg.get("volume_zscore_window", 20),
                 "volume_zscore_min": filters_cfg.get("volume_zscore_min", 0),
             })
-            
+
             # Loggear thresholds
             thresholds_cfg = config.get("strategies", {}).get("e2_moderate", {}).get("thresholds", {})
             mlflow.log_params({
                 "tau_buy": thresholds_cfg.get("tau_buy", 0.025),
                 "tau_sell": thresholds_cfg.get("tau_sell", 0.00),
             })
-            
+
             try:
                 result = run_e2_for_ticker(
                     config=config,
@@ -293,7 +293,7 @@ def train_e2_with_mlflow(**context):
                     out_dir=ticker_out,
                     use_latest_data=train_with_new_data,
                 )
-                
+
                 # Log métricas ML a MLflow
                 mlflow.log_metrics({
                     "mae": result.get("ml_mae", 0),
@@ -301,7 +301,7 @@ def train_e2_with_mlflow(**context):
                     "ic": result.get("ml_ic", 0),
                     "directional_accuracy": result.get("ml_directional_accuracy", 0),
                 })
-                
+
                 # Log métricas de backtesting a MLflow
                 mlflow.log_metrics({
                     "bt_sharpe": result.get("bt_sharpe", 0),
@@ -312,7 +312,7 @@ def train_e2_with_mlflow(**context):
                     "bt_win_rate": result.get("bt_win_rate", 0),
                     "bt_num_trades": result.get("bt_num_trades", 0),
                 })
-                
+
                 # Log predicciones como artifact
                 pred_path = ticker_out / f"{ticker}_predictions.csv"
                 if pred_path.exists():
@@ -322,7 +322,7 @@ def train_e2_with_mlflow(**context):
                 model_path = ticker_out / f"{ticker}_model.pth"
                 if model_path.exists():
                     mlflow.log_artifact(str(model_path), artifact_path="models")
-                
+
                 results.append({
                     "ticker": ticker,
                     "status": "success",
@@ -331,7 +331,7 @@ def train_e2_with_mlflow(**context):
                     "sharpe": result.get("bt_sharpe"),
                     "max_dd": result.get("bt_max_drawdown"),
                 })
-                
+
             except Exception as e:
                 mlflow.log_param("error", str(e))
                 results.append({
@@ -339,21 +339,21 @@ def train_e2_with_mlflow(**context):
                     "status": "failed",
                     "error": str(e),
                 })
-    
+
     # Guardar resumen
     summary_df = pd.DataFrame(results)
     summary_path = out_dir / "summary_all.csv"
     summary_df.to_csv(summary_path, index=False)
-    
+
     # Calcular métricas agregadas
     successful_results = [r for r in results if r["status"] == "success" and r.get("ic") is not None]
     ic_values = [r["ic"] for r in successful_results]
     sharpe_values = [r["sharpe"] for r in successful_results if r.get("sharpe") is not None]
-    
-    
+
+
     # Targets/thresholds de las métricas (desde config)
     decision_cfg = config.get("decision", {})
-    
+
     # Targets por defecto para E2 Moderate (mismo que en train_e2_pipeline.py)
     default_targets = {
         'ic_min': 0.05,
@@ -363,13 +363,13 @@ def train_e2_with_mlflow(**context):
         'rmse_max': 0.05,
     }
     targets = {**default_targets, **decision_cfg.get("targets", {})}
-    
+
     # Log resumen como artifact en MLflow
     with mlflow.start_run(run_name=f"E2_Summary_{timestamp}"):
         mlflow.log_artifact(str(summary_path))
         mlflow.log_metric("total_tickers", len(tickers))
         mlflow.log_metric("successful_tickers", len(successful_results))
-        
+
         # Métricas agregadas de IC
         if ic_values:
             mlflow.log_metric("ic_mean", float(sum(ic_values) / len(ic_values)))
@@ -380,7 +380,7 @@ def train_e2_with_mlflow(**context):
             mlflow.log_metric("ic_above_threshold", sum(1 for ic in ic_values if ic > targets['ic_min']))
             # Loggear target
             mlflow.log_param("ic_target_min", targets['ic_min'])
-        
+
         # Métricas agregadas de Sharpe
         if sharpe_values:
             mlflow.log_metric("sharpe_mean", float(sum(sharpe_values) / len(sharpe_values)))
@@ -390,8 +390,8 @@ def train_e2_with_mlflow(**context):
             mlflow.log_metric("sharpe_above_threshold", sum(1 for s in sharpe_values if s > targets['sharpe_min']))
             # Loggear target
             mlflow.log_param("sharpe_target_min", targets['sharpe_min'])
-        
-    
+
+
     context['task_instance'].xcom_push(key='run_dir', value=str(out_dir))
     return f"Entrenados {len(results)} modelos E2"
 
@@ -399,9 +399,9 @@ def train_e2_with_mlflow(**context):
 def notify_api_model_ready(**context):
     """Task 3: Notificar a FastAPI que nuevos modelos están listos."""
     import requests
-    
+
     run_dir = context['task_instance'].xcom_pull(task_ids='train_e2_models', key='run_dir')
-    
+
     try:
         response = requests.post(
             "http://fastapi:8800/models/register",

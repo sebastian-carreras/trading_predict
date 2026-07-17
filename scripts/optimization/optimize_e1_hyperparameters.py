@@ -129,7 +129,7 @@ class E1HyperparameterOptimizer:
     """
     Optimizador de hiperparámetros para estrategia E1.
     """
-    
+
     def __init__(
         self,
         config_path: Path,
@@ -169,7 +169,7 @@ class E1HyperparameterOptimizer:
         logging.getLogger("alembic").setLevel(logging.WARNING)
         logging.getLogger("mlflow").setLevel(logging.WARNING)
         logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
-        
+
         # Tickers
         if tickers:
             # Si el usuario pasa tickers por CLI, usar exactamente esos.
@@ -181,7 +181,7 @@ class E1HyperparameterOptimizer:
                 .get("tickers_by_strategy", {})
                 .get("e1_conservative", [])
             )
-        
+
         # MLflow - Configurar tracking URI con cascade fallback robusto:
         # remoto (MLFLOW_TRACKING_URI) → SQLite local (runs/mlflow_local/mlflow.db) → file store
         # El SQLite local es el mismo archivo que monta Docker (up_transparent_mlflow.sh),
@@ -302,7 +302,7 @@ class E1HyperparameterOptimizer:
 
         if not self.mlflow_enabled:
             print("⚠️  MLflow no disponible, continuando sin tracking")
-        
+
         # Optuna
         self.optuna_db_path = optuna_db_path
         self.current_run_min_trial_number: int | None = None
@@ -323,7 +323,7 @@ class E1HyperparameterOptimizer:
         if not cleaned_batch_sizes:
             raise ValueError("Se requiere al menos un batch_size válido para la optimización")
         self.batch_size_choices = cleaned_batch_sizes
-        
+
         # Aplicar overrides si se proporcionaron
         overrides = search_space_overrides or {}
 
@@ -363,13 +363,13 @@ class E1HyperparameterOptimizer:
         validate_bounds(self.dropout_bounds, "dropout")
         validate_bounds(self.learning_rate_bounds, "learning_rate")
         validate_bounds(self.weight_decay_bounds, "weight_decay")
-        
+
         print(f"✓ Inicializado optimizador para {len(self.tickers)} tickers")
         print(f"  Tickers: {', '.join(self.tickers[:5])}{'...' if len(self.tickers) > 5 else ''}")
         print(f"  Validación: {self.validation_method}" + (f" ({self.validation_folds} folds)" if self.validation_method == "walk_forward" else ""))
         print(f"  MLflow: {mlflow_tracking_uri}")
         print(f"  Optuna DB: {optuna_db_path}")
-    
+
     @staticmethod
     def _suggest_float(trial: optuna.Trial, name: str, bounds: Dict[str, float]) -> float:
         """Sugiere un float según el espacio de búsqueda definido en bounds.
@@ -426,16 +426,16 @@ class E1HyperparameterOptimizer:
     def objective(self, trial: optuna.Trial) -> float:
         """
         Función objetivo para Optuna.
-        
+
         Entrena modelo con hiperparámetros sugeridos y retorna métrica a optimizar.
-        
+
         Args:
             trial: Trial de Optuna con suggestions
-            
+
         Returns:
             Métrica objetivo (Sharpe ratio promedio o IC promedio)
         """
-        
+
         # Iniciar run de MLflow para este trial (si está habilitado).
         # Se usa nullcontext para evitar if/else duplicando toda la lógica.
         from contextlib import nullcontext
@@ -443,29 +443,29 @@ class E1HyperparameterOptimizer:
         trial_start = time.perf_counter()
         ctx = mlflow.start_run(run_name=f"trial_{trial.number}") if self.mlflow_enabled else nullcontext()
         with ctx:
-            
+
             # 1. SUGERIR HIPERPARÁMETROS
-            
+
             # Trading thresholds (críticos para backtesting)
             tau_buy = self._suggest_float(trial, "tau_buy", self.tau_buy_bounds)
             tau_sell = self._suggest_float(trial, "tau_sell", self.tau_sell_bounds)
-            
+
             # Arquitectura GRU
             gru_units_1 = self._suggest_int(trial, "gru_units_1", self.gru_units_1_bounds)
             gru_units_2 = self._suggest_int(trial, "gru_units_2", self.gru_units_2_bounds)
-            
+
             # Regularización
             dropout = self._suggest_float(trial, "dropout", self.dropout_bounds)
-            
+
             # Entrenamiento
             learning_rate = self._suggest_float(trial, "learning_rate", self.learning_rate_bounds)
             weight_decay = self._suggest_float(trial, "weight_decay", self.weight_decay_bounds)
             batch_size = trial.suggest_categorical("batch_size", self.batch_size_choices)
             # Early stopping (fijar patience para consistencia)
             early_stopping_patience = 10
-            
+
             # 2. ACTUALIZAR CONFIG CON PARÁMETROS SUGERIDOS
-            
+
             # Copia superficial del dict principal. Ojo: objetos anidados siguen siendo compartidos.
             # En este caso se sobrescriben claves relevantes, por eso alcanza para el flujo actual.
             config_trial = self.config.copy()
@@ -478,13 +478,13 @@ class E1HyperparameterOptimizer:
             if self.validation_method == "walk_forward":
                 splits_cfg["folds"] = self.validation_folds
             config_trial["splits"] = splits_cfg
-            
+
             # Thresholds
             config_trial["strategies"]["e1_conservative"]["thresholds"] = {
                 "tau_buy": tau_buy,
                 "tau_sell": tau_sell,
             }
-            
+
             # Modelo
             config_trial["strategies"]["e1_conservative"]["model"] = {
                 **config_trial["strategies"]["e1_conservative"].get("model", {}),
@@ -495,16 +495,16 @@ class E1HyperparameterOptimizer:
                 "batch_size": batch_size,
                 "early_stopping_patience": early_stopping_patience,
             }
-            
+
             # 3. ENTRENAR PARA TODOS LOS TICKERS
-            
+
             results = []
             raw_dir = self.root / "data/raw/daily"
-            
+
             # Output temporal para este trial
             out_dir = self.root / "runs/optuna_trials" / f"trial_{trial.number}"
             out_dir.mkdir(parents=True, exist_ok=True)
-            
+
             for ticker in self.tickers:
                 train_log_buffer = io.StringIO()
                 prev_e1_tuned = None
@@ -531,7 +531,7 @@ class E1HyperparameterOptimizer:
                             os.environ["E1_TUNED_PARAMS_PATH"] = prev_e1_tuned
                         if prev_tuned is not None:
                             os.environ["TUNED_PARAMS_PATH"] = prev_tuned
-                    
+
                     results.append({
                         # Se guardan métricas mínimas para score agregado y debugging.
                         "ticker": ticker,
@@ -543,7 +543,7 @@ class E1HyperparameterOptimizer:
                         "win_rate": result.get("bt_win_rate", 0),
                         "max_dd": result.get("bt_max_drawdown", 0),
                     })
-                    
+
                 except Exception as e:
                     debug_excerpt = ""
                     try:
@@ -565,11 +565,11 @@ class E1HyperparameterOptimizer:
                         "win_rate": 0,
                         "max_dd": 1.0,
                     })
-            
+
             # 4. CALCULAR MÉTRICAS AGREGADAS
-            
+
             df_results = pd.DataFrame(results)
-            
+
             # Métricas promedio
             ic_mean = df_results["ic"].mean()
             ic_median = df_results["ic"].median()
@@ -577,19 +577,19 @@ class E1HyperparameterOptimizer:
             sharpe_median = df_results["sharpe"].median()
             calmar_mean = df_results["calmar"].mean()
             dir_acc_mean = df_results["directional_accuracy"].mean()
-            
+
             # Métricas de consistencia
             ic_std = df_results["ic"].std()
             sharpe_std = df_results["sharpe"].std()
-            
+
             # Tickers con performance positiva
             ic_positive_pct = (df_results["ic"] > 0.05).sum() / len(df_results) * 100
             sharpe_positive_pct = (df_results["sharpe"] > 0).sum() / len(df_results) * 100
-            
+
             # Tickers con trades (evitar thresholds muy altos que no generan señales)
             tickers_with_trades = (df_results["num_trades"] > 0).sum()
             avg_num_trades = df_results["num_trades"].mean()
-            
+
             # 5. REGISTRAR EN MLFLOW (dentro del trial)
 
             if self.mlflow_enabled:
@@ -636,9 +636,9 @@ class E1HyperparameterOptimizer:
                     mlflow.log_artifact(str(results_path))
                 except Exception as art_exc:
                     print(f"  ⚠️  MLflow artifact no guardado: {art_exc}")
-            
+
             # 6. DEFINIR MÉTRICA OBJETIVO
-            
+
             # Objetivo alineado con scoring de promoción (lifecycle.promotion.per_strategy.e1).
             # Pesos: bt_sharpe=0.35, ml_ic=0.25, ml_directional_accuracy=0.20, bt_calmar=0.20
             # Penalizar si pocos tickers generan trades
@@ -654,14 +654,14 @@ class E1HyperparameterOptimizer:
             # Se guarda en user_attrs para poder graficar la evolución sin la penalización.
             trial.set_user_attr("objective_raw", float(objective_raw))
             trial.set_user_attr("trade_penalty", float(trade_penalty))
-           
-            
+
+
             if self.mlflow_enabled:
                 mlflow.log_metric("objective_value", objective_value)
                 mlflow.log_metric("objective_raw", objective_raw)
                 mlflow.log_metric("trade_penalty", trade_penalty)
                 mlflow.log_metric("trial_duration_seconds", time.perf_counter() - trial_start)
-            
+
             trial_seconds = time.perf_counter() - trial_start
             print(
                 f"[Trial {trial.number:04d}] obj={objective_value:+.4f} "
@@ -673,9 +673,9 @@ class E1HyperparameterOptimizer:
                 f"gru=[{gru_units_1},{gru_units_2}] do={dropout:.2f} "
                 f"lr={learning_rate:.6f} wd={weight_decay:.6f} bs={batch_size}"
             )
-            
+
             return objective_value
-    
+
     def optimize(
         self,
         n_trials: int = 50,
@@ -684,16 +684,16 @@ class E1HyperparameterOptimizer:
     ) -> optuna.Study:
         """
         Ejecuta optimización de hiperparámetros.
-        
+
         Args:
             n_trials: Número de trials a ejecutar
             study_name: Nombre del estudio (para continuar optimización)
             timeout: Timeout en segundos (None = sin límite)
-            
+
         Returns:
             Estudio de Optuna con resultados
         """
-        
+
         print(f"\n{'='*80}")
         print(f"OPTIMIZACIÓN DE HIPERPARÁMETROS E1")
         print(f"{'='*80}")
@@ -701,7 +701,7 @@ class E1HyperparameterOptimizer:
         print(f"Tickers: {len(self.tickers)}")
         print(f"Study: {study_name}")
         print(f"{'='*80}\n")
-        
+
         # Reducir ruido de logs INFO de Optuna (mantenemos warnings/errores).
         optuna.logging.set_verbosity(optuna.logging.WARNING)
 
@@ -716,7 +716,7 @@ class E1HyperparameterOptimizer:
 
         existing_numbers = [trial.number for trial in study.trials]
         self.current_run_min_trial_number = (max(existing_numbers) + 1) if existing_numbers else 0
-        
+
         # Ejecutar optimización
         study.optimize(
             self.objective,
@@ -724,9 +724,9 @@ class E1HyperparameterOptimizer:
             timeout=timeout,
             show_progress_bar=True,
         )
-        
+
         return study
-    
+
     @staticmethod
     def _safe_write_file(path: Path, write_fn, *, retries: int = 3, delay: float = 2.0) -> None:
         """Write a file with retry logic to handle iCloud/file-provider timeouts.
@@ -776,7 +776,7 @@ class E1HyperparameterOptimizer:
                 las carpetas by_ticker/<TICKER>/. Si False (default), escribe el esquema
                 RAW del estudio (optimization + best_params), usado a nivel top-level.
         """
-        
+
         output_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"\n{'='*80}")
@@ -1027,9 +1027,9 @@ class E1HyperparameterOptimizer:
             f.write(df_top.to_string(index=False))
 
         self._safe_write_file(summary_path, _write_summary)
-        
+
         print(f"✓ Resumen guardado: {summary_path}")
-        
+
         print(f"\n{'='*80}")
         print("RESULTADOS GUARDADOS EXITOSAMENTE")
         print(f"{'='*80}\n")
@@ -1253,10 +1253,10 @@ def main():
     )
 
     args = parser.parse_args()
-    
+
     root = project_root()
     config_path = root / args.config
-    
+
     # Tickers
     tickers = None
     if args.tickers:
@@ -1280,7 +1280,7 @@ def main():
         random.seed(42)
         tickers = random.sample(all_tickers, min(3, len(all_tickers)))
         print(f"🚀 Modo rápido: usando {tickers}")
-    
+
     # Overrides del espacio de búsqueda
     search_overrides: Dict[str, Dict[str, float]] = {}
 
@@ -1315,7 +1315,7 @@ def main():
             batch_sizes_list = None
         else:
             print(f"✓ Batch sizes personalizados: {batch_sizes_list}")
-    
+
     # Crear optimizador
     output_dir = root / args.output_dir
 

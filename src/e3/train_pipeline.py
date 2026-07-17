@@ -61,13 +61,13 @@ from ..utils import (
 
 def _time_split(n: int, train_frac: float = 0.7, val_frac: float = 0.15):  # Split temporal
     """Divide datos en train/val/test respetando orden temporal.
-    
+
     Args:
         n: Total de muestras
         train_frac: Fracción de datos para entrenamiento (default 70%)
         val_frac: Fracción de datos para validación (default 15%)
                   El resto (15%) se usa para test
-    
+
     Returns:
         (train_idx, val_idx, test_idx): Arrays de índices para cada split
     """
@@ -78,12 +78,12 @@ def _time_split(n: int, train_frac: float = 0.7, val_frac: float = 0.15):  # Spl
     # Calcular puntos de corte
     train_end = int(n * train_frac)  # Corte train
     val_end = int(n * (train_frac + val_frac))  # Corte val
-    
+
     # Crear arrays de índices (mantiene orden temporal)
     idx_train = np.arange(0, train_end)  # Índices train
     idx_val = np.arange(train_end, val_end)  # Índices val
     idx_test = np.arange(val_end, n)  # Índices test
-    
+
     return idx_train, idx_val, idx_test  # Retornar splits
 
 
@@ -530,7 +530,7 @@ def _register_e3_candidate(
 
 def run_for_ticker(config: dict, ticker: str, raw_dir: Path, out_dir: Path, use_latest_data: bool = False, register_lifecycle: bool = True, auto_promote: bool = False) -> dict:  # Pipeline E3
     """Ejecuta pipeline E3 completo para un ticker.
-    
+
     Procedimiento:
     1. Carga datos OHLCV de 5 minutos
     2. Extrae features intraday (momentum, volatilidad, etc)
@@ -542,19 +542,19 @@ def run_for_ticker(config: dict, ticker: str, raw_dir: Path, out_dir: Path, use_
     8. Ejecuta backtest con señales de trading
     9. Calcula métricas de trading (Sharpe, Max DD, Profit Factor)
     10. Guarda todos los artefactos
-    
+
     Args:
         config: Diccionario de configuración
         ticker: Símbolo del activo (ej: "AAPL")
         raw_dir: Directorio con datos CSV intraday
         out_dir: Directorio para salidas
-    
+
     Returns:
         dict: Resumen con todas las métricas
     """
     print(f"  Cargando configuración para {ticker}...")  # Log config
     e3 = get_nested(config, ["strategies", "e3_intraday"], {})  # Config E3
-    
+
     print(f"  Extrayendo parámetros...")  # Log params
     # Parámetros de secuencias
     lookback_bars = int(e3.get("lookback_bars", 96))      # Histórico: 96 barras (8 horas)
@@ -607,7 +607,7 @@ def run_for_ticker(config: dict, ticker: str, raw_dir: Path, out_dir: Path, use_
 
     # Extraer features técnicos intraday
     features = compute_intraday_features(ohlcv)  # Features
-    
+
     # Crear target: retorno forward (siguiente N barras)
     target = make_target_return(ohlcv, horizon_bars=horizon_bars)  # Target
 
@@ -672,7 +672,7 @@ def run_for_ticker(config: dict, ticker: str, raw_dir: Path, out_dir: Path, use_
     for m in range(ensemble_members):  # Loop miembros
         print(f"\n  Modelo {m+1}/{ensemble_members} (seed={base_seed + 1000 * m}):")  # Log miembro
         seed = base_seed + 1000 * m  # Seed miembro
-        
+
         # Crear modelo LSTM
         model = LSTMRegressor(  # Instanciar LSTM
             input_size=X_train_s.shape[-1],  # Input size
@@ -682,7 +682,7 @@ def run_for_ticker(config: dict, ticker: str, raw_dir: Path, out_dir: Path, use_
             dropout=dropout,  # Dropout
             seed=seed,  # Seed
         )  # Fin init
-        
+
         # Entrenar modelo
         train_started_at = datetime.now(timezone.utc).isoformat()
         train_start = time.perf_counter()
@@ -716,7 +716,7 @@ def run_for_ticker(config: dict, ticker: str, raw_dir: Path, out_dir: Path, use_
                 "n_val": int(len(X_val)),
             },
         )
-        
+
         val_losses.append(res.best_val_loss)  # Guardar val loss
         pred_started_at = datetime.now(timezone.utc).isoformat()
         pred_start = time.perf_counter()
@@ -799,7 +799,7 @@ def run_for_ticker(config: dict, ticker: str, raw_dir: Path, out_dir: Path, use_
 
     # GUARDAR ARTEFACTOS
     ensure_dir(out_dir)  # Crear dir
-    
+
     # Guardar backtest completo
     bt.to_csv(out_dir / f"{ticker}_backtest.csv")  # Guardar backtest
 

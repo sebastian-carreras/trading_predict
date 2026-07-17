@@ -46,18 +46,18 @@ def load_model_summary(run_dir: Path, model_name: str) -> pd.DataFrame | None:
         run_dir / f"{model_name}_summary_all.csv",
         run_dir / "baseline_summary_all.csv",
     ]
-    
+
     for summary_file in summary_files:
         if summary_file.exists():
             return pd.read_csv(summary_file)
-    
+
     return None
 
 
 def compute_comparison_metrics(df_baseline: pd.DataFrame, df_gru: pd.DataFrame) -> pd.DataFrame:
     """
     Calcula métricas de comparación entre baseline y GRU.
-    
+
     Returns:
         DataFrame con comparación lado a lado
     """
@@ -68,7 +68,7 @@ def compute_comparison_metrics(df_baseline: pd.DataFrame, df_gru: pd.DataFrame) 
         ("RMSE", "ml_rmse", "lower_better", "Menor error cuadrático medio"),
         ("Dir. Accuracy", "ml_directional_accuracy", "higher_better", "% predicciones correctas de dirección"),
         ("IC (Spearman)", "ml_ic", "higher_better", "Correlación Spearman (>0.05 significativo)"),
-        
+
         # Trading Metrics
         ("Sharpe Ratio", "bt_sharpe", "higher_better", "Retorno ajustado por riesgo"),
         ("Sortino Ratio", "bt_sortino", "higher_better", "Retorno ajustado por downside risk"),
@@ -78,15 +78,15 @@ def compute_comparison_metrics(df_baseline: pd.DataFrame, df_gru: pd.DataFrame) 
         ("Profit Factor", "bt_profit_factor", "higher_better", "Ganancias brutas / Pérdidas brutas"),
         ("Hit Rate", "bt_hit_rate", "higher_better", "% operaciones ganadoras"),
     ]
-    
+
     comparison_data = []
-    
+
     for metric_name, col_name, direction, description in metrics_config:
         baseline_val = df_baseline[col_name].mean() if col_name in df_baseline.columns else np.nan
         gru_val = df_gru[col_name].mean() if col_name in df_gru.columns else np.nan
-        
+
         diff = gru_val - baseline_val
-        
+
         # Determinar si GRU es mejor
         if direction == "higher_better":
             gru_better = diff > 0
@@ -94,7 +94,7 @@ def compute_comparison_metrics(df_baseline: pd.DataFrame, df_gru: pd.DataFrame) 
         else:  # lower_better
             gru_better = diff < 0
             improvement_pct = (-diff / abs(baseline_val) * 100) if baseline_val != 0 else 0
-        
+
         comparison_data.append({
             "Métrica": metric_name,
             "Baseline": baseline_val,
@@ -104,7 +104,7 @@ def compute_comparison_metrics(df_baseline: pd.DataFrame, df_gru: pd.DataFrame) 
             "GRU Mejor": "✓" if gru_better else "✗",
             "Descripción": description,
         })
-    
+
     return pd.DataFrame(comparison_data)
 
 
@@ -113,33 +113,33 @@ def print_comparison_table(df_comparison: pd.DataFrame) -> None:
     print("\n" + "="*100)
     print("COMPARACIÓN: Regresión Lineal Baseline vs GRU")
     print("="*100)
-    
+
     # Separar métricas ML y Trading
     ml_metrics = ["MAE", "RMSE", "Dir. Accuracy", "IC (Spearman)"]
-    
+
     print("\n📊 MÉTRICAS ML (Offline)")
     print("-"*100)
     df_ml = df_comparison[df_comparison["Métrica"].isin(ml_metrics)].copy()
     print_formatted_table(df_ml)
-    
+
     print("\n💰 MÉTRICAS TRADING (Online - Backtest)")
     print("-"*100)
     df_trading = df_comparison[~df_comparison["Métrica"].isin(ml_metrics)].copy()
     print_formatted_table(df_trading)
-    
+
     # Resumen
     print("\n" + "="*100)
     print("RESUMEN")
     print("="*100)
-    
+
     total_metrics = len(df_comparison)
     gru_wins = (df_comparison["GRU Mejor"] == "✓").sum()
     baseline_wins = total_metrics - gru_wins
-    
+
     print(f"Total métricas comparadas: {total_metrics}")
     print(f"GRU superior en: {gru_wins} métricas ({gru_wins/total_metrics*100:.1f}%)")
     print(f"Baseline superior en: {baseline_wins} métricas ({baseline_wins/total_metrics*100:.1f}%)")
-    
+
     # Mejoras más significativas
     print("\n Top 3 mejoras del GRU:")
     top_improvements = df_comparison.nlargest(3, "Mejora %")[["Métrica", "Mejora %", "GRU Mejor"]]
@@ -157,7 +157,7 @@ def print_formatted_table(df: pd.DataFrame) -> None:
         diff = row["Diferencia"]
         mejora = row["Mejora %"]
         mejor = row["GRU Mejor"]
-        
+
         print(f"{metric:<20} | Base: {baseline:>10.4f} | GRU: {gru:>10.4f} | "
               f"Δ: {diff:>+10.4f} | {mejora:>+7.2f}% {mejor}")
 
@@ -167,24 +167,24 @@ def save_comparison_report(df_comparison: pd.DataFrame, output_path: Path) -> No
     # CSV con nombre consistente con E2/E3
     csv_path = output_path.parent / "e1_comparison.csv"
     df_comparison.to_csv(csv_path, index=False)
-    
+
     # Markdown
     with open(output_path.with_suffix(".md"), "w") as f:
         f.write("# Comparación E1: Baseline vs GRU\n\n")
         f.write("## Métricas ML\n\n")
-        
+
         ml_metrics = ["MAE", "RMSE", "Dir. Accuracy", "IC (Spearman)"]
         df_ml = df_comparison[df_comparison["Métrica"].isin(ml_metrics)]
         f.write(df_ml.to_markdown(index=False))
-        
+
         f.write("\n\n## Métricas Trading\n\n")
         df_trading = df_comparison[~df_comparison["Métrica"].isin(ml_metrics)]
         f.write(df_trading.to_markdown(index=False))
-        
+
         # Resumen
         total = len(df_comparison)
         gru_wins = (df_comparison["GRU Mejor"] == "✓").sum()
-        
+
         f.write(f"\n\n## Resumen\n\n")
         f.write(f"- **Total métricas**: {total}\n")
         f.write(f"- **GRU superior**: {gru_wins} ({gru_wins/total*100:.1f}%)\n")
@@ -213,9 +213,9 @@ def main() -> None:
         default="reports/conclusiones/comparaciones/fig_e1_vs_baseline",
         help="Path de salida para el reporte",
     )
-    
+
     args = parser.parse_args()
-    
+
     # Detectar project root
     current_file = Path(__file__).resolve()
     # Asumir que estamos en scripts/ o src/
@@ -223,7 +223,7 @@ def main() -> None:
         root = current_file.parent.parent
     else:
         root = Path.cwd()
-    
+
     # Default: read champions/baselines from registry (best per ticker, possibly
     # from different historical runs). Fall back to latest run if registry is empty.
     df_baseline, baseline_src = load_summary_for_comparison(
@@ -252,18 +252,18 @@ def main() -> None:
 
     print(f"   ✓ Baseline: {len(df_baseline)} tickers")
     print(f"   ✓ GRU: {len(df_gru)} tickers")
-    
+
     # Comparar
     df_comparison = compute_comparison_metrics(df_baseline, df_gru)
     validate_improvement_signs(df_comparison, mejora_col="Mejora %", mejor_col="GRU Mejor", metrica_col="Métrica")
 
     # Mostrar resultados
     print_comparison_table(df_comparison)
-    
+
     # Guardar reporte
     output_path = root / args.output
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     save_comparison_report(df_comparison, output_path)
 
     # PNG figure using shared helper (rename columns to match _compare_common convention)

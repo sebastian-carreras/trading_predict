@@ -9,10 +9,10 @@ usuarios finales y genera reportes de calidad en JSON.
 Estrategias de limpieza disponibles:
   - forward_fill (DEFAULT): Propaga último valor válido hacia adelante.
     Recomendado para series financieras con gaps pequeños.
-  
+
   - interpolate: Interpola linealmente entre valores válidos.
     Útil para llenar gaps medianos de forma suave.
-  
+
   - drop: Elimina filas completas que contienen nulos.
     Más conservador pero puede perder muchos datos.
 
@@ -41,7 +41,7 @@ from src.data.clean_daily import process_daily_data_with_cleaning
 def main():
     """
     Función principal que ejecuta el pipeline de limpieza de datos.
-    
+
     Pasos:
     1. Determina la estrategia de limpieza desde argumentos CLI
     2. Valida que exista el directorio raw con datos descargados
@@ -50,7 +50,7 @@ def main():
     5. Guarda CSVs limpios en directorio clean/
     6. Genera reporte JSON con estadísticas de calidad
     7. Imprime warnings sobre tickers problemáticos
-    
+
     Retorna:
         0 si exitoso, 1 si error (ej: directorio raw no existe)
     """
@@ -98,7 +98,7 @@ def main():
     report_path = clean_dir / "data_quality_report.json"
     with open(report_path, "w") as f:
         json.dump(reports, f, indent=2, default=str)
-    
+
     print(f"\n{'='*80}")
     print(f"📄 Reporte de calidad guardado en: {report_path}")
     print(f"{'='*80}\n")
@@ -110,7 +110,7 @@ def main():
         for ticker, r in reports.items()
         if r.get("null_counts")
     ]
-    
+
     # Si hay tickers con nulos, mostrar los 10 peores
     if tickers_with_many_nulls:
         tickers_with_many_nulls.sort(key=lambda x: x[1], reverse=True)
@@ -130,7 +130,7 @@ if __name__ == "__main__":
     """
     Entry point del script. Se ejecuta cuando se llama directamente:
         python scripts/run_data_cleaning.py
-    
+
     Llama a main() y pasa su código de retorno al sistema operativo.
     """
     sys.exit(main())

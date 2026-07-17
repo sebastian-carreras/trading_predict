@@ -188,7 +188,7 @@ def run_optuna_tuning(**context) -> str:
     )
 
     log.info("Ejecutando comando Optuna: %s", shlex.join(base_cmd))
-    
+
     try:
         result = subprocess.run(
             base_cmd,

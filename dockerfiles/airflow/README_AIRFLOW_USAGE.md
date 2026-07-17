@@ -20,13 +20,13 @@
    - Click en `e1_conservative_pipeline`
    - Click en **"Play"** (▶) → **"Trigger DAG w/ config"**
    - En el JSON editor:
-   
+
    ```json
    {
      "tickers": "AAPL,MSFT,GOOGL"
    }
    ```
-   
+
    - Click **"Trigger"**
 
 ### Desde CLI
@@ -95,7 +95,7 @@ Pipeline simplificado (GRU de 1 capa, sin walk-forward). Descarga, limpia y entr
    - Click en `e1_simple_pipeline`
    - Click en **"Play"** (▶) → **"Trigger DAG w/ config"**
    - En el JSON editor:
-   
+
    ```json
    {
      "tickers": "AAPL,MSFT,GOOGL",
@@ -103,7 +103,7 @@ Pipeline simplificado (GRU de 1 capa, sin walk-forward). Descarga, limpia y entr
      "skip_cleaning": "False"
    }
    ```
-   
+
    - Click **"Trigger"**
 
 ### Desde CLI
@@ -163,14 +163,14 @@ docker compose exec -T airflow-scheduler airflow dags trigger \
    - Click en `e1_baseline_linear_regression`
    - Click en **"Play"** (▶) → **"Trigger DAG w/ config"**
    - En el JSON editor:
-   
+
    ```json
    {
      "tickers": "AAPL,MSFT,GOOGL",
      "auto_compare_with_gru": "True"
    }
    ```
-   
+
    - Click **"Trigger"**
 
 ### Desde CLI
@@ -247,7 +247,7 @@ cat runs/e1_baseline/<timestamp>/comparison_vs_gru.csv
 
 ---
 
-**Ver más**: 
+**Ver más**:
 - [README_E1_BASELINE.md](README_E1_BASELINE.md) - Documentación completa del baseline
 - [QUICKSTART_E1_BASELINE.md](QUICKSTART_E1_BASELINE.md) - Guía rápida
 - [docs/AIRFLOW_E1_BASELINE_DAG.md](docs/AIRFLOW_E1_BASELINE_DAG.md) - Documentación del DAG

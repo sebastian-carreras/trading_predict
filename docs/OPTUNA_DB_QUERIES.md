@@ -16,7 +16,7 @@ SELECT * FROM trial_values WHERE study_id = 1;
 
 ```sql
 -- ✅ CORRECTO
-SELECT tv.* 
+SELECT tv.*
 FROM trial_values tv
 JOIN trials t ON tv.trial_id = t.trial_id
 WHERE t.study_id = 1;
@@ -84,7 +84,7 @@ trial_params (trial_param_id, trial_id, param_name, param_value)
 ### 1. Listar todos los estudios con estadísticas
 
 ```sql
-SELECT 
+SELECT
     s.study_name,
     COUNT(DISTINCT t.trial_id) as n_trials,
     ROUND(AVG(tv.value), 4) as avg_objective,
@@ -100,7 +100,7 @@ ORDER BY best_objective DESC;
 ### 2. Ver mejores parámetros de un estudio
 
 ```sql
-SELECT 
+SELECT
     tp.param_name,
     tp.param_value,
     tv.value as objective
@@ -116,7 +116,7 @@ LIMIT 1;
 ### 3. Comparar últimos 10 trials de un estudio
 
 ```sql
-SELECT 
+SELECT
     t.number,
     tv.value as objective,
     t.state,
@@ -135,14 +135,14 @@ LIMIT 10;
 ### 4. Encontrar qué parámetro tiene mayor variación
 
 ```sql
-SELECT 
+SELECT
     tp.param_name,
     COUNT(*) as occurrences,
     ROUND(AVG(CAST(tp.param_value AS FLOAT)), 4) as avg_value,
     ROUND(MAX(CAST(tp.param_value AS FLOAT)), 4) as max_value,
     ROUND(MIN(CAST(tp.param_value AS FLOAT)), 4) as min_value,
     ROUND(
-        MAX(CAST(tp.param_value AS FLOAT)) - MIN(CAST(tp.param_value AS FLOAT)), 
+        MAX(CAST(tp.param_value AS FLOAT)) - MIN(CAST(tp.param_value AS FLOAT)),
         4
     ) as range
 FROM studies s
@@ -156,7 +156,7 @@ ORDER BY range DESC;
 ### 5. Exportar todos los trials a CSV
 
 ```sql
-SELECT 
+SELECT
     t.number,
     tv.value as objective,
     t.state,
@@ -172,7 +172,7 @@ ORDER BY t.number;
 ### 6. Ver trials fallidos
 
 ```sql
-SELECT 
+SELECT
     t.trial_id,
     t.number,
     t.state,
@@ -187,7 +187,7 @@ ORDER BY t.datetime_start DESC;
 ### 7. Mejores valores de tau_buy
 
 ```sql
-SELECT 
+SELECT
     tp.param_value as tau_buy,
     tv.value as objective,
     COUNT(*) as frequency
@@ -204,7 +204,7 @@ LIMIT 10;
 ### 8. Correlación entre dropout y objetivo
 
 ```sql
-SELECT 
+SELECT
     tp.param_value as dropout,
     ROUND(AVG(CAST(tv.value AS FLOAT)), 4) as avg_objective,
     COUNT(*) as count

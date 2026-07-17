@@ -17,7 +17,7 @@
 │        │           ┌──────┴──────┐         │                │
 │        │           │             │         │                │
 │        ▼           ▼             ▼         ▼                │
-│  ┌──────────────────────────────────────────────┐           │ 
+│  ┌──────────────────────────────────────────────┐           │
 │  │          PostgreSQL Database                 │           │
 │  │  - Airflow metadata                          │           │
 │  │  - MLflow experiments & runs                 │           │
@@ -301,6 +301,6 @@ docker exec -it minio mc mb s3/data
 
 ---
 
-**Proyecto**: Trading Predict  
-**Stack**: Airflow 2.8.1 + MLflow + FastAPI + PostgreSQL 13 + MinIO  
+**Proyecto**: Trading Predict
+**Stack**: Airflow 2.8.1 + MLflow + FastAPI + PostgreSQL 13 + MinIO
 **Autor**: Sebastian Carreras - FIUBA AI Posgrado

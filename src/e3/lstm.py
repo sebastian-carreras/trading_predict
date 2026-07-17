@@ -133,7 +133,7 @@ class LSTMRegressor:
                 val_loss = float(criterion(val_pred, yva).item())
 
             ran = epoch
-            
+
             # Print progress every 5 epochs or on improvement
             train_loss_avg = float(np.mean(train_losses))
             is_best = val_loss < best_val

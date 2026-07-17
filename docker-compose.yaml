@@ -161,7 +161,7 @@ services:
     volumes:
       - ./runs:/mlflow_data
     command: >
-      mlflow server 
+      mlflow server
       --backend-store-uri ${MLFLOW_BACKEND_STORE_URI:-sqlite:////mlflow_data/mlflow_local/mlflow.db}
       --host 0.0.0.0
       --default-artifact-root ${MLFLOW_DEFAULT_ARTIFACT_ROOT:-s3://${MLFLOW_BUCKET_NAME:-mlflow}/}

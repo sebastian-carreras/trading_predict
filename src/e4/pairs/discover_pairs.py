@@ -34,12 +34,12 @@ def _get_cache_key(
 ) -> str:
     """
     Genera una clave única para los parámetros de discovery.
-    
+
     Combina los tickers ordenados y parámetros para crear un hash.
     """
     # Ordenar tickers para que el orden no afecte el hash
     sorted_tickers = sorted(tickers)
-    
+
     # Crear string con todos los parámetros
     param_str = (
         f"tickers={'_'.join(sorted_tickers)}_"
@@ -49,7 +49,7 @@ def _get_cache_key(
         f"corr={correlation_min}_"
         f"method={method}"
     )
-    
+
     # Generar hash corto
     return hashlib.md5(param_str.encode()).hexdigest()[:12]
 
@@ -101,10 +101,10 @@ def discover_cointegrated_pairs(
 ) -> pd.DataFrame:
     """
     Descubre todos los pares cointegrados en un universo de tickers.
-    
+
     Implementa sistema de caché por día: si ya se ejecutó el discovery
     con los mismos parámetros en el día actual, usa resultados guardados.
-    
+
     Args:
         tickers: Lista de tickers a analizar
         data_dir: Directorio con archivos de precios limpios
@@ -115,7 +115,7 @@ def discover_cointegrated_pairs(
         method: Método de cointegración ('engle-granger' o 'johansen')
         verbose: Mostrar progreso
         use_cache: Si True, usa cache del día si existe (default: True)
-    
+
     Returns:
         DataFrame con pares cointegrados y sus métricas:
         - ticker_a, ticker_b: Tickers del par
@@ -127,21 +127,21 @@ def discover_cointegrated_pairs(
         - ou_theta, ou_mu, ou_sigma: Parámetros OU
         - is_stationary: Si el spread es estacionario
     """
-    
+
     # Verificar cache
     if use_cache:
         today = datetime.now().strftime('%Y%m%d')
         cache_key = _get_cache_key(
-            tickers, pvalue_max, half_life_min, 
+            tickers, pvalue_max, half_life_min,
             half_life_max, correlation_min, method
         )
         cache_path = _get_cache_path(data_dir, cache_key, today)
-        
+
         # Intentar cargar desde cache
         cached_results = _load_cached_results(cache_path, verbose)
         if cached_results is not None:
             return cached_results
-    
+
     if verbose:
         print(f"Descubriendo pares cointegrados de {len(tickers)} tickers...")
         print(f"Parámetros:")
@@ -149,82 +149,82 @@ def discover_cointegrated_pairs(
         print(f"  - Half-life range: [{half_life_min}, {half_life_max}] días")
         print(f"  - Correlación min: {correlation_min}")
         print()
-    
+
     # Generar todas las combinaciones de pares
     all_pairs = list(combinations(tickers, 2))
     n_pairs = len(all_pairs)
-    
+
     logger.info(f"Testing {n_pairs} pairs from {len(tickers)} tickers...")
-    
+
     results = []
-    
+
     # Iterar sobre todos los pares
     iterator = tqdm(all_pairs, desc="Discovering pairs") if verbose else all_pairs
-    
+
     for ticker_a, ticker_b in iterator:
         try:
             # Cargar datos
             price_a, price_b = load_pair_prices(data_dir, ticker_a, ticker_b)
-            
+
             if len(price_a) < 252:  # Mínimo 1 año de datos
                 if verbose:
                     print(f"✗ {ticker_a}-{ticker_b}: insufficient data ({len(price_a)} days)")
                 continue
-            
+
             # Test de cointegración
             coint_result = test_pair_cointegration(
                 price_a, price_b, method=method
             )
-            
+
             if verbose:
                 print(f"Testing {ticker_a}-{ticker_b}: pvalue={coint_result['pvalue']:.4f}, cointegrated={coint_result['is_cointegrated']}")
-            
+
             # Filtro 1: Cointegración
             if not coint_result['is_cointegrated'] or coint_result['pvalue'] > pvalue_max:
                 if verbose:
                     print(f"  ✗ Rejected: pvalue {coint_result['pvalue']:.4f} > {pvalue_max}")
                 continue
-            
+
             # Calcular correlación
             correlation = price_a.corr(price_b)
-            
+
             # Filtro 2: Correlación mínima
             if abs(correlation) < correlation_min:
                 if verbose:
                     print(f"  ✗ Rejected: correlation {correlation:.3f} < {correlation_min}")
                 continue
-            
+
             # Estabilidad de correlación
             corr_stability = calculate_correlation_stability(
                 price_a, price_b, window_days=60
             )
-            
+
             # Construir spread usando la misma metodología que train_e4_pipeline
             # Esto garantiza que los parámetros OU sean consistentes
             from .build_spread import build_pair_features
-            
+
             beta_window = 120  # Mismo valor que en train_e4_pipeline
             spread_features = build_pair_features(
-                price_a, price_b, 
+                price_a, price_b,
                 volume_a=None, volume_b=None,
                 beta_window=beta_window,
                 zscore_window=60
             )
-            
+
             spread = spread_features["spread"]
-            
+
             # Estimar parámetros OU
             ou_params = estimate_ou_parameters(spread)
-            
+
             if verbose:
                 print(f"  OU: half_life={ou_params['half_life']:.1f}d, theta={ou_params['theta']:.4f}")
-            
+
             # Filtro 3: Half-life razonable
             if ou_params['half_life'] < half_life_min or ou_params['half_life'] > half_life_max:
                 if verbose:
                     print(f"  ✗ Rejected: half_life {ou_params['half_life']:.1f} outside [{half_life_min}, {half_life_max}]")
                 continue
-            
+
             # Par válido - guardar resultados
             results.append({
                 'ticker_a': ticker_a,
@@ -239,7 +239,7 @@ def discover_cointegrated_pairs(
                 'ou_sigma': ou_params['sigma'],
                 'is_stationary': ou_params.get('is_stationary', False),
             })
-            
+
             if verbose:
                 print(
                     f"  ✓ ACCEPTED: {ticker_a}-{ticker_b} | "
@@ -247,29 +247,29 @@ def discover_cointegrated_pairs(
                     f"hl={ou_params['half_life']:.1f}d, "
                     f"corr={correlation:.3f}"
                 )
-        
+
         except Exception as e:
             if verbose:
                 print(f"✗ {ticker_a}-{ticker_b}: ERROR - {e}")
             continue
-    
+
     # Crear DataFrame con resultados
     if results:
         df_pairs = pd.DataFrame(results)
-        
+
         # Ordenar por calidad (p-value bajo, half-life razonable)
         df_pairs['quality_score'] = (
             (1 - df_pairs['pvalue']) * 0.4 +  # 40% peso en cointegración
             (1 - df_pairs['correlation_stability']) * 0.3 +  # 30% en estabilidad
             np.clip(30 / df_pairs['ou_half_life'], 0, 1) * 0.3  # 30% en half-life (ideal ~30 días)
         )
-        
+
         df_pairs = df_pairs.sort_values('quality_score', ascending=False)
-        
+
         # Guardar en cache si está habilitado
         if use_cache:
             _save_cache_results(df_pairs, cache_path, verbose)
-        
+
         logger.info(f"Discovered {len(df_pairs)} cointegrated pairs")
         return df_pairs
     else:
@@ -290,45 +290,45 @@ def filter_best_pairs(
 ) -> pd.DataFrame:
     """
     Filtra los mejores pares según criterios de calidad.
-    
+
     Args:
         pairs_df: DataFrame con pares descubiertos
         max_pairs: Número máximo de pares a retornar
         min_quality_score: Score mínimo de calidad
         max_half_life: Half-life máximo permitido
-    
+
     Returns:
         DataFrame filtrado con los mejores pares
     """
-    
+
     if pairs_df.empty:
         return pairs_df
-    
+
     # Filtrar por quality score
     filtered = pairs_df[pairs_df['quality_score'] >= min_quality_score].copy()
-    
+
     # Filtrar por half-life
     filtered = filtered[filtered['ou_half_life'] <= max_half_life]
-    
+
     # Limitar cantidad
     if max_pairs is not None:
         filtered = filtered.head(max_pairs)
-    
+
     logger.info(
         f"Filtered to {len(filtered)} pairs "
         f"(quality>={min_quality_score}, hl<={max_half_life}d)"
     )
-    
+
     return filtered
 
 
 def pairs_to_list(pairs_df: pd.DataFrame) -> List[Tuple[str, str]]:
     """
     Convierte DataFrame de pares a lista de tuplas.
-    
+
     Args:
         pairs_df: DataFrame con columnas 'ticker_a' y 'ticker_b'
-    
+
     Returns:
         Lista de tuplas [(ticker_a, ticker_b), ...]
     """

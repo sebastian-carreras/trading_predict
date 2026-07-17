@@ -32,7 +32,7 @@ YPFD.BA, GGAL.BA, PAMP.BA, BYMA.BA, CEPU.BA, AAPL, MSFT
 ### `auto_compare_with_gru` (boolean)
 Habilita comparación automática con el último run del GRU.
 
-**Valores**: `True` / `False`  
+**Valores**: `True` / `False`
 **Default**: `True`
 
 ## 🔄 Flujo de Tareas

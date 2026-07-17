@@ -71,7 +71,7 @@ logger = logging.getLogger(__name__)  # Logger
 
 def load_config() -> dict:  # Cargar config
     """Carga configuración desde archivo base.yaml.
-    
+
     Retorna:
         dict: Configuración con estrategias, modelos, splits, etc
     """
@@ -88,7 +88,7 @@ def process_pair(  # Procesar par
 ) -> Dict | None:  # Retorna dict o None
     """
     Procesa un par completo: validación, spread, OU, k-NN, backtest.
-    
+
     Procedimiento:
     1. Carga precios de ambos activos
     2. Valida cointegración (pvalue < 0.05)
@@ -99,25 +99,25 @@ def process_pair(  # Procesar par
     7. Genera señales de trading
     8. Ejecuta backtest con rebalanceo diario
     9. Guarda resultados
-    
+
     Args:
         ticker_a: Ticker del activo A (ej: "AAPL")
         ticker_b: Ticker del activo B (ej: "MSFT")
         data_dir: Directorio con datos limpios (CSV)
         config: Configuración de la estrategia E4
         output_dir: Directorio para salidas
-    
+
     Returns:
         Dict con resultados del par, o None si el par no es válido
     """
-    
+
     pair_name = f"{ticker_a}_{ticker_b}"  # Nombre par
     logger.info(f"Processing pair: {pair_name}")  # Log
-    
+
     # Crear directorio para el par
     pair_dir = output_dir / pair_name  # Dir par
     ensure_dir(pair_dir)  # Crear dir
-    
+
     # 1. CARGAR DATOS
     # Carga series de precios de cierre para ambos activos
     try:  # Cargar precios
@@ -125,7 +125,7 @@ def process_pair(  # Procesar par
     except FileNotFoundError as e:  # Error
         logger.error(f"Data not found for {pair_name}: {e}")  # Log error
         return None  # Abortar
-    
+
     # Cargar también volumen (opcional, para filtros)
     try:  # Cargar volumen
         file_a = data_dir / f"{ticker_a}_daily.csv"  # Path A
@@ -141,30 +141,30 @@ def process_pair(  # Procesar par
     except Exception:  # Fallback
         volume_a = None  # Sin volumen A
         volume_b = None  # Sin volumen B
-    
+
     # 2. TEST DE COINTEGRACIÓN
     # Verifica que el spread sea estacionario (condición para pairs trading)
     coint_config = config.get("filters", {})  # Config filtros
     max_pvalue = coint_config.get("cointegration_pvalue_max", 0.05)  # Pvalue máx
-    
+
     coint_result = test_pair_cointegration(price_a, price_b, method="engle-granger")  # Test
-    
+
     if not coint_result["is_cointegrated"]:  # No cointegrado
         logger.warning(  # Warning
             f"{pair_name} not cointegrated: pvalue={coint_result['pvalue']:.4f}"  # Msg
         )  # Fin warning
         return None  # Abortar
-    
+
     logger.info(  # Log
         f"{pair_name} cointegrated: pvalue={coint_result['pvalue']:.4f}"  # Msg
     )  # Fin log
-    
+
     # 3. CONSTRUIR SPREAD Y FEATURES
     # Calcula el spread (diferencia hedgeada entre los precios)
     # Incluye: zscore (desviaciones estándar del spread), beta, volumen
     beta_window = config.get("beta_lookback_days", 120)  # Ventana beta
     zscore_window = 60  # Ventana zscore
-    
+
     spread_features = build_pair_features(  # Features spread
         price_a,  # Precio A
         price_b,  # Precio B
@@ -173,10 +173,10 @@ def process_pair(  # Procesar par
         beta_window=beta_window,  # Ventana beta
         zscore_window=zscore_window,  # Ventana zscore
     )  # Fin build
-    
+
     spread = spread_features["spread"]  # Spread
     zscore = spread_features["zscore"]  # Zscore
-    
+
     # Guardar spread timeseries para análisis
     spread_df = pd.DataFrame({  # DF spread
         "spread": spread,  # Spread
@@ -186,7 +186,7 @@ def process_pair(  # Procesar par
     spread_csv = pair_dir / "spread_timeseries.csv"  # Path CSV
     spread_df.to_csv(spread_csv)  # Guardar CSV
     logger.info(f"Saved spread to {spread_csv}")  # Log
-    
+
     # 4. ESTIMAR PARÁMETROS OU (Ornstein-Uhlenbeck)
     # Modela el spread como proceso de reversión a la media:
     # d(spread) = theta * (mu - spread) * dt + sigma * dW
@@ -194,7 +194,7 @@ def process_pair(  # Procesar par
     # mu: media de largo plazo
     # sigma: volatilidad instantánea
     ou_params = estimate_ou_parameters(spread)  # Params OU
-    
+
     # Validar half-life (tiempo para revertir 50% a la media)
     max_half_life = coint_config.get("half_life_days_max", 20)  # Half-life máx
     if ou_params["half_life"] > max_half_life:  # Validar half-life
@@ -202,51 +202,51 @@ def process_pair(  # Procesar par
             f"{pair_name} half-life too long: {ou_params['half_life']:.1f} > {max_half_life}"  # Msg
         )  # Fin warning
         # No rechazar automáticamente, pero advertir
-    
+
     logger.info(  # Log OU
         f"{pair_name} OU params: theta={ou_params['theta']:.4f}, "  # Theta
         f"mu={ou_params['mu']:.4f}, sigma={ou_params['sigma']:.4f}, "  # Mu/Sigma
         f"half_life={ou_params['half_life']:.1f} days"  # Half-life
     )  # Fin log OU
-    
+
     # Guardar parámetros OU para futura inferencia
     ou_json = pair_dir / "ou_params.json"  # Path OU
     with open(ou_json, "w") as f:  # Abrir
         json.dump(ou_params, f, indent=2)  # Guardar
-    
+
     # 5. TEST DE ESTACIONARIEDAD
     stationarity = test_stationarity(spread)  # Test
     logger.info(  # Log
         f"{pair_name} stationarity test: pvalue={stationarity['pvalue']:.4f}, "  # Pvalue
         f"stationary={stationarity['is_stationary']}"  # Flag
     )  # Fin log stationarity
-    
+
     # 6. k-NN CONFIRMACIÓN (OPCIONAL)
     # Entrena modelo k-NN para confirmar/refinar señales del spread zscore
     knn_config = config.get("knn", {})  # Config kNN
     use_knn = knn_config.get("enabled", True)  # Flag
     knn_signals = None  # Señales kNN
-    
+
     if use_knn:  # Si usa kNN
         logger.info(f"Training k-NN for {pair_name}")  # Log
-        
+
         # Construir estado
         state_features = build_knn_state_features(spread_features)  # Features
-        
+
         # Target: cambio en spread
         horizon = config.get("horizon_days", 10)  # Horizon
         target = create_knn_target(spread, horizon_days=horizon)  # Target
-        
+
         # Cross-validation para seleccionar k
         k_candidates = knn_config.get("k_candidates", [5, 10, 20])  # K candidatos
         cv_results = cross_validate_knn(  # Cross-validate
             state_features, target, k_candidates=k_candidates, n_folds=3  # Args
         )  # Fin cross-validate
-        
+
         # Mejor k
         best_k = cv_results.iloc[0]["k"]  # Best k
         logger.info(f"Best k for {pair_name}: {best_k}")  # Log
-        
+
         # Entrenar modelo final
         knn_train_started_at = datetime.now(timezone.utc).isoformat()
         knn_train_start = time.perf_counter()
@@ -285,14 +285,14 @@ def process_pair(  # Procesar par
             run_dir=pair_dir,
             extra={"component": "knn_signals"},
         )
-    
+
     # 6. Generar señales de trading
     entry_exit_config = config.get("entry_exit", {})  # Config entry/exit
     entry_z = entry_exit_config.get("entry_z", 2.0)  # Entry z
     exit_z = entry_exit_config.get("exit_z", 0.25)  # Exit z
     stop_z = entry_exit_config.get("stop_z", 3.0)  # Stop z
     time_stop_days = entry_exit_config.get("time_stop_days", 20)  # Time stop
-    
+
     signals_started_at = datetime.now(timezone.utc).isoformat()
     signals_start = time.perf_counter()
     signals = generate_pair_signals(  # Señales
@@ -317,14 +317,14 @@ def process_pair(  # Procesar par
         run_dir=pair_dir,
         extra={"component": "signals"},
     )
-    
+
     # 7. Backtest
     round_trip_bps = 20.0  # 2 activos x 10 bps
-    
+
     # Obtener hedge ratio (beta) para backtest dollar-neutral
     # spread_features es un DataFrame con columna "beta_rolling"
     beta = spread_features["beta_rolling"]  # Beta rolling
-    
+
     backtest_results = backtest_pair_strategy(  # Backtest
         price_a,  # Precio A
         price_b,  # Precio B
@@ -334,18 +334,18 @@ def process_pair(  # Procesar par
         initial_capital=100000.0,  # Capital
         position_size=0.25,  # Tamaño posición
     )  # Fin backtest
-    
+
     # Guardar trades
     trades_csv = pair_dir / "trades.csv"  # Path trades
     trades_df = pd.concat([signals, backtest_results], axis=1)  # DF trades
     trades_df.to_csv(trades_csv)  # Guardar
     logger.info(f"Saved trades to {trades_csv}")  # Log
-    
+
     # 8. Resumir resultados
     summary = summarize_pair_backtest(  # Resumen
         backtest_results, signals, ticker_a, ticker_b  # Args
     )  # Fin resumen
-    
+
     # Agregar info adicional
     summary.update({  # Update summary
         "cointegration_pvalue": coint_result["pvalue"],  # Pvalue
@@ -353,17 +353,17 @@ def process_pair(  # Procesar par
         "ou_theta": ou_params["theta"],  # Theta
         "stationarity_pvalue": stationarity["pvalue"],  # Stationarity pvalue
     })  # Fin update
-    
+
     # Guardar summary
     summary_json = pair_dir / "backtest_summary.json"  # Path summary
     with open(summary_json, "w") as f:  # Abrir
         json.dump(summary, f, indent=2)  # Guardar
-    
+
     logger.info(  # Log
         f"{pair_name} summary: return={summary['total_return']:.2%}, "  # Return
         f"sharpe={summary['sharpe']:.2f}, num_trades={summary['num_trades']}"  # Sharpe/trades
     )  # Fin log summary
-    
+
     return summary  # Retornar
 
 
@@ -373,24 +373,24 @@ def main(  # Main
 ):  # Fin firma
     """
     Pipeline principal E4.
-    
+
     Args:
         pairs: Lista de tuplas (ticker_a, ticker_b). Si None, usar de config.
         output_tag: Tag para directorio de salida. Si None, usar timestamp.
     """
-    
+
     logger.info("=" * 80)  # Separador
     logger.info("E4 Pairs Trading Pipeline")  # Log
     logger.info("=" * 80)  # Separador
-    
+
     # Cargar configuración
     config = load_config()  # Cargar config
     e4_config = config.get("strategies", {}).get("e4_pairs", {})  # Config E4
-    
+
     if not e4_config.get("enabled", True):  # Validar enabled
         logger.error("E4 strategy is not enabled in config")  # Error
         return  # Salir
-    
+
     # Obtener lista de pares
     if pairs is None:  # Sin pares explícitos
         pairs_config = e4_config.get("pairs", [])  # Config pares
@@ -399,21 +399,21 @@ def main(  # Main
             return  # Salir
         # Convertir de lista de listas a tuplas
         pairs = [(p[0], p[1]) for p in pairs_config]  # Convertir
-    
+
     logger.info(f"Processing {len(pairs)} pairs")  # Log
-    
+
     # Directorios
     data_dir = project_root() / "data" / "clean"  # Dir data
-    
+
     if output_tag is None:  # Tag default
         output_tag = datetime.now().strftime("%Y%m%d_%H%M%S")  # Timestamp
-    
+
     output_dir = project_root() / "runs" / "e4_pairs" / output_tag  # Dir salida
     ensure_dir(output_dir)  # Crear dir
-    
+
     logger.info(f"Data directory: {data_dir}")  # Log
     logger.info(f"Output directory: {output_dir}")  # Log
-    
+
     # Guardar configuración usada
     config_used = output_dir / "config_used.yaml"  # Path config
     import yaml  # Import yaml
@@ -440,10 +440,10 @@ def main(  # Main
     except Exception as exc:
         logger.warning(f"MLflow no disponible, continuando sin tracking: {exc}")
         mlflow_enabled = False
-    
+
     # Procesar cada par
     all_results = []  # Resultados
-    
+
     for ticker_a, ticker_b in pairs:  # Loop pares
         pair_name = f"{ticker_a}_{ticker_b}"  # Nombre par
         pair_dir = output_dir / pair_name  # Dir par
@@ -507,7 +507,7 @@ def main(  # Main
         except Exception as e:  # Error par
             logger.error(f"Error processing {ticker_a}-{ticker_b}: {e}", exc_info=True)  # Log
             continue  # Siguiente
-    
+
     # Guardar resumen agregado
     if all_results:  # Hay resultados
         summary_df = pd.DataFrame(all_results)  # DF summary
@@ -529,7 +529,7 @@ def main(  # Main
                         mlflow.log_artifact(str(summary_csv), artifact_path="summaries")
             except Exception as exc:
                 logger.warning(f"No se pudo loguear resumen agregado en MLflow: {exc}")
-        
+
         # Estadísticas agregadas
         logger.info("=" * 80)  # Separador
         logger.info("Aggregate Statistics")  # Log
@@ -539,18 +539,18 @@ def main(  # Main
         logger.info(f"Average Sharpe: {summary_df['sharpe'].mean():.2f}")  # Avg Sharpe
         logger.info(f"Average win rate: {summary_df['win_rate'].mean():.2%}")  # Avg win rate
         logger.info(f"Total trades: {summary_df['num_trades'].sum()}")  # Total trades
-        
+
         # Mejor y peor par
         best_idx = summary_df['sharpe'].idxmax()  # Mejor
         worst_idx = summary_df['sharpe'].idxmin()  # Peor
-        
+
         logger.info(f"\nBest pair: {summary_df.loc[best_idx, 'pair']} "  # Log best
                f"(Sharpe={summary_df.loc[best_idx, 'sharpe']:.2f})")  # Sharpe best
         logger.info(f"Worst pair: {summary_df.loc[worst_idx, 'pair']} "  # Log worst
                f"(Sharpe={summary_df.loc[worst_idx, 'sharpe']:.2f})")  # Sharpe worst
     else:  # Sin resultados
         logger.warning("No pairs successfully processed")  # Warning
-    
+
     logger.info("=" * 80)  # Separador
     logger.info("Pipeline complete")  # Log
     logger.info("=" * 80)  # Separador
@@ -571,9 +571,9 @@ if __name__ == "__main__":  # Entry point
         type=str,  # Tipo
         help="Tag for output directory (default: timestamp)",  # Help
     )  # Fin arg output-tag
-    
+
     args = parser.parse_args()  # Parse args
-    
+
     # Parse pairs
     pairs = None  # Inicializar
     if args.pairs:  # Si hay pares
@@ -584,5 +584,5 @@ if __name__ == "__main__":  # Entry point
                 logger.error(f"Invalid pair format: {pair_str}")  # Error
                 continue  # Saltar
             pairs.append((parts[0], parts[1]))  # Append
-    
+
     main(pairs=pairs, output_tag=args.output_tag)  # Ejecutar main

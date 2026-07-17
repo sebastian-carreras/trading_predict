@@ -130,30 +130,30 @@ def run_e1_simple_for_ticker(
 
     # Cargar CSV y preparar (timestamp como índice, timezone UTC)
     ohlcv = load_ohlcv_csv(csv_path)
-    
+
     # CALCULAR FEATURES E1
     # Extrae indicadores técnicos: momentum, volatilidad, tendencia, etc.
     features = compute_e1_features(ohlcv)  # Retorna DataFrame [time, features]
     # CREAR TARGET
     # Define qué predecir: retorno esperado en N días futuros
     target = make_target_e1(ohlcv, horizon_days=horizon_days)  # Retorna Series con retornos
-    
+
     # CREAR SECUENCIAS TEMPORALES
     # Transforma datos planos en ventanas de tiempo para redes recurrentes
     # X: [n_samples, lookback_days, n_features], y: [n_samples]
     X, y, ts, feat_names = make_sequences(features, target, lookback=lookback_days)
-    
+
     # Validar que hay suficientes datos después de crear secuencias
     if len(X) == 0:
         raise ValueError(f"No hay suficientes datos para {ticker}")
-    
+
     # Mostrar información sobre dataset
     print(f"  Samples: {len(X)} | Features: {X.shape[-1]} | Lookback: {lookback_days}d")
-    
+
     # SPLIT TEMPORAL - División train/val/test
     # Mantiene orden temporal para validación realista (sin data leakage)
     idx_train, idx_val, idx_test = time_split(len(X))  # Default: 70%/15%/15%
-    
+
     # Asignar datos de entrenamiento
     X_train, y_train = X[idx_train], y[idx_train]  # Features y targets de train
     # Asignar datos de validación (para early stopping)
@@ -162,10 +162,10 @@ def run_e1_simple_for_ticker(
     X_test, y_test = X[idx_test], y[idx_test]      # Features y targets de test
     # Guardar timestamps de test para backtesting posterior
     ts_test = ts[idx_test]
-    
+
     # Mostrar tamaño de cada split
     print(f"  Split: train={len(idx_train)} val={len(idx_val)} test={len(idx_test)}")
-    
+
     # ESTANDARIZACIÓN DE FEATURES (Z-score normalization)
     # Importante: fit SOLO en datos de train (previene data leakage)
     # Reshape: [n_samples, lookback_days, features] → [n_samples*lookback_days, features]
@@ -175,34 +175,34 @@ def run_e1_simple_for_ticker(
     # Calcular std por feature (para escalar: std=1)
     # +1e-12 previene división por cero si feature es constante
     std_X = Xtr2d.std(axis=0) + 1e-12
-    
+
     def scale_X(data: np.ndarray) -> np.ndarray:
         """Aplica Z-score: (x - media) / std. Retorna float32 para GPU."""
         return ((data - mean_X) / std_X).astype(np.float32)
-    
+
     # ESTANDARIZACIÓN DE TARGETS
     # Estabiliza entrenamiento: reduce bias inicial del modelo
     mean_y = float(y_train.mean())  # Media de targets
     # +1e-12 previene división por cero
     std_y = float(y_train.std()) + 1e-12  # Std de targets
-    
+
     def scale_y(data: np.ndarray) -> np.ndarray:
         """Aplica Z-score a targets para entrenamiento."""
         return ((data - mean_y) / std_y).astype(np.float32)
-    
+
     def unscale_y(data: np.ndarray) -> np.ndarray:
         """Deshace normalización: vuelve a escala original para métricas."""
         return (data * std_y + mean_y).astype(np.float32)
-    
+
     # Aplicar normalización a features (usa media/std de train)
     X_train_s = scale_X(X_train)  # Features normalizados para train
     X_val_s = scale_X(X_val)      # Aplica MISMA transformación a val
     X_test_s = scale_X(X_test)    # Aplica MISMA transformación a test
-    
+
     # Aplicar normalización a targets (usa media/std de train)
     y_train_s = scale_y(y_train)  # Targets normalizados para train
     y_val_s = scale_y(y_val)      # Targets normalizados para val
-    
+
     # CREAR Y ENTRENAR MODELO GRU
     print(f"  Entrenando GRU {gru_units}...")
     # Inicializar modelo GRU (Gated Recurrent Unit)
@@ -213,7 +213,7 @@ def run_e1_simple_for_ticker(
         dense_units=dense_units,           # Neuronas en capa densa final
         seed=seed,                         # Para reproducibilidad
     )
-    
+
     # AJUSTAR MODELO
     train_started_at = datetime.now(timezone.utc).isoformat()
     train_start = time.perf_counter()
@@ -245,7 +245,7 @@ def run_e1_simple_for_ticker(
             "n_val": int(len(X_val)),
         },
     )
-    
+
     # REALIZAR PREDICCIONES EN TEST
     # Predicciones en escala normalizada
     pred_started_at = datetime.now(timezone.utc).isoformat()
@@ -268,7 +268,7 @@ def run_e1_simple_for_ticker(
     )
     # Desnormalizar predicciones: volver a escala original
     y_pred = unscale_y(y_pred_s)        # Predicciones en escala real
-    
+
     # CALCULAR MÉTRICAS DE MACHINE LEARNING
     # MAE: Mean Absolute Error (error absoluto promedio)
     mae = float(np.mean(np.abs(y_test - y_pred)))
@@ -279,11 +279,11 @@ def run_e1_simple_for_ticker(
     dir_acc = float(np.mean(np.sign(y_test) == np.sign(y_pred)))
     # IC: Information Coefficient (correlación de Spearman)
     ic = compute_information_coefficient(y_test, y_pred)
-    
+
     # Sanitizar IC: si es NaN, usar 0 (no hay correlación)
     if not np.isfinite(ic):
         ic = 0.0
-    
+
     # CONFIGURACIÓN DE BACKTEST
     # Extrae parámetros de umbral de señales
     thresholds = e1_simple.get("thresholds", {})
@@ -291,12 +291,12 @@ def run_e1_simple_for_ticker(
     tau_buy = float(thresholds.get("tau_buy", 0.06))
     # tau_sell: umbral para generar señal de venta (si pred_return < tau_sell)
     tau_sell = float(thresholds.get("tau_sell", 0.00))
-    
+
     # Costos de transacción
     costs_cfg = config.get("costs", {})
     # round_trip_bps: costo ida y vuelta en basis points (0.1% = 10 bps)
     round_trip_bps = float(costs_cfg.get("daily_round_trip_bps", 10))
-    
+
     # Configuración específica del backtest
     bt_cfg = e1_simple.get("backtest", {})
     # Período de holding: cuántos días mantener la posición
@@ -305,7 +305,7 @@ def run_e1_simple_for_ticker(
     allow_short = bool(bt_cfg.get("allow_short", False))
     # Máxima posición permitida (1.0 = 100%, 0.5 = 50% del capital)
     max_position = float(bt_cfg.get("max_position", 1.0))
-    
+
     # Extraer precios de cierre para el período de test
     close_prices = ohlcv.loc[ts_test, "close"].to_numpy()  # Array de precios de cierre
     # EJECUTAR BACKTEST
@@ -323,22 +323,22 @@ def run_e1_simple_for_ticker(
     )
     # Calcular métricas agregadas del backtest
     trading_metrics = summarize_backtest(bt)  # Retorna dict con Sharpe, CAGR, Max DD, etc.
-    
+
     # Extraer Sharpe ratio (métrica de riesgo-retorno)
     # Si no está disponible, usar NaN
     sharpe = float(trading_metrics.get("sharpe", float("nan")))
-    
+
     # IMPRIMIR RESULTADOS DE ENTRENAMIENTO
     # Convertir NaN a string para impresión limpia
     ic_str = "nan" if np.isnan(ic) else f"{ic:.3f}"
     sharpe_str = "nan" if np.isnan(sharpe) else f"{sharpe:.2f}"
-    
+
     # Resumen de entrenamiento
     print(f"  ✓ Epochs: {res.epochs_ran}/{max_epochs} | Val Loss: {res.best_val_loss:.6f}")
     # Métricas ML
     print(f"  ✓ MAE={mae:.4f} RMSE={rmse:.4f} IC={ic_str} Dir={dir_acc:.1%} Sharpe={sharpe_str}")
-    
-    
+
+
     # GUARDAR OUTPUTS
     # 1. Guardar predicciones vs valores reales
     pred_df = pd.DataFrame(
@@ -347,10 +347,10 @@ def run_e1_simple_for_ticker(
     )
     pred_df.index.name = 'timestamp'
     pred_df.to_csv(out_dir / f"{ticker}_predictions.csv")  # CSV con predicciones
-    
+
     # 2. Guardar resultado del backtest (trades, equity, etc.)
     bt.to_csv(out_dir / f"{ticker}_backtest.csv")
-    
+
     # 3. Guardar scaler (necesario para inferencia futura)
     # Contiene media y std de cada feature para normalizar datos nuevos
     scaler_df = pd.DataFrame({
@@ -359,7 +359,7 @@ def run_e1_simple_for_ticker(
         'std': std_X,                 # Std de cada feature
     })
     scaler_df.to_csv(out_dir / f"{ticker}_scaler.csv", index=False)
-    
+
     # GUARDAR MODELO ENTRENADO
     # Prepara payload con todo lo necesario para inferencia futura
     model_payload = {
@@ -385,7 +385,7 @@ def run_e1_simple_for_ticker(
         },
         "state_dict": {k: v.detach().cpu() for k, v in model.model.state_dict().items()},  # Pesos
     }
-    
+
     # Ruta donde guardar el modelo
     model_path = out_dir / f"{ticker}_model.pth"
     try:
@@ -395,7 +395,7 @@ def run_e1_simple_for_ticker(
     except Exception as exc:
         # Si falla, avisar pero continuar
         print(f"  ⚠️  No se pudo guardar modelo: {exc}")
-    
+
     # CREAR SUMMARY CON TODAS LAS MÉTRICAS
     root = project_root()
     def as_relative(path: Path) -> str:
@@ -404,7 +404,7 @@ def run_e1_simple_for_ticker(
             return str(path.relative_to(root))
         except ValueError:
             return str(path)
-    
+
     # Diccionario con todas las métricas y metadatos
     summary = {
         "ticker": ticker,
@@ -431,12 +431,12 @@ def run_e1_simple_for_ticker(
         "scaler_file": as_relative(out_dir / f"{ticker}_scaler.csv"),
         "model_file": as_relative(model_path),
     }
-    
+
     # Convertir diccionario a DataFrame (1 fila)
     summary_df = pd.DataFrame([summary])
     # Guardar a CSV para fácil lectura
     summary_df.to_csv(out_dir / f"{ticker}_summary.csv", index=False)
-    
+
     # Retornar summary para consolidación agregada
     return summary
 
@@ -471,15 +471,15 @@ def main():
         help="Automatically promote candidate to champion if it beats the current champion",
     )
     args = parser.parse_args()
-    
+
     root = project_root()
     config_path = root / args.config
-    
+
     if not config_path.exists():
         raise FileNotFoundError(f"Config no encontrado: {config_path}")
-    
+
     config = load_yaml(config_path)
-    
+
     # Determinar tickers
     if args.tickers:
         tickers = [t.strip() for t in args.tickers.split(",")]
@@ -488,23 +488,23 @@ def main():
         if not tickers:
             # Fallback a e1_conservative si no hay e1_simple definido
             tickers = config.get("universe", {}).get("tickers_by_strategy", {}).get("e1_conservative", [])
-    
+
     if not tickers:
         raise ValueError("No se especificaron tickers ni en args ni en config")
-    
+
     # Directorios
     raw_dir = root / "data" / "raw" / "daily"
     clean_dir = root / "data" / "clean"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = root / "runs" / "e1_simple" / timestamp
     ensure_dir(out_dir)
-    
+
     # Guardar config usado
     config_used_path = out_dir / "config_used.yaml"
     import yaml
     with open(config_used_path, 'w') as f:
         yaml.dump(config, f, default_flow_style=False)
-    
+
     print(f"\n{'='*60}")
     print(f"Pipeline E1 Simple - {len(tickers)} tickers")
     print(f"Output: {out_dir.relative_to(root)}")
@@ -663,13 +663,13 @@ def main():
     except Exception as exc:
         print(f"⚠️  MLflow no disponible, continuando sin tracking: {exc}")
         mlflow_enabled = False
-    
+
     # Paso 1: Descargar datos
     if not args.skip_download:
         print("Paso 1/3: Descargando datos...")
         print("-" * 60)
         from ..data.download_daily import download_daily_ohlcv
-        
+
         try:
             written = download_daily_ohlcv(
                 tickers,
@@ -683,13 +683,13 @@ def main():
             print("Continuando con datos existentes...\n")
     else:
         print("Paso 1/3: Descarga omitida (usando datos existentes)\n")
-    
+
     # Paso 2: Limpiar datos
     if not args.skip_cleaning:
         print("Paso 2/3: Limpiando datos...")
         print("-" * 60)
         from ..data.clean_daily import process_daily_data_with_cleaning
-        
+
         try:
             tickers_to_clean = list(dict.fromkeys(tickers))
             reports = process_daily_data_with_cleaning(
@@ -709,11 +709,11 @@ def main():
             print("Continuando con datos raw...\n")
     else:
         print("Paso 2/3: Limpieza omitida (usando datos raw)\n")
-    
+
     # PASO 3: ENTRENAR MODELOS
     print("Paso 3/3: Entrenando modelos...")
     print("-" * 60)
-    
+
     # ENTRENAR CADA TICKER
     summaries = []  # Acumular summaries para consolidar
     for i, ticker in enumerate(tickers, 1):  # Enumerar desde 1
@@ -875,14 +875,14 @@ def main():
             print(f"  ❌ Error: {exc}\n")
             continue
         print()  # Línea en blanco para separación
-    
+
     # CONSOLIDAR RESULTADOS
     if summaries:
         # Convertir lista de dicts a DataFrame (1 fila por ticker)
         summary_all = pd.DataFrame(summaries)
         # Guardar consolidado
         summary_all.to_csv(out_dir / "summary_all.csv", index=False)
-        
+
         print(f"\n{'='*60}")
         print(f"✓ Completado: {len(summaries)}/{len(tickers)} tickers")
         print(f"  Resultados en: {out_dir.relative_to(root)}/")

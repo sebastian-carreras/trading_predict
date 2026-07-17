@@ -64,7 +64,7 @@ def download_intraday_data(**context):
     """Task 1: Descargar datos 5-min."""
     import sys
     sys.path.insert(0, '/opt/airflow')
-    
+
     from src.e3.intraday_data import download_ohlcv_5m
     from src.data.ingest import resolve_download_settings
     from src.utils import load_yaml
@@ -72,7 +72,7 @@ def download_intraday_data(**context):
 
     root = Path("/opt/airflow")
     config = load_yaml(root / "src/config/base.yaml")
-    
+
     print("[E3][download] Iniciando descarga intraday...")
 
     # Tickers E3 (params > dag_run.conf > base.yaml)
@@ -123,7 +123,7 @@ def download_intraday_data(**context):
     except Exception as e:
         print(f"⚠️ Error descargando tickers: {e}")
         downloaded = []
-    
+
     context['task_instance'].xcom_push(key='tickers_selected', value=tickers)
     context['task_instance'].xcom_push(key='tickers_downloaded', value=downloaded)
     context['task_instance'].xcom_push(key='train_with_new_data', value=train_with_new_data)
@@ -215,11 +215,11 @@ def train_e3_with_mlflow(**context):
     """Task 3: Entrenar ensemble E3 con MLflow."""
     import sys
     sys.path.insert(0, '/opt/airflow')
-    
+
     from src.e3.train_pipeline import run_for_ticker
     from src.utils import load_yaml
     from pathlib import Path
-    
+
     mlflow.set_experiment("E3_Intraday_Strategy")
 
     root = Path("/opt/airflow")
@@ -239,15 +239,15 @@ def train_e3_with_mlflow(**context):
     tickers = tickers_cleaned or tickers_downloaded or tickers_selected
     if not tickers:
         return "No tickers to train"
-    
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_base = root / "runs/e3_intraday" / timestamp
     out_base.mkdir(parents=True, exist_ok=True)
-    
+
     # Set MLflow environment variables for the training pipeline
     os.environ["MLFLOW_TRACKING_URI"] = MLFLOW_TRACKING_URI
     os.environ["MLFLOW_EXPERIMENT_NAME"] = "E3_Intraday_Strategy"
-    
+
     e3_cfg = config.get("strategies", {}).get("e3_intraday", {})
     model_cfg = e3_cfg.get("model", {})
 
@@ -333,21 +333,21 @@ def train_e3_with_mlflow(**context):
                 import traceback
                 traceback.print_exc()
                 results.append({"ticker": ticker, "status": "failed", "error": str(e)})
-    
+
     # Guardar y loggear resumen agregado
     summary_df = pd.DataFrame(results)
     summary_path = out_base / "summary_all.csv"
     summary_df.to_csv(summary_path, index=False)
-    
+
     # Targets desde config
     decision_cfg = config.get("decision", {})
     default_targets = {
         'ic_min': 0.05,
     }
     targets = {**default_targets, **decision_cfg.get("targets", {})}
-    
+
     ic_values = [r.get("ic") for r in results if r.get("ic") is not None]
-    
+
     with mlflow.start_run(run_name=f"E3_Intraday_Summary_{timestamp}"):
         mlflow.log_artifact(str(summary_path))
         mlflow.log_param("train_with_new_data", train_with_new_data)
@@ -358,7 +358,7 @@ def train_e3_with_mlflow(**context):
             mlflow.log_metric("ic_median", float(sorted(ic_values)[len(ic_values)//2]))
             mlflow.log_metric("ic_above_threshold", sum(1 for ic in ic_values if ic > targets['ic_min']))
             mlflow.log_param("ic_target_min", targets['ic_min'])
-    
+
     context['task_instance'].xcom_push(key='run_dir', value=str(out_base))
     successful = sum(1 for r in results if r["status"] == "success")
     return f"Entrenados {successful}/{len(results)} modelos E3"

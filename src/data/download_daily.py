@@ -88,7 +88,7 @@ def download_daily_ohlcv(
 
     for ticker in tickers:
         out_path = out_dir / f"{ticker}_daily.csv"
-        
+
         if skip_existing and out_path.exists():
             print(f"⏭️  {ticker} ya existe - omitido (usa --skip-download para reutilizar sin descargar)")
             skipped.append(ticker)
@@ -137,7 +137,7 @@ def download_daily_ohlcv(
                 # Aplanar columnas MultiIndex si existe
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
-                
+
                 # Resetear índice y renombrar columnas
                 df = df.reset_index()
                 if "Date" in df.columns:
@@ -155,7 +155,7 @@ def download_daily_ohlcv(
                     "Volume": "volume",
                 }
                 df = df.rename(columns=rename_map)
-                
+
                 # Si no existe adj_close (yfinance nuevo), usar close
                 if "close" in df.columns and "adj_close" not in df.columns:
                     df["adj_close"] = df["close"]
@@ -231,19 +231,19 @@ def download_daily_ohlcv(
                 success = True
             else:
                 print(f"  ⚠️  YFinance: Sin datos para {ticker}")
-        
+
         except Exception as e:
             print(f"  ⚠️  YFinance falló para {ticker}: {e}")
-        
+
         # Si Yahoo Finance falló, intentar IOL para activos argentinos
         # Incluye: .BA (acciones), bonos soberanos (AL*, GD*, AE*), etc.
         is_argentino = _is_argentino(ticker)
-        
+
         if not success and is_argentino and iol_available:
             print(f"  🔄 Intentando fallback con IOL API...")
             try:
                 from .iol_api import download_iol_daily
-                
+
                 # Calcular años desde period (ej: "10y" -> 10)
                 years = 10
                 if period.endswith("y"):
@@ -251,15 +251,15 @@ def download_daily_ohlcv(
                         years = int(period[:-1])
                     except ValueError:
                         pass
-                
+
                 iol_path = download_iol_daily(ticker, out_dir, years=years)
                 if iol_path:
                     written.append(iol_path)
                     success = True
-            
+
             except Exception as e:
                 print(f"  ⚠️  IOL también falló para {ticker}: {e}")
-        
+
         if not success:
             failed.append(ticker)
 
@@ -267,24 +267,24 @@ def download_daily_ohlcv(
         print(f"\n⏭️  {len(skipped)} tickers omitidos (ya existían): {', '.join(skipped[:5])}")
         if len(skipped) > 5:
             print(f"   ... y {len(skipped) - 5} más")
-    
+
     if failed:
         print(f"\n❌ {len(failed)} tickers fallaron: {', '.join(failed[:10])}")
         if len(failed) > 10:
             print(f"   ... y {len(failed) - 10} más")
-    
+
     return written
 
 
 def main() -> None:
     """Entrypoint: descarga datos para universo definido en base.yaml.
-    
+
     Uso:
         python -m src.data.download_daily              # Solo descarga nuevos (skip_existing=True)
         python -m src.data.download_daily --force      # Fuerza reDescarga de todos
     """
     import sys
-    
+
     root = project_root()
     config = load_yaml(root / "src/config/base.yaml")
 
@@ -300,7 +300,7 @@ def main() -> None:
     # Control de argumentos
     force_download = "--force" in sys.argv or "-f" in sys.argv
     skip_existing = not force_download
-    
+
     out_dir = root / "data" / "raw" / "daily"
     mode_str = "forzada" if force_download else "incremental (skip existentes)"
     print(f"Descarga {mode_str} de {len(tickers)} tickers a {out_dir}\n")

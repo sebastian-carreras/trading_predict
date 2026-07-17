@@ -27,7 +27,7 @@ python -m src.e1.train_all
 python -m src.e1.train_all --tickers AAPL,MSFT
 
 # E1 Conservative (walk-forward validation)
-python -m src.e1.train_pipeline 
+python -m src.e1.train_pipeline
 python -m src.e1.train_pipeline --tickers AAPL
 
 # E1 Baseline (regresión lineal)

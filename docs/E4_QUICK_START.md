@@ -10,7 +10,7 @@ La estrategia E4 de pairs trading ha sido completamente implementada siguiendo l
 - **`select_pairs.py`**: Selección y validación de pares cointegrados
   - Test Engle-Granger y Johansen
   - Filtros de correlación y estabilidad
-  
+
 - **`build_spread.py`**: Construcción de spreads
   - Hedge ratio (β) rolling via OLS
   - Cálculo de z-score normalizado

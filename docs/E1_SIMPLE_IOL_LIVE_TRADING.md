@@ -210,7 +210,7 @@ python scripts/e1_simple_iol_live_trade.py \
 
 ## ⚠️ Disclaimer
 
-Este script es para **fines educativos y de prueba**. 
+Este script es para **fines educativos y de prueba**.
 
 - Usar **ambiente de prueba** de IOL para experimentar
 - **No** operar con dinero real sin validación exhaustiva
@@ -219,5 +219,5 @@ Este script es para **fines educativos y de prueba**.
 
 ---
 
-**Última actualización:** Enero 19, 2026  
+**Última actualización:** Enero 19, 2026
 **Versión:** 1.0

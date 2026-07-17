@@ -78,7 +78,7 @@ NVDA:
 ```python
 def _apply_tuned_overrides(config, ticker, tuned_path, strategy_key):
     # ... carga thresholds y model ...
-    
+
     # Cargar parámetros de walk-forward validation:
     if "n_folds" in per_ticker or "internal_val_fraction" in per_ticker:
         splits = config.setdefault("splits", {})
@@ -86,7 +86,7 @@ def _apply_tuned_overrides(config, ticker, tuned_path, strategy_key):
             splits["folds"] = int(per_ticker["n_folds"])
         if "internal_val_fraction" in per_ticker:
             splits["internal_val_fraction"] = float(per_ticker["internal_val_fraction"])
-    
+
     return config
 ```
 
@@ -94,7 +94,7 @@ def _apply_tuned_overrides(config, ticker, tuned_path, strategy_key):
 ```python
 def _apply_tuned_overrides(config, ticker, tuned_path, strategy_key):
     # ... carga parámetros del modelo y filtros ...
-    
+
     # Aplicar parámetros de walk-forward si están presentes:
     if "n_folds" in per_ticker or "internal_val_fraction" in per_ticker:
         splits = config.setdefault("splits", {})
@@ -102,7 +102,7 @@ def _apply_tuned_overrides(config, ticker, tuned_path, strategy_key):
             splits["folds"] = int(per_ticker["n_folds"])
         if "internal_val_fraction" in per_ticker:
             splits["internal_val_fraction"] = float(per_ticker["internal_val_fraction"])
-    
+
     return config
 ```
 

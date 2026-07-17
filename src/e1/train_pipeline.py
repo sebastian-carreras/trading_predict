@@ -54,9 +54,9 @@ from ..utils import (
     resolve_lifecycle_paths,
 )
 
-# Memoriza hasta 8 lecturas de archivos de parámetros tuneados (clave = path_str); 
+# Memoriza hasta 8 lecturas de archivos de parámetros tuneados (clave = path_str);
 # si se consulta el mismo path otra vez, evita re-leer/parsing del YAML.
-# esto acelera cargas repetidas del mismo archivo para múltiples tickers en un mismo proceso. 
+# esto acelera cargas repetidas del mismo archivo para múltiples tickers en un mismo proceso.
 @lru_cache(maxsize=8)
 def _load_tuned_params(path_str: str) -> dict:
     path = Path(path_str)
@@ -558,7 +558,7 @@ def run_e1_walk_forward(  # Walk-forward completo
     fold_summaries: list[dict] = []  # Lista de resúmenes por fold
     pred_frames: list[pd.DataFrame] = []  # Lista de predicciones por fold
 
-    # El Payload, no es solo el modelo entrenado. Incluye qué arquitectura usar, cómo 
+    # El Payload, no es solo el modelo entrenado. Incluye qué arquitectura usar, cómo
     # normalizar los datos de entrada y con qué horizonte se entrenó. El payload te da todo eso junto.
     last_model_payload: dict | None = None  # Payload del último fold (para guardar)
     last_torch = None  # Referencia a torch para serializar el modelo
@@ -971,7 +971,7 @@ def run_e1_for_ticker(
     # raw_dir es data/raw/daily, entonces data/clean está en raw_dir.parent.parent / "clean"
     clean_dir = raw_dir.parent.parent / "clean"  # Carpeta de datos limpios
     clean_csv_path = clean_dir / f"{ticker}_daily.csv"  # Path del CSV limpio
-    
+
     if clean_csv_path.exists():  # Si hay datos limpios
         csv_path = clean_csv_path  # Usar datos limpios
         print(f"  ✓ Usando datos limpios: {csv_path.name}")  # Log
@@ -1255,7 +1255,7 @@ def run_e1_for_ticker(
             "n_test": int(len(X_test)),
         },
     )
-    
+
     # Desnormalizar predicciones para métricas y backtesting
     y_pred = unscale_y(y_pred_s)  # Predicciones en escala original
 
@@ -1270,7 +1270,7 @@ def run_e1_for_ticker(
     # Backtesting
     # Obtener precios de cierre del período de test
     close_prices_test = ohlcv.loc[ts_test, "close"].to_numpy()  # Close prices
-    
+
     # Ejecutar backtest
     bt = backtest_daily_signals(
         timestamps=ts_test,  # Timestamps
@@ -1283,11 +1283,11 @@ def run_e1_for_ticker(
         allow_short=allow_short,  # Shorts
         max_position=max_position,  # Max posición
     )
-    
+
     # Métricas de trading
     trading_metrics = summarize_backtest(bt)  # Métricas de backtest
 
-    
+
 
     # Guardar outputs
     ensure_dir(out_dir)  # Asegurar dir
@@ -1295,14 +1295,14 @@ def run_e1_for_ticker(
     preds_df = pd.DataFrame({"y_true": y_test, "y_pred": y_pred}, index=ts_test)  # DF preds
     preds_df.index.name = "timestamp"  # Nombrar índice
     preds_df.to_csv(out_dir / f"{ticker}_predictions.csv")  # Guardar preds
-    
+
     # Guardar backtest
     bt.to_csv(out_dir / f"{ticker}_backtest.csv")  # Guardar backtest
 
     # Guardar scaler de features X
     scaler_X_df = pd.DataFrame({"mean": mean_X, "std": std_X}, index=feat_names)  # DF scaler X
     scaler_X_df.to_csv(out_dir / f"{ticker}_scaler.csv")  # Guardar scaler X
-    
+
     # Guardar scaler de target y (para inferencia futura)
     scaler_y_df = pd.DataFrame({
         "mean_y": [mean_y],  # Media y

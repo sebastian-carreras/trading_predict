@@ -66,38 +66,38 @@ DEFAULT_PARAMS: Dict[str, Optional[str]] = {
     "n_trials": "20",
     "study_name": "e2_hyperparameter_optimization_timesplit",
     "per_ticker": "False",
-    
+
     # Tickers (universo E2 moderado)
     "tickers": "NVDA, AMD, MSFT, AAPL, TSLA, GOOGL, META, NFLX, AMZN, BABA",
     "single_ticker": "",
     "quick_mode": "False",
-    
+
     # Timeouts y outputs
     "timeout_seconds": "",
     "mlflow_uri": "local",
     "output_dir": "reports/hyperparameter_optimization",
-    
+
     # --- Thresholds de Trading ---
     "tau_buy_min": "0.015",
     "tau_buy_max": "0.05",
     "tau_sell_min": "-0.01",
     "tau_sell_max": "0.01",
-    
+
     # --- Arquitectura LSTM ---
     "lstm_units_1_min": "64",
     "lstm_units_1_max": "256",
     "lstm_units_2_min": "32",
     "lstm_units_2_max": "128",
-    
+
     # --- Regularización ---
     "dropout_min": "0.1",
     "dropout_max": "0.4",
-    
+
     # --- Entrenamiento ---
     "learning_rate_min": "5e-5",
     "learning_rate_max": "5e-3",
     "batch_sizes": "32,64,128",
-    
+
     # Argumentos CLI extra
     "extra_cli_args": "",
 }
@@ -124,7 +124,7 @@ def _is_not_blank(value: Optional[str]) -> bool:
 def run_optuna_tuning(**context) -> str:
     """
     Ejecuta el script de optimización de hiperparámetros E2.
-    
+
     Lee parámetros desde Airflow params y construye el comando CLI.
     """
     params = context["params"]
@@ -224,7 +224,7 @@ def run_optuna_tuning(**context) -> str:
     )
 
     log.info("Ejecutando comando Optuna E2: %s", shlex.join(base_cmd))
-    
+
     # Ejecutar script
     try:
         result = subprocess.run(

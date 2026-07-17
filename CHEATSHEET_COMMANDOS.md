@@ -541,7 +541,7 @@ python -m scripts.evaluation.replay_lifecycle_e3
 > Los guardrails Phase 1 ya no son un script suelto: viven en `src/lifecycle/guardrails.py`
 > (aplicados dentro de la promoción) y se ejercitan con `pytest tests/test_guardrails.py`.
 
-### Figuras de conclusiones 
+### Figuras de conclusiones
 
 ```bash
 # Genera las 8 figuras de nivel de conclusión leyendo predictions.csv y backtest.csv de cada champion

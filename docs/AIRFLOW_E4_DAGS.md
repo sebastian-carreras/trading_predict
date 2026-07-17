@@ -62,7 +62,7 @@ generate_report
   - Generación de señales basadas en z-score
   - Backtest con gestión dollar-neutral
   - Registro de métricas en MLflow
-- **Output**: 
+- **Output**:
   - `runs/e4_pairs/<timestamp>/`
   - Por cada par: spread, OU params, trades, summary
 

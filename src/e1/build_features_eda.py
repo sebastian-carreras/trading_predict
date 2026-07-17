@@ -29,9 +29,9 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # ===== Precio/retorno (core) =====
     # Estrategia: Capturar momentum y mean-reversion en diferentes horizontes temporales
-    
+
     log_close = np.log(close)
-    # 
+    #
     # ret_1d: Retorno logarítmico diario
     # Propósito: Captura la velocidad de cambio del precio día a día
     # Estrategia: Detectar días de fuerte movimiento (posibles señales de continuación o reversión)
@@ -39,17 +39,17 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Retornos rolling (momentum multi-horizonte)
     # OPTIMIZADO PARA LARGO PLAZO: Eliminamos ret_5d (ruido para horizon=90 días)
-    
+
     # ret_1w: Retorno semanal (5 días hábiles)
     # Propósito: Momentum semanal (escala más alineada con horizon=90 días)
     # Estrategia: Captura tendencias semanales sin ruido diario. Si >0 → semana alcista, si <0 → bajista
     out["ret_1w"] = log_close.diff(5)
-    
+
     # ret_4w: Retorno mensual (~20 días hábiles = 4 semanas)
     # Propósito: Momentum mensual (escala crítica para horizon=90 días = 13 semanas)
     # Estrategia: Acciones con ret_4w alto tienden a continuar subiendo próximos 90 días (momentum persistente)
     out["ret_4w"] = log_close.diff(20)
-    
+
     # ret_13w: Retorno trimestral (~60 días hábiles = 13 semanas)
     # Propósito: Momentum trimestral (perfectamente alineado con horizon=90 días)
     # Estrategia: Detecta tendencias de largo plazo. Valores extremos indican sobrecompra/sobreventa a escala trimestral
@@ -58,7 +58,7 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
     # Volatilidad realizada (medida de riesgo)
     # Estrategia: Alta volatilidad = mayor incertidumbre → ajustar predicciones y tamaño de posición
     # OPTIMIZADO PARA LARGO PLAZO: Una sola medida de volatilidad mensual (más estable)
-    
+
     # vol_4w: Volatilidad (std de retornos) últimos 20 días (~4 semanas)
     # Reintroducida en esta version EDA como evidencia del analisis inicial.
     vol_4w = log_close.diff().rolling(20).std()
@@ -76,7 +76,7 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Rango intradía y ATR (Average True Range)
     # Estrategia: Medir la amplitud real de movimiento (más robusto que solo high-low)
-    
+
     # ELIMINADA POR SER POCO ÚTIL PARA LARGO PLAZO:
     # range_pct: Rango intradía normalizado (high-low) / close
     # Propósito: Detectar días de alta volatilidad intradía
@@ -85,7 +85,7 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
     # range_pct bajo (<1%) indica mercado tranquilo
     # range_pct es útil para ajustar stops y evaluar riesgo intradía
     # out["range_pct"] = (high - low) / close
-    
+
     # True Range: Máximo entre (high-low), (high-close_prev), (low-close_prev)
     # Propósito: Captura gaps y movimientos que el simple high-low no detecta
     tr = pd.concat(
@@ -96,7 +96,7 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
         ],
         axis=1,
     ).max(axis=1)
-    
+
     # atr_14: Average True Range normalizado (promedio de TR últimos 14 días / close)
     # Propósito: Volatilidad "real" considerando gaps
     # Estrategia: ATR alto → mayor riesgo, necesitas stops más amplios. ATR bajo → mercado tranquilo, posible breakout
@@ -104,10 +104,10 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Volumen z-score (anomalías en volumen de trading)
     # Estrategia: Volumen anormal indica convicción de mercado (confirmación de tendencia o reversión)
-    
+
     # vol_zscore_60: Z-score del volumen vs últimos 60 días
     # Propósito: Detectar días con volumen anormalmente alto o bajo
-    # Estrategia: 
+    # Estrategia:
     #   - vol_zscore > 2 → Volumen excepcional (ej. earnings, noticias) → confirma movimiento de precio
     #   - vol_zscore < -1 → Volumen muy bajo → movimiento de precio poco confiable (puede revertir)
     #   - vol_zscore ~ 0 → Volumen normal, sin señal especial
@@ -116,12 +116,12 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # ===== Tendencia (largo plazo) =====
     # Estrategia: Identificar tendencia primaria y posición relativa del precio
-    
+
     # sma_50: Simple Moving Average de 50 días
     # Propósito: Tendencia de medio plazo (2-3 meses)
     # Estrategia: Si close > sma_50 → tendencia alcista de medio plazo. Golden cross: sma_50 > sma_200 → bull market
     out["sma_50"] = close.rolling(50).mean()
-    
+
     # sma_200: Simple Moving Average de 200 días
     # Reintroducida en esta version EDA como evidencia del analisis inicial.
     sma_200 = close.rolling(200).mean()
@@ -150,10 +150,10 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # MACD (Moving Average Convergence Divergence) - Indicador de momentum
     # Estrategia: Detectar cambios en fuerza, dirección, momentum y duración de tendencia
-    
+
     ema12 = close.ewm(span=12, adjust=False).mean()  # EMA rápida (corto plazo)
     ema26 = close.ewm(span=26, adjust=False).mean()  # EMA lenta (largo plazo)
-    
+
     # macd_line: Diferencia entre EMA(12) y EMA(26)
     # Propósito: Medir momentum (qué tan rápido se mueve el precio)
     # Estrategia:
@@ -163,13 +163,13 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
     macd_line = ema12 - ema26
     # Eliminado por ser redundante con macd_hist
     # out["macd_line"] = macd_line
-    
+
     # macd_signal: EMA(9) de la MACD line (línea de señal)
     # Propósito: Suavizar la MACD para generar señales más confiables
     macd_signal = macd_line.ewm(span=9, adjust=False).mean()
     # Eliminado por ser redundante con macd_hist
     # out["macd_signal"] = macd_signal
-    
+
     # macd_hist: Histograma MACD (diferencia entre MACD line y signal)
     # Propósito: Medir divergencia entre momentum actual y su tendencia
     # Estrategia:
@@ -180,12 +180,12 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Bollinger Bands (20, 2) - Bandas de volatilidad
     # Estrategia: Identificar condiciones de sobrecompra/sobreventa y volatilidad
-    
+
     sma20 = close.rolling(20).mean()  # Media de 20 días
     std20 = close.rolling(20).std()   # Desviación estándar de 20 días
     bb_upper = sma20 + 2 * std20      # Banda superior (95% de valores están dentro)
     bb_lower = sma20 - 2 * std20      # Banda inferior
-    
+
     # bb_pct_b: %B de Bollinger (posición relativa del precio en las bandas)
     # Propósito: Normalizar la posición del precio respecto a las bandas
     # Estrategia:
@@ -195,7 +195,7 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
     #   - bb_pct_b < 0.2 → Precio cerca de banda inferior → zona de sobreventa
     #   - bb_pct_b < 0.0 → Precio BAJO banda inferior → sobreventa extrema (posible reversión alcista)
     out["bb_pct_b"] = (close - bb_lower) / (bb_upper - bb_lower + 1e-12)
-    
+
     # bb_bandwidth: Ancho de las bandas normalizado
     # Propósito: Medir expansión/contracción de volatilidad
     # Estrategia:
@@ -207,10 +207,10 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
     # ADX (Average Directional Index) - Fuerza de tendencia
     # Estrategia: Medir FUERZA de la tendencia (no dirección). Complementa MACD/SMA.
     # Nota: Esta es una versión simplificada. Cálculo completo requiere +DI/-DI normalizados.
-    
+
     high_diff = high.diff()
     low_diff = -low.diff()
-    
+
     # Directional Movement: Mide movimiento direccional (arriba vs abajo)
     plus_dm = pd.Series(0.0, index=df.index)   # Movimiento alcista
     minus_dm = pd.Series(0.0, index=df.index)  # Movimiento bajista
@@ -222,10 +222,10 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
     plus_di = 100 * (plus_dm.rolling(14).mean() / (atr + 1e-12))
     # -DI: Indicador direccional negativo (fuerza bajista)
     minus_di = 100 * (minus_dm.rolling(14).mean() / (atr + 1e-12))
-    
+
     # DX: Directional Index (divergencia entre +DI y -DI)
     dx = 100 * ((plus_di - minus_di).abs() / (plus_di + minus_di + 1e-12))
-    
+
     # adx_14: Promedio del DX (fuerza de tendencia)
     # Propósito: Medir qué tan fuerte es la tendencia actual (alcista o bajista)
     # Estrategia:

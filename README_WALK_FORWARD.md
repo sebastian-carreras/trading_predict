@@ -60,7 +60,7 @@ Ventana completa OOS: [test1][test2][test3][test4][test5]
 splits:
   method: "walk_forward"  # Activa walk-forward (vs "time_split")
   folds: 5                # Número de ventanas de validación
-  
+
   # Embargo para evitar leakage temporal
   embargo_days:
     e1: 90   # Gap entre train y test (= horizon_days E1)
@@ -133,7 +133,7 @@ python -m src.e3.train_pipeline --tickers AAPL
 
 Cada ejecución walk-forward genera (en `runs/<estrategia>/<timestamp>/<ticker>/`):
 
-**E1:** `runs/e1_conservative/<timestamp>/<ticker>/`  
+**E1:** `runs/e1_conservative/<timestamp>/<ticker>/`
 **E2:** `runs/e2_moderate/<timestamp>/<ticker>/`
 
 ### 1. `<ticker>_walkforward_folds.csv`
@@ -283,18 +283,18 @@ splitter = TimeSeriesSplit(n_splits=5, test_size=340, gap=90)
 
 for fold, (train_idx, test_idx) in enumerate(splitter.split(X)):
     X_train, X_test = X[train_idx], X[test_idx]
-    
+
     # Entrenar modelo específico para este fold
     model = GRURegressor(...)
     model.fit(X_train, y_train, X_val, y_val)
-    
+
     # Predecir en test fold
     y_pred = model.predict(X_test)
-    
+
     # Métricas por fold
     ic_fold = np.corrcoef(y_test, y_pred)[0, 1]
     sharpe_fold = compute_sharpe(backtest(y_pred))
-    
+
     print(f"Fold {fold}: IC={ic_fold:.3f} Sharpe={sharpe_fold:.2f}")
 
 # Métricas agregadas (concatenando todos los folds)
@@ -381,6 +381,6 @@ splits:
 
 ---
 
-**Documentado:** 2026-05-01 (actualizado con E3)  
-**Autor:** Sebastian Carreras  
+**Documentado:** 2026-05-01 (actualizado con E3)
+**Autor:** Sebastian Carreras
 **Proyecto:** Trading Predict - FIUBA IA CEIA 18co
