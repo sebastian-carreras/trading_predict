@@ -285,6 +285,31 @@ class ModelRegistry:
         self._save()
         return True
 
+    def set_train_data_end(
+        self,
+        strategy: str,
+        ticker: str,
+        train_data_end: str,
+    ) -> bool:
+        """Backfill ``train_data_end`` on the current champion.
+
+        For champions registered before this field was tracked. Enables the
+        fair-window promotion path (``promotion.compare_on_common_window``),
+        which otherwise falls back to the legacy stored-vs-stored comparison
+        when ``train_data_end`` is missing.
+
+        Returns True if a champion existed and was updated.
+        """
+        tickers = self._get_strategy_tickers(strategy)
+        if tickers is None:
+            return False
+        entry = tickers.get(ticker)
+        if entry is None or entry.get("champion") is None:
+            return False
+        entry["champion"]["train_data_end"] = str(train_data_end)
+        self._save()
+        return True
+
     def list_all(
         self,
         strategy: str | None = None,

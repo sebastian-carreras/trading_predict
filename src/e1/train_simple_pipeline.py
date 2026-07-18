@@ -133,6 +133,10 @@ def run_e1_simple_for_ticker(
 
     # CALCULAR FEATURES E1
     # Extrae indicadores técnicos: momentum, volatilidad, tendencia, etc.
+    # e1_simple (variante retirada, sin sección propia en base.yaml) usa el catálogo
+    # completo en vez del subset "active" de e1_conservative — no hay una fuente de
+    # verdad de config para filtrar acá sin duplicar la lista. Si se reactiva esta
+    # variante, agregar strategies.e1_simple.features.active a base.yaml primero.
     features = compute_e1_features(ohlcv)  # Retorna DataFrame [time, features]
     # CREAR TARGET
     # Define qué predecir: retorno esperado en N días futuros

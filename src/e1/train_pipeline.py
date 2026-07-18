@@ -990,7 +990,8 @@ def run_e1_for_ticker(
     train_data_end = str(ohlcv.index.max().date()) if len(ohlcv) else None
 
     # Features
-    features = compute_e1_features(ohlcv)  # Features E1
+    active_features = e1["features"]["active"]  # Subset activo para entrenar (ver base.yaml)
+    features = compute_e1_features(ohlcv)[active_features]  # Features E1
     target = make_target_e1(ohlcv, horizon_days=horizon_days)  # Target futuro
     # make_sequences alinea X/y/ts y descarta filas iniciales sin contexto suficiente.
 

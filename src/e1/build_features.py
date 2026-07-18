@@ -62,9 +62,12 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
     # OPTIMIZADO PARA LARGO PLAZO: Una sola medida de volatilidad mensual (más estable)
 
     # vol_4w: Volatilidad (std de retornos) últimos 20 días (~4 semanas)
-    # ELIMINADA como feature por alta multicolinealidad con bb_bandwidth (r=0.85) y atr_14 (r=0.72).
-    # Se mantiene el cálculo interno porque vol_regime depende de ella.
+    # Desactivada para entrenamientos nuevos (ver strategies.e1_conservative.features.active
+    # en src/config/base.yaml) por alta multicolinealidad con bb_bandwidth (r=0.85) y atr_14
+    # (r=0.72). Se sigue calculando y exponiendo acá porque algún champion vivo todavía puede
+    # depender de ella — nunca borrar esta línea, solo sacarla de features.active en config.
     vol_4w = log_close.diff().rolling(20).std()
+    out["vol_4w"] = vol_4w
 
     # vol_regime: Cambio de volatilidad (vol_4w actual vs vol_4w hace 4 semanas)
     # Propósito: Detectar expansión o contracción de volatilidad
@@ -125,9 +128,12 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
     out["sma_50"] = close.rolling(50).mean()
 
     # sma_200: Simple Moving Average de 200 días
-    # ELIMINADA como feature por alta multicolinealidad con sma_50 (r=0.99).
-    # Se mantiene el cálculo interno porque sma50_sma200_ratio depende de ella.
+    # Desactivada para entrenamientos nuevos (ver strategies.e1_conservative.features.active
+    # en src/config/base.yaml) por alta multicolinealidad con sma_50 (r=0.99). Se sigue
+    # calculando y exponiendo acá porque algún champion vivo todavía puede depender de ella —
+    # nunca borrar esta línea, solo sacarla de features.active en config.
     sma_200 = close.rolling(200).mean()
+    out["sma_200"] = sma_200
 
     # sma50_sma200_ratio: Relación entre SMA(50) y SMA(200)
     # Propósito: Detectar Golden Cross / Death Cross y medir fuerza de tendencia
@@ -140,8 +146,14 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
     # IMPORTANTE: Esta feature captura la señal técnica más seguida por inversores institucionales
     out["sma50_sma200_ratio"] = (out["sma_50"] / sma_200) - 1.0
 
-    # close_sma200_dist: ELIMINADA por alta multicolinealidad con sma50_sma200_ratio (r=0.78)
-    # y ret_13w (r=0.79). La señal de "distancia al largo plazo" ya está capturada por ambos.
+    # close_sma200_dist: Desviación del precio vs SMA(200)
+    # Desactivada para entrenamientos nuevos (ver strategies.e1_conservative.features.active
+    # en src/config/base.yaml) por alta multicolinealidad con sma50_sma200_ratio (r=0.78) y
+    # ret_13w (r=0.79). Se sigue calculando y exponiendo acá porque algún champion vivo
+    # todavía puede depender de ella — nunca borrar esta línea, solo sacarla de
+    # features.active en config. Fórmula recuperada del precedente en E2
+    # (src/e2/build_features.py, misma feature, mismo motivo de desactivación).
+    out["close_sma200_dist"] = (close / sma_200) - 1.0
 
     # Eliminado por ser redundante con sma50 y sma50_sma200_ratio
     # ema_50: Exponential Moving Average de 50 días

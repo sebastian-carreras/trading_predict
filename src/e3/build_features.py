@@ -3,6 +3,16 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+# NOTA (aplicada hoy a E1/E2, ver src/e1/build_features.py y src/e2/build_features.py):
+# E3 no llega hoy al camino de re-evaluación fair-window (evaluate_and_promote se llama
+# sin ohlcv_loader/full_config en src/e3/train_pipeline.py y en el DAG de E3, y
+# reevaluation._strategy_kit no soporta "e3"), así que este archivo NO tiene todavía el
+# bug de feature-drift que rompía RECENT en E1/E2. Pero el mismo patrón de features
+# comentadas/eliminadas está presente acá — si en el futuro se rehabilita E3 (hoy "needs
+# rework", ver PORTFOLIO.md) y se conecta el fair-window, aplicar la misma disciplina:
+# nunca borrar el cálculo de una feature mientras un modelo vivo la use en su
+# feature_names; solo excluirla de un features.active en base.yaml (strategies.e3_intraday).
+
 
 def compute_intraday_features(df: pd.DataFrame) -> pd.DataFrame:
     """Compute minimal intraday features from OHLCV 5m bars.

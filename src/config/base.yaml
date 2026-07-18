@@ -132,6 +132,33 @@ strategies:
       tau_buy: 0.02
       tau_sell: 0.00
 
+    features:
+      # Features activas para ENTRENAR modelos nuevos de esta estrategia. El catálogo
+      # completo (incluidas históricas desactivadas) vive en src/e1/build_features.py::
+      # compute_e1_features — ese archivo NUNCA borra código de una feature mientras
+      # algún modelo vivo (ver models/registry.json) todavía la use; acá se decide
+      # únicamente cuáles se usan para entrenamientos nuevos.
+      # Nota: la promoción es por ticker, así que dos tickers de la misma estrategia
+      # pueden terminar con contratos de features distintos si uno adopta una
+      # iteración nueva y el otro no — es esperable, no un bug.
+      # Changelog:
+      #   - 2026-07-18: restauradas vol_4w, sma_200, close_sma200_dist en el catálogo
+      #     (eliminadas ~feb-2026 por multicolinealidad) tras detectar que rompían la
+      #     re-evaluación fair-window de champions viejos; siguen SIN estar activas acá.
+      active:
+        - ret_1w
+        - ret_4w
+        - ret_13w
+        - vol_regime
+        - atr_14
+        - vol_zscore_60
+        - sma_50
+        - sma50_sma200_ratio
+        - macd_hist
+        - bb_pct_b
+        - bb_bandwidth
+        - adx_14
+
     risk:
       stop_loss_pct: 0.10
       take_profit_pct: 0.15
@@ -168,6 +195,29 @@ strategies:
     thresholds:
       tau_buy: 0.025       # +2.5% predicho → señal compra
       tau_sell: 0.00        # 0% o menos → cerrar posición
+
+    features:
+      # Features activas para ENTRENAR modelos nuevos de esta estrategia. El catálogo
+      # completo (incluidas históricas desactivadas) vive en src/e2/build_features.py::
+      # compute_e2_features — ese archivo NUNCA borra código de una feature mientras
+      # algún modelo vivo (ver models/registry.json) todavía la use; acá se decide
+      # únicamente cuáles se usan para entrenamientos nuevos.
+      # Nota: la promoción es por ticker, así que dos tickers de la misma estrategia
+      # pueden terminar con contratos de features distintos si uno adopta una
+      # iteración nueva y el otro no — es esperable, no un bug.
+      active:
+        - ret_1d
+        - ret_20d
+        - vol_20d
+        - atr_14
+        - vol_ratio_20d
+        - sma50_sma200_ratio
+        - close_sma50_dist
+        - macd_hist
+        - rsi_14
+        - bb_pct_b
+        - adx_14
+        - skew_ret_20d
 
     risk:
       stop_loss_pct: 0.07   # Stop loss del 7%

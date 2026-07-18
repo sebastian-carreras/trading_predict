@@ -80,13 +80,14 @@ def run_baseline_for_ticker(
     # Copia del DataFrame original para backtesting (antes de transformaciones)
     ohlcv = df.copy()
 
-    # 2. CALCULAR FEATURES E2 (16 features)
-    print("Calculando features (16 indicadores)...")
-    df_feat = compute_e2_features(df)
-
-    # 3. CREAR TARGET
+    # 2. CALCULAR FEATURES E2 (subset activo, ver strategies.e2_moderate.features.active en base.yaml)
     strats = config.get("strategies", {})
     e2_cfg = strats.get("e2_moderate", {})
+    active_features = e2_cfg["features"]["active"]
+    print(f"Calculando features ({len(active_features)} indicadores activos)...")
+    df_feat = compute_e2_features(df)[active_features]
+
+    # 3. CREAR TARGET
     horizon_days = int(e2_cfg.get("horizon_days", 20))
 
     print(f"Creando target (horizonte={horizon_days} días)...")

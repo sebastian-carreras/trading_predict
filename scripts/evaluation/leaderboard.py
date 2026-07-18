@@ -83,6 +83,19 @@ def _run_dir_date(run_dir: str | None) -> str | None:
     return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
 
 
+def champion_data_cutoff(champ: dict[str, Any]) -> str | None:
+    """Último día de datos que el champion vio al entrenarse (ISO date).
+
+    ``train_data_end`` (si el registry lo trackea) o, si falta (champions
+    viejos), la fecha embebida en ``run_dir`` como proxy — verificado contra
+    los champions que trackean ambos campos: coinciden (el training corre
+    sobre datos frescos del mismo día). NO se usa la última predicción del
+    walk-forward: esa es la fecha de la última *señal*, que cae `horizonte`
+    días ANTES del corte real (no es la fecha de corte).
+    """
+    return champ.get("train_data_end") or _run_dir_date(champ.get("run_dir"))
+
+
 def _forecast_and_freshness(
     strategy: str,
     variant: str,
@@ -109,7 +122,7 @@ def _forecast_and_freshness(
     pred_ann = round(pred_return * (TRADING_DAYS / horizon), 6) if pred_return is not None else None
     signal = ("LONG" if pred_return > tau_buy else "FLAT") if pred_return is not None else None
 
-    trained_at = champ.get("train_data_end") or _run_dir_date(champ.get("run_dir"))
+    trained_at = champion_data_cutoff(champ)
     days_ago = None
     if trained_at:
         try:
@@ -298,18 +311,32 @@ def _pct(x: Any) -> str:
     return f"{float(x) * 100:+.1f}%" if pd.notna(x) else "   —"
 
 
+def _signal_age_days(pred_as_of: Any) -> int | None:
+    """Días desde ``pred_as_of`` (fecha de la última señal del walk-forward) a hoy."""
+    if pred_as_of is None or pd.isna(pred_as_of):
+        return None
+    try:
+        d = datetime.fromisoformat(str(pred_as_of)[:10]).date()
+    except ValueError:
+        return None
+    return (datetime.now(timezone.utc).date() - d).days
+
+
 def print_leaderboard(df: pd.DataFrame, top: int | None, rank_by: str = "score") -> None:
     if df.empty:
         print("Leaderboard vacío: no hay champions en el registry para las estrategias pedidas.")
         return
     view = df.head(top) if top else df
-    W = 96
+    W = 104
     print("=" * W)
     print(f"  LEADERBOARD — qué invertir hoy  ({datetime.now():%Y-%m-%d %H:%M})   ordenado por: {rank_by}")
-    print(f"  PRED% = retorno predicho al horizonte (última predicción guardada) · ANN% = anualizado · ⚠ champion viejo")
+    print(f"  PRED% = retorno predicho al horizonte, de la última predicción del WALK-FORWARD (no una")
+    print(f"  inferencia de hoy) · SIGAGE = antigüedad de esa señal · ANN% = anualizado · ⚠ champion viejo")
+    print(f"  SHARPE/IC = bt_sharpe y ml_ic del champion en su ENTRENAMIENTO original (fijos) · RECENT =")
+    print(f"  score recalculado en la última reevaluación fair-window (— = nunca reevaluado contra un candidate)")
     print("=" * W)
-    print(f"{'#':>2}  {'STRAT':<5} {'TICKER':<9} {'PRED%':>7} {'ANN%':>7} {'SIG':<4} "
-          f"{'TRAIN':>7} {'RECENT':>7} {'TRAINED':>9} {'SHARPE':>7} {'IC':>6}")
+    print(f"{'#':>2}  {'STRAT':<5} {'TICKER':<9} {'PRED%':>7} {'ANN%':>7} {'SIG':<4} {'SIGAGE':>7} "
+          f"{'SCORE':>7} {'RECENT':>7} {'TRAINED':>9} {'SHARPE':>7} {'IC':>6}")
     print("-" * W)
     for _, r in view.iterrows():
         arrow = _ARROW.get(r.get("trend", ""), " ")
@@ -319,11 +346,13 @@ def print_leaderboard(df: pd.DataFrame, top: int | None, rank_by: str = "score")
         days = r.get("days_ago")
         stale_mark = "⚠" if r.get("stale") else " "
         trained = f"{int(days)}d{stale_mark}" if pd.notna(days) else f"—{stale_mark}"
+        sig_age = _signal_age_days(r.get("pred_as_of"))
+        sig_age_s = f"{sig_age}d" if sig_age is not None else "  —"
         sharpe = r.get("bt_sharpe")
         ic = r.get("ml_ic")
         print(
             f"{int(r['rank']):>2}  {r['strategy']:<5} {str(r['ticker']):<9} "
-            f"{_pct(r.get('pred_return')):>7} {_pct(r.get('pred_annualized')):>7} {sig:<4} "
+            f"{_pct(r.get('pred_return')):>7} {_pct(r.get('pred_annualized')):>7} {sig:<4} {sig_age_s:>7} "
             f"{r['score']:>7.4f} {recent_s:>7} {trained:>9} "
             f"{(sharpe if pd.notna(sharpe) else float('nan')):>7.3f} "
             f"{(ic if pd.notna(ic) else float('nan')):>6.3f}{arrow}"

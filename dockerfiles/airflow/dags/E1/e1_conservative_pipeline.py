@@ -21,6 +21,16 @@ import os
 # programa sobre [DATASET_E1, DATASET_E2] y arranca solo cuando AMBOS se
 # actualizan (es decir, cuando E1 y E2 terminaron su corrida del día).
 DATASET_E1 = Dataset("trading://registry/e1_conservative")
+
+# Dataset que PRODUCE e2_moderate_pipeline. E1 se dispara con este dataset
+# como trigger (en vez de un cron fijo) para que nunca corra en paralelo con
+# E2 — ambos escriben al mismo models/registry.json vía ModelRegistry, que
+# carga todo el archivo en memoria y lo sobreescribe entero en cada _save()
+# (sin lock ni merge). Correr en paralelo puede pisar silenciosamente
+# train_data_end/recent_metrics escritos por el otro DAG. Confirmado overlap
+# real 2026-07-17 (train_e1_models 08:00-11:48 vs promote_champions de E2 a
+# las 10:53 y de E3 a las 11:28, ambos en medio de la corrida de E1).
+DATASET_E2 = Dataset("trading://registry/e2_moderate")
 import json
 
 # Configuración MLflow
@@ -41,7 +51,7 @@ dag = DAG(
     'e1_conservative_pipeline',
     default_args=default_args,
     description='Pipeline E1: Predicción de retornos a 90 días (GRU)',
-    schedule_interval='0 8 * * *',  # Diario 08:00 UTC (05:00 ART) — retrain diario en paralelo con E2
+    schedule=[DATASET_E2],  # Dispara al terminar E2 (nunca en paralelo — evita carrera en registry.json)
     catchup=False,
     tags=['trading', 'e1', 'conservative', 'gru'],
     params={

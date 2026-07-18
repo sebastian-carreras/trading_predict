@@ -39,7 +39,10 @@ dag = DAG(
     'e2_moderate_pipeline',
     default_args=default_args,
     description='Pipeline E2: Predicción de retornos a 20 días (LSTM)',
-    schedule_interval='0 8 * * *',  # Diario 08:00 UTC (05:00 ART) — retrain diario en paralelo con E1
+    # Ancla del chain diario: 08:00 UTC (05:00 ART) por cron. E1 y E3 ahora se
+    # disparan por Dataset (no por cron) DESPUÉS de que este termine, para que
+    # nunca corran en paralelo y pisen las escrituras del otro en registry.json.
+    schedule_interval='0 8 * * *',
     catchup=False,
     tags=['trading', 'e2', 'moderate', 'lstm'],
     params={

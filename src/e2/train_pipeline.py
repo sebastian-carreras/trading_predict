@@ -837,7 +837,8 @@ def run_e2_for_ticker(
     train_data_end = str(ohlcv.index.max().date()) if len(ohlcv) else None
 
     # ---------- Features y target ----------
-    features = compute_e2_features(ohlcv)
+    active_features = e2["features"]["active"]  # Subset activo para entrenar (ver base.yaml)
+    features = compute_e2_features(ohlcv)[active_features]
     target = make_target_e2(ohlcv, horizon_days=horizon_days)
 
     X, y, ts, feat_names = make_sequences(features, target, lookback=lookback_days)

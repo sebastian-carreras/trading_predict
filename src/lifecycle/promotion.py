@@ -562,6 +562,13 @@ def evaluate_and_promote(
                     note="ohlcv unavailable for fair window",
                 )
         except Exception as exc:  # never let re-backtest failure block the DAG
+            if isinstance(exc, KeyError):
+                print(
+                    f"[promotion] WARNING feature-drift fallback for {strategy}/{ticker}: "
+                    f"{exc} — champion's frozen feature_names no longer producible by "
+                    f"compute_{strategy}_features; falling back to stored comparison. "
+                    "See tests/test_feature_contract_compat.py."
+                )
             decision = _stored_comparison(
                 candidate_entry, champion_entry, cfg, ticker,
                 cand_variant, champ_variant,

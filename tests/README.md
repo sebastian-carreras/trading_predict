@@ -23,7 +23,7 @@ CI corre esta misma suite (`python -m pytest -v`) en Python 3.10 y 3.12 en cada 
 
 **Sin dependencias externas:** los tests no descargan datos ni llaman a APIs externas (yfinance, IOL, MLflow remoto). Usan datos sintéticos generados con `numpy.random.default_rng` (seeds fijas, reproducibles) y `tmp_path` de pytest para I/O (registry, CSVs, logs) aislado por test.
 
-**Tests condicionales:** dos tests en `test_reevaluation.py` (`test_predict_latest_on_real_champion_matches_predict_series`, `test_predict_series_reproduces_stored_walkforward`) requieren `torch` instalado y al menos un modelo champion real en `models/registry.json` con sus artefactos (`*_model.pth`, `*_walkforward_predictions.csv`, CSV limpio en `data/clean/`). Si no se cumple alguna condición, se saltan (`pytest.skip`) en vez de fallar — no dependen de que el repo tenga un estado de entrenamiento particular.
+**Tests condicionales:** dos tests en `test_reevaluation.py` (`test_predict_latest_on_real_champion_matches_predict_series`, `test_predict_series_reproduces_stored_walkforward`) requieren `torch` instalado y al menos un modelo champion real en `models/registry.json` con sus artefactos (`*_model.pth`, `*_walkforward_predictions.csv`, CSV limpio en `data/clean/`). Si no se cumple alguna condición, se saltan (`pytest.skip`) en vez de fallar — no dependen de que el repo tenga un estado de entrenamiento particular. `test_feature_contract_compat.py::test_current_feature_code_covers_all_registered_models` es condicional por el mismo motivo (necesita `torch` + artefactos de modelos reales); su contraparte `test_active_features_config_is_valid_subset_of_catalog` no lo es — corre siempre en CI, solo depende de `base.yaml`.
 
 ---
 

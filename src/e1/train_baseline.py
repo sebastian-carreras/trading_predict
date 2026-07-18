@@ -98,12 +98,13 @@ def run_baseline_for_ticker(  # Ejecutar baseline por ticker
     # 2. CALCULAR FEATURES E1
     # Extrae indicadores técnicos (momentum, volatilidad, tendencia, etc.)
     print("Calculando features...")  # Log features
-    df_feat = compute_e1_features(df)  # Calcular features E1
+    strats = config.get("strategies", {})  # Sección estrategias
+    e1_cfg = strats.get("e1_conservative", {})  # Config E1
+    active_features = e1_cfg["features"]["active"]  # Subset activo para entrenar (ver base.yaml)
+    df_feat = compute_e1_features(df)[active_features]  # Calcular features E1
 
     # 3. CREAR TARGET
     # Define el objetivo de predicción: retorno esperado en N días
-    strats = config.get("strategies", {})  # Sección estrategias
-    e1_cfg = strats.get("e1_conservative", {})  # Config E1
     horizon_days = int(e1_cfg.get("horizon_days", 90))  # Horizonte futuro
 
     print(f"Creando target (horizonte={horizon_days} días)...")  # Log target
