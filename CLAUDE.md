@@ -80,7 +80,9 @@ pre-commit install
 | E3 Intraday | LSTM | 30-min | 5-min | need to rework (TODO) |
 | E4 Pairs Trading | k-NN + OU | — | daily | Disabled (TODO) |
 
-See `PORTFOLIO.md` for current out-of-sample walk-forward results per strategy (E1 median Sharpe 1.09, E2 0.75, E3 −3.2 — documented negative result, doesn't beat intraday costs).
+See `PORTFOLIO.md` for current out-of-sample walk-forward results per strategy — **45 champions** total: E1 median Sharpe **1.09** (10 champions, DirAcc 68%), E2 **0.56** (31, DirAcc 56%), E3 **−2.6** (4, DirAcc 49% — documented negative result, doesn't beat intraday costs).
+
+> These figures drift as models get retrained. `PORTFOLIO.md` is the reconciled source of truth (last reconciled against `models/registry.json` on 2026-07-16); regenerate with `demo/bundle_assets.py`, which writes the per-strategy medians to `demo/assets/headline.json`. **Don't quote metrics from memory — read them from there.**
 
 ### Training Pipeline Flow (E1/E2)
 
@@ -121,7 +123,7 @@ Per `(strategy, ticker)`:
 
 - Per-strategy retraining DAGs: `E1/e1_conservative_pipeline.py`, `e1_simple_pipeline.py`, `e1_baseline_linear_regression.py`, `e1_optuna_tuning.py`; `E2/e2_moderate_pipeline.py`, `e2_simple_pipeline.py`, `e2_optuna_tuning.py`; `E3/e3_intraday_pipeline.py`; `E4/e4_pairs_trading_pipeline.py`, `e4_monthly_recalibration.py`.
 - E1/E2/E3 retrain **daily but chained sequentially, never in parallel** — they share a single `models/registry.json` written via `ModelRegistry` (loads the whole file into memory once, `_save()` overwrites it whole, no lock/merge — see `src/lifecycle/registry.py`), so concurrent runs can silently clobber each other's `train_data_end`/`recent_metrics` writes. Confirmed real overlap + lost writes on 2026-07-17 when E1/E2 both ran on the same `0 8 * * *` cron. Fix: **E2** is the cron anchor (`schedule_interval='0 8 * * *'`, 08:00 UTC/05:00 ART); **E1** is Dataset-triggered on `Dataset("trading://registry/e2_moderate")` (starts only once E2 fully finishes, regardless of duration). Each run calls `evaluate_and_promote(..., ohlcv_loader=..., full_config=...)`, so the fair-window champion/candidate comparison and `recent_metrics` refresh (see Leaderboard & Reporting below) happen daily for E1/E2.
-- **E3 is manual-only** (`schedule_interval=None`) — status is "needs rework" (documented negative result, Sharpe −3.2, doesn't beat intraday costs — see PORTFOLIO.md), not worth auto-retraining daily. Trigger by hand: `airflow dags trigger e3_intraday_pipeline`.
+- **E3 is manual-only** (`schedule_interval=None`) — status is "needs rework" (documented negative result, median Sharpe −2.6, doesn't beat intraday costs — see PORTFOLIO.md), not worth auto-retraining daily. Trigger by hand: `airflow dags trigger e3_intraday_pipeline`.
 - `reporting/daily_report.py` is **data-aware**, not clock-scheduled — it triggers only after both E1 and E2 finish retraining (`Dataset("trading://registry/e1_conservative")`, `.../e2_moderate`). Task chain: `refresh_dashboard` → `leaderboard` → `refresh_history_reports` → `stability_analysis`.
 - Trigger a DAG manually: `docker exec -it airflow_webserver airflow dags trigger e1_conservative_pipeline`
 - Validate DAGs: `python scripts/airflow/validate_dags.py`
