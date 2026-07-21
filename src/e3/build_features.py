@@ -9,7 +9,7 @@ import pandas as pd
 # reevaluation._strategy_kit no soporta "e3"), así que este archivo NO tiene todavía el
 # bug de feature-drift que rompía RECENT en E1/E2. Pero el mismo patrón de features
 # comentadas/eliminadas está presente acá — si en el futuro se rehabilita E3 (hoy "needs
-# rework", ver PORTFOLIO.md) y se conecta el fair-window, aplicar la misma disciplina:
+# rework", ver README.md) y se conecta el fair-window, aplicar la misma disciplina:
 # nunca borrar el cálculo de una feature mientras un modelo vivo la use en su
 # feature_names; solo excluirla de un features.active en base.yaml (strategies.e3_intraday).
 

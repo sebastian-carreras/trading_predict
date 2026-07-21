@@ -32,7 +32,7 @@ dag = DAG(
     default_args=default_args,
     description='Pipeline E3: Trading intradía (30 min, LSTM Ensemble)',
     # Solo manual: E3 está "needs rework" (Sharpe negativo, no le gana a los
-    # costos intradiarios — ver PORTFOLIO.md). No tiene sentido gastarle cómputo
+    # costos intradiarios — ver README.md). No tiene sentido gastarle cómputo
     # a diario ni exponerlo a colisiones de registry.json con E1/E2 mientras no
     # esté en uso. Disparar a mano: `airflow dags trigger e3_intraday_pipeline`.
     schedule_interval=None,

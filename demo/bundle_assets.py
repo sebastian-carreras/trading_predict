@@ -74,7 +74,7 @@ FIGURE_SOURCES = [
 ]
 
 # Diagrama de arquitectura (raíz del repo) → nombre estable en el bundle.
-ARCH_SRC = ROOT / "Arquitectura MLOps de Experimentación y Orquestación v2.png"
+ARCH_SRC = ROOT / "docs" / "architecture-mlops.png"
 ARCH_DST_NAME = "architecture.png"
 
 
@@ -299,7 +299,7 @@ def build() -> None:
             if isinstance(val, (int, float)):
                 headline_acc[strategy][m].append(float(val))
 
-    # headline.json: medianas recalculadas en vivo + conteos (nunca hardcodear PORTFOLIO)
+    # headline.json: medianas recalculadas en vivo + conteos (nunca hardcodear el README)
     headline = {
         "generated_from": "models/registry.json",
         "total_champions": len(champ_records),

@@ -47,7 +47,7 @@ Static buildea en segundos (solo sirve archivos), sin secretos ni ZeroGPU.
 ## Honestidad de las cifras
 
 - Las medianas del Overview se **recalculan en vivo** desde el registry (no se
-  hardcodean de `PORTFOLIO.md`).
+  hardcodean de `README.md`).
 - **E3 (intradía)** se muestra como **resultado negativo** (Sharpe < 0, no supera
   costos): se reporta, no se esconde.
 - El ticker sintético de test (`AAA`) se filtra del bundle.

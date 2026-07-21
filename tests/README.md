@@ -2,7 +2,7 @@
 
 Suite de tests unitarios y de integración ligera para el proyecto de Trading Prediction (trabajo final de la Especialización en IA, FIUBA).
 
-No son tests de "framework" genéricos: cada uno verifica una garantía metodológica concreta del pipeline — ausencia de data leakage, atomicidad de escritura del registry, consistencia de la lógica de promoción de modelos, correctud del cálculo de costos de backtest, etc. Son, en buena medida, la evidencia de que las prácticas descritas en `PORTFOLIO.md` (walk-forward con embargo, scaling sin leakage, promoción champion/candidate) están efectivamente implementadas y no solo documentadas.
+No son tests de "framework" genéricos: cada uno verifica una garantía metodológica concreta del pipeline — ausencia de data leakage, atomicidad de escritura del registry, consistencia de la lógica de promoción de modelos, correctud del cálculo de costos de backtest, etc. Son, en buena medida, la evidencia de que las prácticas descritas en `README.md` (walk-forward con embargo, scaling sin leakage, promoción champion/candidate) están efectivamente implementadas y no solo documentadas.
 
 ---
 

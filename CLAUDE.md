@@ -21,23 +21,23 @@ Academic final project for FIUBA's AI Specialization. Builds an AI system to sup
 # Activate Python environment
 conda activate ia_ceia_18co
 
-# Train E1 (Conservative, GRU, 90-day) — descarga datos nuevos incrementales por defecto
+# Train E1 (Conservative, GRU, 90-day) — downloads new incremental data by default
 python -m src.e1.train_pipeline --tickers AAPL,MSFT
 python -m src.e1.train_pipeline --tickers YPFD.BA --auto-promote
-python -m src.e1.train_pipeline --tickers AAPL --skip-download   # usa datos existentes, sin descargar
+python -m src.e1.train_pipeline --tickers AAPL --skip-download   # use existing data, skip download
 
 # Train E2 (Moderate, LSTM, 20-day)
 python -m src.e2.train_pipeline --tickers AAPL
 
-# Train E3 (Intraday, LSTM, 30-min) — needs rework, ver PORTFOLIO.md (resultado negativo)
+# Train E3 (Intraday, LSTM, 30-min) — needs rework, see README.md (negative result)
 python -m src.e3.train_pipeline --tickers SPY
-python -m src.e3.train_pipeline --download-only   # solo descarga datos intradiarios
+python -m src.e3.train_pipeline --download-only   # download intraday data only
 
 # Train baselines
 python -m src.e1.train_baseline
 python -m src.e2.train_baseline
 
-# Runner E1 completo (baseline + simple + conservative)
+# Full E1 runner (baseline + simple + conservative)
 python -m src.e1.train_all
 python -m src.e1.train_all --tickers AAPL,MSFT
 
@@ -80,9 +80,11 @@ pre-commit install
 | E3 Intraday | LSTM | 30-min | 5-min | need to rework (TODO) |
 | E4 Pairs Trading | k-NN + OU | — | daily | Disabled (TODO) |
 
-See `PORTFOLIO.md` for current out-of-sample walk-forward results per strategy — **45 champions** total: E1 median Sharpe **1.09** (10 champions, DirAcc 68%), E2 **0.56** (31, DirAcc 56%), E3 **−2.6** (4, DirAcc 49% — documented negative result, doesn't beat intraday costs).
+See `README.md` for current out-of-sample walk-forward results per strategy — **45 champions** total: E1 median Sharpe **1.09** (10 champions, DirAcc 68%), E2 **0.55** (31, DirAcc 55%), E3 **−2.6** (4, DirAcc 49% — documented negative result, doesn't beat intraday costs).
 
-> These figures drift as models get retrained. `PORTFOLIO.md` is the reconciled source of truth (last reconciled against `models/registry.json` on 2026-07-16); regenerate with `demo/bundle_assets.py`, which writes the per-strategy medians to `demo/assets/headline.json`. **Don't quote metrics from memory — read them from there.**
+> These figures drift as models get retrained. **`demo/assets/headline.json` is the generated source of truth**; `README.md` is reconciled against it (last reconciled 2026-07-21). Regenerate with `PYTHONPATH=. python demo/bundle_assets.py`, which recomputes the per-strategy medians from `models/registry.json`. **Don't quote metrics from memory — read them from there.**
+>
+> Drift is real and fast: between 07-16 and 07-21 E2 moved from Sharpe 0.56/DirAcc 56%/Calmar 0.45 to **0.55/55%/0.38** without anyone touching the code. Any metric written into prose is stale the moment a retrain lands, which is why the README's results table carries an explicit "as of" date.
 
 ### Training Pipeline Flow (E1/E2)
 
@@ -123,7 +125,7 @@ Per `(strategy, ticker)`:
 
 - Per-strategy retraining DAGs: `E1/e1_conservative_pipeline.py`, `e1_simple_pipeline.py`, `e1_baseline_linear_regression.py`, `e1_optuna_tuning.py`; `E2/e2_moderate_pipeline.py`, `e2_simple_pipeline.py`, `e2_optuna_tuning.py`; `E3/e3_intraday_pipeline.py`; `E4/e4_pairs_trading_pipeline.py`, `e4_monthly_recalibration.py`.
 - E1/E2/E3 retrain **daily but chained sequentially, never in parallel** — they share a single `models/registry.json` written via `ModelRegistry` (loads the whole file into memory once, `_save()` overwrites it whole, no lock/merge — see `src/lifecycle/registry.py`), so concurrent runs can silently clobber each other's `train_data_end`/`recent_metrics` writes. Confirmed real overlap + lost writes on 2026-07-17 when E1/E2 both ran on the same `0 8 * * *` cron. Fix: **E2** is the cron anchor (`schedule_interval='0 8 * * *'`, 08:00 UTC/05:00 ART); **E1** is Dataset-triggered on `Dataset("trading://registry/e2_moderate")` (starts only once E2 fully finishes, regardless of duration). Each run calls `evaluate_and_promote(..., ohlcv_loader=..., full_config=...)`, so the fair-window champion/candidate comparison and `recent_metrics` refresh (see Leaderboard & Reporting below) happen daily for E1/E2.
-- **E3 is manual-only** (`schedule_interval=None`) — status is "needs rework" (documented negative result, median Sharpe −2.6, doesn't beat intraday costs — see PORTFOLIO.md), not worth auto-retraining daily. Trigger by hand: `airflow dags trigger e3_intraday_pipeline`.
+- **E3 is manual-only** (`schedule_interval=None`) — status is "needs rework" (documented negative result, median Sharpe −2.6, doesn't beat intraday costs — see README.md), not worth auto-retraining daily. Trigger by hand: `airflow dags trigger e3_intraday_pipeline`.
 - `reporting/daily_report.py` is **data-aware**, not clock-scheduled — it triggers only after both E1 and E2 finish retraining (`Dataset("trading://registry/e1_conservative")`, `.../e2_moderate`). Task chain: `refresh_dashboard` → `leaderboard` → `refresh_history_reports` → `stability_analysis`.
 - Trigger a DAG manually: `docker exec -it airflow_webserver airflow dags trigger e1_conservative_pipeline`
 - Validate DAGs: `python scripts/airflow/validate_dags.py`
@@ -160,7 +162,7 @@ scripts/
 └── mlflow/        up_transparent_mlflow.sh, cleanup_init_test_runs.py
 ```
 
-> Several README_E*.md / QUICKSTART_*.md files linked from the root `README.md` no longer exist in the repo — that content was consolidated into `PORTFOLIO.md` and `docs/`. Prefer those over chasing dead links in `README.md`.
+> The root `README.md` was rewritten in English on 2026-07-21: it absorbed `PORTFOLIO.md` (now deleted) and is the single portfolio-facing document. The old thesis specification moved to `docs/SPEC.md` (kept in Spanish — its audience is the thesis committee) and the metric glossary to `docs/METRICS.md`. The dead `README_E*.md` / `QUICKSTART_*.md` links are gone.
 
 ### Custom Claude Skills (`.claude/commands/`)
 
