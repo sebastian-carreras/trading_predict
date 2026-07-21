@@ -4,25 +4,25 @@
 
 ```bash
 # 🚀 INICIO RÁPIDO (10 min)
-python scripts/optimize_e1_hyperparameters.py --n_trials 10 --quick
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 10 --quick
 
 # 📊 OPTIMIZACIÓN COMPLETA (3 horas)
-python scripts/optimize_e1_hyperparameters.py --n_trials 50
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 50
 
 # 🎯 TICKER ESPECÍFICO (30 min)
-python scripts/optimize_e1_hyperparameters.py --ticker AAPL --n_trials 30
+python scripts/optimization/optimize_e1_hyperparameters.py --ticker AAPL --n_trials 30
 
 # ⏱️ CON LÍMITE DE TIEMPO (2 horas)
-python scripts/optimize_e1_hyperparameters.py --n_trials 100 --timeout 7200
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 100 --timeout 7200
 
 # 🔄 CONTINUAR OPTIMIZACIÓN
-python scripts/optimize_e1_hyperparameters.py --n_trials 20  # Suma a los existentes
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 20  # Suma a los existentes
 
 # 🌐 USAR SERVIDOR REMOTO (requiere Docker)
-python scripts/optimize_e1_hyperparameters.py --n_trials 50 --mlflow_uri http://localhost:5050
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 50 --mlflow_uri http://localhost:5050
 
 # 🎚️ ACOTAR RANGOS / TICKERS
-python scripts/optimize_e1_hyperparameters.py --n_trials 40 --tau_buy_min 0.03 --tau_buy_max 0.07 --dropout_max 0.4 --batch_sizes 32,48,64 --tickers AAPL,MSFT,GOOGL
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 40 --tau_buy_min 0.03 --tau_buy_max 0.07 --dropout_max 0.4 --batch_sizes 32,48,64 --tickers AAPL,MSFT,GOOGL
 ```
 
 ## Ver Resultados
@@ -113,7 +113,7 @@ rm runs/optuna_trials/optuna_studies.db
 
 # Ver progreso en tiempo real
 # Terminal 1: Ejecutar optimización
-python scripts/optimize_e1_hyperparameters.py --n_trials 50
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 50
 
 # Terminal 2: Ver en Optuna Dashboard (opcional)
 pip install optuna-dashboard

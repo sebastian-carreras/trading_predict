@@ -224,7 +224,7 @@ ORDER BY tp.param_value;
 ### Script interactivo (recomendado)
 
 ```bash
-python scripts/analyze_optuna_db.py
+python scripts/optimization/analyze_optuna_db.py
 ```
 
 ### O desde Python directamente:
@@ -315,4 +315,4 @@ sqlite3 runs/optuna_trials/optuna_studies.db \
 
 - [Optuna SQL Storage](https://optuna.readthedocs.io/en/stable/reference/generated/optuna.storages.RDBStorage.html)
 - [SQLite PRAGMA](https://www.sqlite.org/pragma.html)
-- Script de análisis: [scripts/analyze_optuna_db.py](scripts/analyze_optuna_db.py)
+- Script de análisis: [scripts/optimization/analyze_optuna_db.py](scripts/optimization/analyze_optuna_db.py)

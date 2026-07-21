@@ -42,12 +42,12 @@ La estrategia E4 de pairs trading ha sido completamente implementada siguiendo l
 
 ### 1. Ejecutar con todos los pares del config
 ```bash
-python -m src.train_e4_pipeline
+python -m src.e4.train_pipeline
 ```
 
 ### 2. Ejecutar con pares específicos
 ```bash
-python -m src.train_e4_pipeline --pairs GGAL.BA,BMA.BA YPFD.BA,PAMP.BA
+python -m src.e4.train_pipeline --pairs GGAL.BA,BMA.BA YPFD.BA,PAMP.BA
 ```
 
 ### 3. Test rápido

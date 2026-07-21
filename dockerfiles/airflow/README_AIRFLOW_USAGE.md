@@ -1,256 +1,179 @@
-# Guía: Ejecutar DAGs para Tickers Específicos
+# Running DAGs for specific tickers
 
-## Índice de DAGs E1
+Every E1 DAG accepts a `tickers` parameter, so you can retrain a single symbol instead of the
+whole universe. This guide covers the three E1 pipelines.
 
-- [E1 Conservative (GRU)](#e1-conservative-pipeline---ejecución-selectiva) - Modelo principal
-- [E1 Simple (GRU simplificado)](#e1-simple-pipeline---ejecución-selectiva) - Pipeline rápido
-- [E1 Baseline (Regresión Lineal)](#e1-baseline-linear-regression---comparación) - Baseline para comparación
+**DAG location:** [`dags/`](dags), with one subfolder per strategy — [E1](dags/E1),
+[E2](dags/E2), [E3](dags/E3), [E4](dags/E4). Airflow scans subfolders automatically.
 
-**Ubicación de DAGs**: [dockerfiles/airflow/dags](dockerfiles/airflow/dags) con subcarpetas [E1](dockerfiles/airflow/dags/E1), [E2](dockerfiles/airflow/dags/E2), [E3](dockerfiles/airflow/dags/E3), [E4](dockerfiles/airflow/dags/E4). Airflow escanea subcarpetas automáticamente.
-
----
-
-## E1 Conservative Pipeline - Ejecución Selectiva
-
-### Desde Airflow UI (Recomendado)
-
-1. **Acceder**: http://localhost:8080
-
-2. **Trigger con Configuración**:
-   - Click en `e1_conservative_pipeline`
-   - Click en **"Play"** (▶) → **"Trigger DAG w/ config"**
-   - En el JSON editor:
-
-   ```json
-   {
-     "tickers": "AAPL,MSFT,GOOGL"
-   }
-   ```
-
-   - Click **"Trigger"**
-
-### Desde CLI
-
-```bash
-# Un ticker específico
-docker compose exec -T airflow-scheduler airflow dags trigger \
-  e1_conservative_pipeline \
-  --conf '{"tickers": "AAPL"}'
-
-# Múltiples tickers
-docker compose exec -T airflow-scheduler airflow dags trigger \
-  e1_conservative_pipeline \
-  --conf '{"tickers": "AAPL,MSFT,NVDA"}'
-
-# Todos los tickers (campo vacío)
-docker compose exec -T airflow-scheduler airflow dags trigger \
-  e1_conservative_pipeline \
-  --conf '{"tickers": ""}'
-```
-
-## Ejemplos de Uso
-
-### Debugging rápido (1 ticker)
-```json
-{"tickers": "AAPL"}
-```
-⏱ ~2-3 min | Útil para probar cambios
-
-### Tech stocks comparison
-```json
-{"tickers": "AAPL,MSFT,GOOGL,META,NVDA"}
-```
-⏱ ~10-15 min | Compara ICs entre empresas
-
-### Portfolio completo
-```json
-{"tickers": ""}
-```
-⏱ ~1-2 horas | Todos los tickers del config
-
-## 🔍 Ver Resultados en MLflow
-
-1. **MLflow UI**: http://localhost:5050
-2. **Experimento**: "E1_Conservative_Strategy"
-3. **Filtrar**: `params.ticker = "AAPL"`
-4. **Comparar**: Seleccionar runs → "Compare"
-
-## Notas
-
-- Solo entrena tickers válidos de E1 en `base.yaml`
-- Cada ticker = 1 run en MLflow
-- Run de resumen con métricas agregadas (IC mean, median, etc.)
+> **On scheduling:** only `e2_moderate_pipeline` runs on a cron (`0 8 * * *`).
+> `e1_conservative_pipeline` is Dataset-triggered off E2's completion, and `e3_intraday_pipeline`
+> is manual-only. The three share one `models/registry.json` and must never run concurrently —
+> see [README_DOCKER.md](../../README_DOCKER.md). Everything below is manual triggering, which is
+> always safe as long as another retraining DAG isn't already running.
 
 ---
 
-## E1 Simple Pipeline - Ejecución Selectiva
+## E1 Conservative pipeline
 
-Pipeline simplificado (GRU de 1 capa, sin walk-forward). Descarga, limpia y entrena automáticamente. Ideal para pruebas rápidas.
+### From the Airflow UI
 
-### Desde Airflow UI (Recomendado)
-
-1. **Acceder**: http://localhost:8080
-
-2. **Trigger con Configuración**:
-   - Click en `e1_simple_pipeline`
-   - Click en **"Play"** (▶) → **"Trigger DAG w/ config"**
-   - En el JSON editor:
-
+1. Go to http://localhost:8080
+2. Click `e1_conservative_pipeline` → **Play** (▶) → **Trigger DAG w/ config**
+3. In the JSON editor:
    ```json
-   {
-     "tickers": "AAPL,MSFT,GOOGL",
-     "skip_download": "False",
-     "skip_cleaning": "False"
-   }
+   { "tickers": "AAPL,MSFT,GOOGL" }
    ```
+4. Click **Trigger**
 
-   - Click **"Trigger"**
-
-### Desde CLI
+### From the CLI
 
 ```bash
-# Un ticker específico
+# one ticker
+docker compose exec -T airflow-scheduler airflow dags trigger \
+  e1_conservative_pipeline --conf '{"tickers": "AAPL"}'
+
+# several tickers
+docker compose exec -T airflow-scheduler airflow dags trigger \
+  e1_conservative_pipeline --conf '{"tickers": "AAPL,MSFT,NVDA"}'
+
+# all tickers from the config (empty field)
+docker compose exec -T airflow-scheduler airflow dags trigger \
+  e1_conservative_pipeline --conf '{"tickers": ""}'
+```
+
+### Typical runs
+
+| Config | Duration | Use |
+|---|---|---|
+| `{"tickers": "AAPL"}` | ~2–3 min | Quick debugging after a change |
+| `{"tickers": "AAPL,MSFT,GOOGL,META,NVDA"}` | ~10–15 min | Compare ICs across companies |
+| `{"tickers": ""}` | ~1–2 h | Full configured universe |
+
+Only tickers valid for E1 in `base.yaml` are trained. Each ticker produces one MLflow run, plus a
+summary run with aggregate metrics.
+
+---
+
+## E1 Simple pipeline
+
+A simplified pipeline (single-layer GRU, no walk-forward) that downloads, cleans and trains in one
+go. Useful for fast iteration — but note that without walk-forward its metrics are **not**
+comparable to the conservative pipeline's.
+
+### From the Airflow UI
+
+Trigger `e1_simple_pipeline` with config:
+
+```json
+{
+  "tickers": "AAPL,MSFT,GOOGL",
+  "skip_download": "False",
+  "skip_cleaning": "False"
+}
+```
+
+### From the CLI
+
+```bash
+# one ticker, full pipeline
 docker compose exec -T airflow-scheduler airflow dags trigger \
   e1_simple_pipeline \
   --conf '{"tickers": "AAPL", "skip_download": "False", "skip_cleaning": "False"}'
 
-# Reutilizando datos descargados y limpios por E1 Conservative
+# reuse data already downloaded and cleaned by E1 Conservative
 docker compose exec -T airflow-scheduler airflow dags trigger \
   e1_simple_pipeline \
   --conf '{"tickers": "AAPL,MSFT", "skip_download": "True", "skip_cleaning": "True"}'
-
-# Todos los tickers (según config)
-docker compose exec -T airflow-scheduler airflow dags trigger \
-  e1_simple_pipeline \
-  --conf '{"tickers": "", "skip_download": "False", "skip_cleaning": "False"}'
 ```
 
-### Parámetros del DAG E1 Simple
+### Parameters
 
-**`tickers`** (string)
-- Lista separada por comas: "AAPL,MSFT,GOOGL"
-- Vacío = todos los tickers E1 Simple del `base.yaml` (fallback a E1 Conservative si no están definidos)
+| Parameter | Values | Meaning |
+|---|---|---|
+| `tickers` | comma-separated, or empty | Empty means all E1 Simple tickers from `base.yaml`, falling back to E1 Conservative's list if undefined |
+| `skip_download` | `"True"` / `"False"` | `True` reuses the existing `data/raw/daily/`; `False` downloads with `skip_existing` and a minimum-freshness check |
+| `skip_cleaning` | `"True"` / `"False"` | `True` reuses the existing `data/clean/`; `False` runs cleaning (forward fill, filters, 252-day minimum) |
 
-**`skip_download`** (boolean)
-- "True": No descarga, reutiliza `data/raw/daily/` existente
-- "False": Descarga diaria con `skip_existing` y frescura mínima
-
-**`skip_cleaning`** (boolean)
-- "True": No limpia, reutiliza `data/clean/` existente
-- "False": Ejecuta limpieza (forward fill, filtros, validación mínima de 252 días)
-
-### 🔍 Ver Resultados en MLflow
-
-1. **MLflow UI**: http://localhost:5050
-2. **Experimento**: "E1_Simple"
-3. **Filtrar**: `params.ticker = "AAPL"`
-4. **Comparar**: Seleccionar runs → "Compare"
-
-### Notas
-
-- Descarga y limpieza pueden omitirse con `skip_*` para acelerar iteraciones
-- Artifacts por ticker: `models/`, `predictions/`, `backtest/` bajo `runs/e1_simple/<timestamp>/<ticker>/`
-- Run de resumen: `summary_all.csv` y métricas agregadas (IC, Decision Score)
+Per-ticker artifacts go to `runs/e1_simple/<timestamp>/<ticker>/` (`models/`, `predictions/`,
+`backtest/`), plus a `summary_all.csv` with aggregate metrics.
 
 ---
 
-## E1 Baseline Linear Regression - Comparación
+## E1 Baseline (Linear Regression)
 
-### Desde Airflow UI
+The baseline is the sanity floor: if the GRU can't beat a linear model on the same features, the
+extra complexity isn't earning its keep. It is **never promoted** to champion.
 
-1. **Acceder**: http://localhost:8080
-2. **Trigger con Configuración**:
-   - Click en `e1_baseline_linear_regression`
-   - Click en **"Play"** (▶) → **"Trigger DAG w/ config"**
-   - En el JSON editor:
-
-   ```json
-   {
-     "tickers": "AAPL,MSFT,GOOGL",
-     "auto_compare_with_gru": "True"
-   }
-   ```
-
-   - Click **"Trigger"**
-
-### Desde CLI
+### From the CLI
 
 ```bash
-# Baseline para tickers específicos con comparación
+# baseline for specific tickers, with automatic comparison
 docker compose exec -T airflow-scheduler airflow dags trigger \
   e1_baseline_linear_regression \
   --conf '{"tickers": "AAPL,MSFT", "auto_compare_with_gru": "True"}'
 
-# Sin comparación automática
+# without automatic comparison
 docker compose exec -T airflow-scheduler airflow dags trigger \
   e1_baseline_linear_regression \
   --conf '{"tickers": "AAPL", "auto_compare_with_gru": "False"}'
 
-# Todos los tickers E1 (campo vacío)
+# all E1 tickers
 docker compose exec -T airflow-scheduler airflow dags trigger \
-  e1_baseline_linear_regression \
-  --conf '{"tickers": ""}'
+  e1_baseline_linear_regression --conf '{"tickers": ""}'
 ```
 
-### Parámetros del DAG Baseline
+### Parameters
 
-**`tickers`** (string)
-- Lista separada por comas: `"AAPL,MSFT,GOOGL"`
-- Vacío = todos los tickers E1
-- Default: `"YPFD.BA, GGAL.BA, PAMP.BA, BYMA.BA, CEPU.BA, AAPL, MSFT, JNJ, PG, V"`
+| Parameter | Default | Meaning |
+|---|---|---|
+| `tickers` | `"YPFD.BA, GGAL.BA, PAMP.BA, BYMA.BA, CEPU.BA, AAPL, MSFT, JNJ, PG, V"` | Comma-separated; empty means all E1 tickers |
+| `auto_compare_with_gru` | `"True"` | `True` compares against the latest GRU run automatically |
 
-**`auto_compare_with_gru`** (boolean)
-- `"True"`: Compara automáticamente con último run de GRU
-- `"False"`: Solo entrena baseline (sin comparación)
-- Default: `"True"`
-
-### Flujo Recomendado: GRU + Baseline
+### Recommended sequence
 
 ```bash
-# 1. Ejecutar GRU primero (Lunes 2 AM automático, o manual)
+# 1. run the GRU first
 docker compose exec -T airflow-scheduler airflow dags trigger \
-  e1_conservative_pipeline \
-  --conf '{"tickers": "AAPL,MSFT"}'
+  e1_conservative_pipeline --conf '{"tickers": "AAPL,MSFT"}'
 
-# 2. Esperar que termine (~10-15 min)
+# 2. wait for it to finish (~10–15 min)
 
-# 3. Ejecutar Baseline con comparación (Lunes 3 AM automático, o manual)
+# 3. run the baseline with comparison
 docker compose exec -T airflow-scheduler airflow dags trigger \
   e1_baseline_linear_regression \
   --conf '{"tickers": "AAPL,MSFT", "auto_compare_with_gru": "True"}'
 ```
 
-### Ver Resultados Baseline en MLflow
-
-1. **MLflow UI**: http://localhost:5050
-2. **Experimento**: "E1_Baseline_LinearRegression"
-3. **Filtrar**: `params.ticker = "AAPL"`
-4. **Comparar**: Seleccionar runs → "Compare"
-
-### Comparación Baseline vs GRU
-
-Resultado en: `runs/e1_baseline/<timestamp>/comparison_vs_gru.csv`
+The comparison lands in `runs/e1_baseline/<timestamp>/comparison_vs_gru.csv`:
 
 ```bash
-# Ver comparación del último run
 ls -lht runs/e1_baseline/ | head -n 2
 cat runs/e1_baseline/<timestamp>/comparison_vs_gru.csv
 ```
 
-### Notas Baseline
-
-- Usa mismos features que GRU (27 indicadores)
-- Regresión Lineal simple (sklearn)
-- Métricas: MAE, RMSE, IC (Spearman), Directional Accuracy
-- Backtesting con mismos parámetros (tau_buy, tau_sell, costos)
-- IC > 0.05 = significativo en finanzas
+The baseline uses the same features as the GRU, a plain scikit-learn linear regression, the same
+metrics (MAE, RMSE, Spearman IC, directional accuracy) and the same backtest parameters
+(`tau_buy`, `tau_sell`, costs) — so the comparison is apples to apples.
 
 ---
 
-**Ver más**:
-- [README_E1_BASELINE.md](README_E1_BASELINE.md) - Documentación completa del baseline
-- [QUICKSTART_E1_BASELINE.md](QUICKSTART_E1_BASELINE.md) - Guía rápida
-- [docs/AIRFLOW_E1_BASELINE_DAG.md](docs/AIRFLOW_E1_BASELINE_DAG.md) - Documentación del DAG
-- [README_DOCKER.md](README_DOCKER.md) - Setup Docker
+## Inspecting results in MLflow
+
+Open http://localhost:5050 and pick the experiment:
+
+| Pipeline | Experiment |
+|---|---|
+| E1 Conservative | `E1_Conservative_Strategy` |
+| E1 Simple | `E1_Simple` |
+| E1 Baseline | `E1_Baseline_LinearRegression` |
+
+Filter with `params.ticker = "AAPL"`, then select runs and hit **Compare**.
 
 ---
+
+## See also
+
+- [docs/AIRFLOW_E1_BASELINE_DAG.md](../../docs/AIRFLOW_E1_BASELINE_DAG.md) — baseline DAG documentation
+- [README_DOCKER.md](../../README_DOCKER.md) — Docker setup and the full scheduling picture
+- [src/lifecycle/README_LIFECYCLE.md](../../src/lifecycle/README_LIFECYCLE.md) — what happens to a model after training

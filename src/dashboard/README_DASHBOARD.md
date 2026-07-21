@@ -1,67 +1,58 @@
-# Dashboard de Monitoreo — MLflow UI
+# Monitoring dashboard — MLflow UI
 
-**Panel de supervisión** para tiempos de entrenamiento/predicción, métricas ML y de trading, con alertas por estrategia.
+A supervision layer over training/prediction timings, ML metrics and trading metrics, with
+per-strategy alert thresholds.
 
 ---
 
-## Quick Start
+## Quick start
 
-### Opción A — Local (sin Docker)
+### Option A — local, no Docker
 
 ```bash
-# 1. Entrenar — MLflow guarda automáticamente en SQLite local
-python -m src.train_e1_simple_pipeline --tickers AAPL
+# 1. Train — MLflow writes to the local SQLite store automatically
+python -m src.e1.train_pipeline --tickers AAPL
 
-# 2. Levantar MLflow UI apuntando a la DB local
+# 2. Start the MLflow UI against that local DB
 mlflow ui --backend-store-uri sqlite:///runs/mlflow_local/mlflow.db --port 5050
-
-# 3. Ver dashboard en navegador
 open http://localhost:5050
 
-# 4. Generar reporte de alertas (vista summary)
+# 3. Generate the alert report (summary view)
 python -m src.dashboard.checker
 
-# 5. Vista per-ticker de una estrategia
+# 4. Per-ticker view for one strategy
 python -m src.dashboard.checker --view ticker --strategy e1_conservative
 
-# 6. Historial de un ticker específico
+# 5. History for a specific ticker
 python -m src.dashboard.checker --view history --strategy e1_conservative --ticker AAPL
 ```
 
-> **Nota:** No es necesario tener MLflow server corriendo para entrenar.
-> Los pipelines guardan métricas en `runs/mlflow_local/mlflow.db` automáticamente.
-> Al levantar MLflow UI después, se ven todos los runs anteriores.
+> You don't need an MLflow server running in order to train. Pipelines write metrics to
+> `runs/mlflow_local/mlflow.db` automatically, and starting the UI later shows every prior run.
 
-### Opción B — Docker (Postgres + MinIO)
+### Option B — Docker (Postgres + MinIO)
 
 ```bash
-# 1. Levantar solo los servicios del dashboard
 docker compose --profile dashboard up -d
-
-# 2. Ver MLflow UI
-open http://localhost:5050
-
-# 3. Ver MinIO UI (artifacts)
-open http://localhost:9001   # user: minio / pass: minio123
-
-# 4. Generar reporte de alertas
+open http://localhost:5050   # MLflow UI
+open http://localhost:9001   # MinIO UI — credentials from .env (MINIO_ACCESS_KEY / MINIO_SECRET_ACCESS_KEY)
 python -m src.dashboard.checker
 ```
 
 ---
 
-## Arquitectura
+## Architecture
 
 ```
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│   Pipelines  │────▶│    MLflow     │────▶│  MLflow UI   │
-│ E1/E2/E3/E4  │     │   Server     │     │  Dashboard   │
+│   Pipelines  │────▶│    MLflow    │────▶│  MLflow UI   │
+│ E1/E2/E3/E4  │     │    Server    │     │  Dashboard   │
 └──────┬───────┘     └──────┬───────┘     └──────────────┘
        │                    │
-       │  timing JSONL      │  Backend Store
+       │  timing JSONL      │  backend store
        ▼                    ▼
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│   reports/   │     │  PostgreSQL  │     │    MinIO      │
+│   reports/   │     │  PostgreSQL  │     │    MinIO     │
 │   timing/    │     │  (metadata)  │     │ (artifacts)  │
 └──────────────┘     └──────────────┘     └──────────────┘
        │
@@ -74,209 +65,183 @@ python -m src.dashboard.checker
 └──────────────┘
 ```
 
-### Flujo de datos
-
-1. **Pipelines** entrenan modelos y registran métricas + tiempos en MLflow
-2. **MLflow Server** almacena metadata en Postgres y artifacts en MinIO
-3. **MLflow UI** muestra experimentos por estrategia con filtros y gráficos
-4. **Checker CLI** cruza datos de MLflow + timing log JSONL y genera reportes con alertas
+1. **Pipelines** train models and log metrics plus timings to MLflow.
+2. **MLflow Server** stores metadata in Postgres and artifacts in MinIO.
+3. **MLflow UI** shows experiments per strategy, with filters and charts.
+4. **Checker CLI** joins MLflow data with the JSONL timing log and produces reports with alerts.
 
 ---
 
-## Métricas del Dashboard
+## Metrics
 
-### Por Estrategia
+| Category | Metric | Description |
+|---|---|---|
+| Timing | `train_seconds` | Training time per ticker |
+| Timing | `predict_seconds` | Prediction time per ticker |
+| ML | `ml_mae` | Mean absolute error |
+| ML | `ml_rmse` | Root mean squared error |
+| ML | `ml_ic` | Information Coefficient (Spearman) |
+| ML | `ml_directional_accuracy` | Share of correct direction calls |
+| Trading | `bt_sharpe` | Sharpe ratio |
+| Trading | `bt_sortino` | Sortino ratio |
+| Trading | `bt_cagr` | Compound annual growth rate |
+| Trading | `bt_max_drawdown` | Largest peak-to-trough loss |
+| Trading | `bt_calmar` | Calmar ratio (CAGR / max drawdown) |
+| Trading | `bt_profit_factor` | Gross profit / gross loss |
 
-| Categoría | Métrica | Descripción |
-|-----------|---------|-------------|
-| ⏱ Timing | `train_seconds` | Tiempo de entrenamiento por ticker |
-| ⏱ Timing | `predict_seconds` | Tiempo de predicción por ticker |
-| 🤖 ML | `ml_mae` | Error absoluto medio |
-| 🤖 ML | `ml_rmse` | Error cuadrático medio |
-| 🤖 ML | `ml_ic` | Information Coefficient (Spearman) |
-| 🤖 ML | `ml_directional_accuracy` | % aciertos de dirección |
-| 📈 Trading | `bt_sharpe` | Sharpe ratio |
-| 📈 Trading | `bt_sortino` | Sortino ratio |
-| 📈 Trading | `bt_cagr` | Retorno anualizado compuesto |
-| 📈 Trading | `bt_max_drawdown` | Máxima caída desde pico |
-| 📈 Trading | `bt_calmar` | Calmar ratio (CAGR / Max DD) |
-| 📈 Trading | `bt_profit_factor` | Profit factor (gross profit / gross loss) |
-
-### Estadísticas Mostradas
-
-Para cada métrica se muestra:
-- **Promedio** (avg) — promedio de todos los runs
-- **Último** (last) — valor del run más reciente
-- **p50 / p95** — percentiles (solo para timing)
-- **Alerta** — 🟢 verde / 🟡 amarillo / 🔴 rojo
+For each metric the checker reports the **average** across runs, the **latest** value, **p50/p95**
+percentiles (timing only), and an alert level: 🟢 / 🟡 / 🔴.
 
 ---
 
-## Umbrales de Alerta por Estrategia
+## Alert thresholds
+
+Calibrated against the real metric distribution (February 2026). Configured in
+[`../config/dashboard_thresholds.yaml`](../config/dashboard_thresholds.yaml).
 
 ### E1 Simple / E1 Conservative
 
-Umbrales calibrados con distribución real de métricas (feb 2026).
-
-| Métrica | 🟢 Verde | 🟡 Amarillo | 🔴 Rojo |
-|---------|----------|-------------|---------|
+| Metric | 🟢 Green | 🟡 Yellow | 🔴 Red |
+|---|---|---|---|
 | MAE | ≤ 0.15 | 0.15–0.35 | > 0.35 |
 | RMSE | ≤ 0.20 | 0.20–0.45 | > 0.45 |
-| IC | ≥ 0.10 | -0.05–0.10 | < -0.05 |
-| Dir. Accuracy | ≥ 55% | 50–55% | < 50% |
+| IC | ≥ 0.10 | −0.05–0.10 | < −0.05 |
+| Directional accuracy | ≥ 55% | 50–55% | < 50% |
 | Sharpe | ≥ 1.0 | 0.3–1.0 | < 0.3 |
 | Sortino | ≥ 1.2 | 0.3–1.2 | < 0.3 |
 | CAGR (Simple) | ≥ 8% | 0–8% | < 0% |
-| CAGR (Conservative) | ≥ 0% | -5%–0% | < -5% |
-| Max Drawdown | ≤ 30% | 30–55% | > 55% |
+| CAGR (Conservative) | ≥ 0% | −5%–0% | < −5% |
+| Max drawdown | ≤ 30% | 30–55% | > 55% |
 | Calmar | ≥ 0.5 | 0.1–0.5 | < 0.1 |
-| Profit Factor | ≥ 1.3 | 1.0–1.3 | < 1.0 |
+| Profit factor | ≥ 1.3 | 1.0–1.3 | < 1.0 |
 | Train time (Simple) | ≤ 2 min | 2–5 min | > 5 min |
 | Train time (Conservative) | ≤ 10 min | 10–20 min | > 20 min |
 
 ### E2 Simple / E2 Moderate
 
-| Métrica | 🟢 Verde | 🟡 Amarillo | 🔴 Rojo |
-|---------|----------|-------------|---------|
+| Metric | 🟢 Green | 🟡 Yellow | 🔴 Red |
+|---|---|---|---|
 | MAE | ≤ 0.02 | 0.02–0.04 | > 0.04 |
 | RMSE | ≤ 0.03 | 0.03–0.06 | > 0.06 |
 | IC | ≥ 0.05 | 0.02–0.05 | < 0.02 |
-| Dir. Accuracy | ≥ 55% | 50–55% | < 50% |
+| Directional accuracy | ≥ 55% | 50–55% | < 50% |
 | Sharpe | ≥ 0.8 | 0.4–0.8 | < 0.4 |
-| Max Drawdown | ≤ 15% | 15–20% | > 20% |
+| Max drawdown | ≤ 15% | 15–20% | > 20% |
 
 ### E3 Intraday
 
-| Métrica | 🟢 Verde | 🟡 Amarillo | 🔴 Rojo |
-|---------|----------|-------------|---------|
+| Metric | 🟢 Green | 🟡 Yellow | 🔴 Red |
+|---|---|---|---|
 | MAE | ≤ 0.001 | 0.001–0.003 | > 0.003 |
 | RMSE | ≤ 0.002 | 0.002–0.005 | > 0.005 |
 | IC | ≥ 0.03 | 0.01–0.03 | < 0.01 |
-| Dir. Accuracy | ≥ 52% | 48–52% | < 48% |
-| Profit Factor | ≥ 1.4 | 1.0–1.4 | < 1.0 |
-| Max DD Intraday | ≤ 3% | 3–5% | > 5% |
+| Directional accuracy | ≥ 52% | 48–52% | < 48% |
+| Profit factor | ≥ 1.4 | 1.0–1.4 | < 1.0 |
+| Max drawdown (intraday) | ≤ 3% | 3–5% | > 5% |
 
 ### E4 Pairs
 
-| Métrica | 🟢 Verde | 🟡 Amarillo | 🔴 Rojo |
-|---------|----------|-------------|---------|
+| Metric | 🟢 Green | 🟡 Yellow | 🔴 Red |
+|---|---|---|---|
 | Sharpe | ≥ 1.0 | 0.5–1.0 | < 0.5 |
-| Max Drawdown | ≤ 10% | 10–20% | > 20% |
-| Win Rate | ≥ 55% | 45–55% | < 45% |
-| Total Return | ≥ 5% | 0–5% | < 0% |
-
-> Los umbrales se configuran en [`src/config/dashboard_thresholds.yaml`](src/config/dashboard_thresholds.yaml)
+| Max drawdown | ≤ 10% | 10–20% | > 20% |
+| Win rate | ≥ 55% | 45–55% | < 45% |
+| Total return | ≥ 5% | 0–5% | < 0% |
 
 ---
 
 ## Checker CLI
 
-El checker tiene 3 vistas: **summary**, **ticker** y **history**.
+Three views: **summary**, **ticker** and **history**.
 
-### Vista Summary (default)
+### Summary view (default)
 
-Promedio y último valor por estrategia, con alertas.
+Average and latest value per strategy, with alerts.
 
 ```bash
-# Todas las estrategias
-python -m src.dashboard.checker
-
-# Una estrategia específica
-python -m src.dashboard.checker --strategy e1_conservative
+python -m src.dashboard.checker                            # all strategies
+python -m src.dashboard.checker --strategy e1_conservative # one strategy
 ```
-
-**Output:**
 
 ```
 ======================================================================
   E1 Conservative
-  GRU 2 capas, walk-forward 5 folds, horizon 90d
+  GRU 2 layers, walk-forward 5 folds, horizon 90d
 ======================================================================
 
-  ⏱ Timing
+  Timing
   ────────────────────────────────────────────────────────────────
   Metric                            Avg     Last  Alert
   ────────────────────────────────────────────────────────────────
   train_seconds                    45.2     42.1  🟢
   predict_seconds                   0.3      0.2  🟢
 
-  🤖 ML
+  ML
   ────────────────────────────────────────────────────────────────
   ml_mae                         0.0280   0.0250  🟢
-  ml_rmse                        0.0420   0.0380  🟢
   ml_ic                          0.0650   0.0720  🟢
   ml_directional_accuracy        0.5600   0.5800  🟢
 
-  📈 Trading
+  Trading
   ────────────────────────────────────────────────────────────────
   bt_sharpe                      0.8500   1.0200  🟢
   bt_cagr                        0.0900   0.1100  🟢
   bt_max_drawdown                0.1200   0.1400  🟢
 ```
 
-### Vista Ticker — Per-ticker
+### Ticker view
 
-Muestra métricas del último entrenamiento (o promedio de los últimos N) para cada ticker de una estrategia. Incluye **score compuesto** y alertas separadas por categoría (ML y Trading).
+Metrics from the latest training run (or the average of the last N) for every ticker in a
+strategy, including the **composite score** and separate ML/Trading alerts.
 
 ```bash
-# Último entrenamiento por ticker
 python -m src.dashboard.checker --view ticker --strategy e1_conservative
-
-# Promedio de últimos 3 entrenamientos por ticker
 python -m src.dashboard.checker --view ticker --strategy e1_conservative --last 3
 ```
 
-**Output:**
-
 ```
 ================================================================================
-  E1 Conservative — Per-Ticker (último entrenamiento)
-  Score = 40% bt_sharpe + 30% bt_cagr + 30% bt_max_drawdown
+  E1 Conservative — per ticker (latest run)
+  Score = 0.35·bt_sharpe + 0.25·ml_ic + 0.20·ml_directional_accuracy + 0.20·bt_calmar
 ================================================================================
 
-  🤖 ML
+  ML
   ──────────────────────────────────────────────────────────────────────────
   Ticker              MAE       RMSE         IC    Dir Acc
   ──────────────────────────────────────────────────────────────────────────
   AAPL             0.0820     0.1050     0.2100     0.5800  🟢
   GGAL.BA          0.1240     0.1680    -0.0300     0.4900  🟡
 
-  📈 Trading
+  Trading
   ──────────────────────────────────────────────────────────────────────────
   Ticker           Sharpe    Sortino       CAGR     Max DD   Score
   ──────────────────────────────────────────────────────────────────────────
   AAPL             1.2300     1.8100     0.1500     0.1200  0.5640  🟢
   GGAL.BA          0.4500     0.5200     0.0200     0.3800  0.1820  🟡
 
-  📊 Resumen ML:      1🟢 1🟡 0🔴 de 2 tickers
-  📊 Resumen Trading: 1🟢 1🟡 0🔴 de 2 tickers
-  📊 US avg Score: 0.5640 | AR avg Score: 0.1820
+  ML summary:      1🟢 1🟡 0🔴 of 2 tickers
+  Trading summary: 1🟢 1🟡 0🔴 of 2 tickers
 ```
 
-El **score** se calcula con los mismos pesos configurados en `src/config/base.yaml` (sección `lifecycle.promotion.scoring_weights`).
+The score uses `compute_score()` from `src/lifecycle/promotion.py` with the weights configured in
+`src/config/base.yaml` under `lifecycle.promotion.scoring_weights` — deliberately the **same**
+score that drives champion/challenger promotion, so the dashboard and the promotion logic can
+never disagree about which model is better.
 
-### Vista History — Historial de un ticker
+### History view
 
-Muestra los últimos N entrenamientos de un ticker con tendencia del score.
+The last N runs for one ticker, with the score trend.
 
 ```bash
-# Últimos 10 entrenamientos (default)
 python -m src.dashboard.checker --view history --strategy e1_conservative --ticker AAPL
-
-# Últimos 5 entrenamientos
 python -m src.dashboard.checker --view history --strategy e1_conservative --ticker AAPL --last 5
 ```
 
-**Output:**
-
 ```
 ================================================================================
-  E1 Conservative — AAPL (últimos 5 entrenamientos)
-  Score = 40% bt_sharpe + 30% bt_cagr + 30% bt_max_drawdown
+  E1 Conservative — AAPL (last 5 runs)
 ================================================================================
-
-  ────────────────────────────────────────────────────────────────────────────────
-  Fecha            MAE     RMSE       IC  Dir Acc  Sharpe  Sortino     CAGR   Max DD    Score  ML  Trad
+  Date             MAE     RMSE       IC  Dir Acc  Sharpe  Sortino     CAGR   Max DD    Score  ML  Trad
   ────────────────────────────────────────────────────────────────────────────────
   2026-02-25    0.0820   0.1050   0.2100   0.5800  1.2300   1.8100   0.1500   0.1200   0.5640  🟢 🟢
   2026-02-20    0.0900   0.1150   0.1800   0.5600  1.1000   1.6500   0.1200   0.1400   0.5120  🟢 🟢
@@ -284,39 +249,32 @@ python -m src.dashboard.checker --view history --strategy e1_conservative --tick
   2026-02-10    0.1250   0.1600   0.0500   0.5100  0.6200   0.8800   0.0300   0.2800   0.2560  🟡 🟡
   2026-02-05    0.1400   0.1800   0.0200   0.5000  0.4000   0.5500   0.0100   0.3500   0.1520  🟡 🟡
 
-  📈 Tendencia score: 0.1520 → 0.5640 (+271.1%) ↑
+  Score trend: 0.1520 → 0.5640 (+271.1%) ↑
 ```
 
-### Referencia de argumentos CLI
+### CLI arguments
 
-| Argumento | Descripción | Default |
-|-----------|-------------|---------|
-| `--view` | Vista: `summary`, `ticker`, `history` | `summary` |
-| `--strategy` | Clave de estrategia (ej: `e1_conservative`). Requerido para ticker/history. | Todas |
-| `--ticker` | Ticker (ej: `AAPL`). Requerido para history. | — |
-| `--last` | ticker: promedia últimos N. history: cantidad de runs. | ticker: 1, history: 10 |
-| `--save` | Guardar CSV | `True` |
-| `--quiet` | Suprimir output a consola | `False` |
+| Argument | Description | Default |
+|---|---|---|
+| `--view` | `summary`, `ticker` or `history` | `summary` |
+| `--strategy` | Strategy key (e.g. `e1_conservative`). Required for ticker/history. | all |
+| `--ticker` | Ticker (e.g. `AAPL`). Required for history. | — |
+| `--last` | ticker: average the last N. history: number of runs. | ticker 1, history 10 |
+| `--save` | Write CSV | `True` |
+| `--quiet` | Suppress console output | `False` |
 
-### Output
-
-- **stdout:** tabla formateada con alertas
-- **CSV summary:** `reports/dashboard/dashboard_report_latest.csv`
-- **CSV ticker:** `reports/dashboard/ticker_report_{strategy}_latest.csv`
-- **CSV history:** `reports/dashboard/history_report_{strategy}_{ticker}_latest.csv`
-- **CSV histórico:** `reports/dashboard/dashboard_report_YYYYMMDD_HHMMSS.csv`
+Outputs: a formatted table on stdout, plus CSVs under `reports/dashboard/` —
+`dashboard_report_latest.csv`, `ticker_report_{strategy}_latest.csv`,
+`history_report_{strategy}_{ticker}_latest.csv`, and timestamped historical copies.
 
 ---
 
-## Uso de MLflow UI como Dashboard
+## Using the MLflow UI
 
-### Vistas Recomendadas
+Each strategy has its own experiment:
 
-#### 1. Vista por Estrategia
-En MLflow UI, cada estrategia tiene su propio **Experiment**:
-
-| Estrategia | Experiment Name |
-|------------|-----------------|
+| Strategy | Experiment name |
+|---|---|
 | E1 Simple | `E1_Simple` |
 | E1 Conservative | `E1_Conservative_Strategy` |
 | E2 Simple | `E2_Simple` |
@@ -324,109 +282,74 @@ En MLflow UI, cada estrategia tiene su propio **Experiment**:
 | E3 Intraday | `E3_Intraday` |
 | E4 Pairs | `E4_Pairs` |
 
-#### 2. Filtrar por Tags
-Cada run incluye tags de dashboard para filtrado:
-- `dashboard.strategy` — clave de la estrategia
-- `dashboard.ticker` — ticker del activo
+### Filtering by tags
+
+Every run carries dashboard tags:
+
+- `dashboard.strategy` — strategy key
+- `dashboard.ticker` — asset ticker
 - `dashboard.run_type` — `train`, `predict`, `evaluate`, `aggregate`
 - `dashboard.alert.overall` — 🟢/🟡/🔴
-- `dashboard.alert.{metric}` — alerta por métrica individual
+- `dashboard.alert.{metric}` — per-metric alert
 
-**Ejemplo de filtro en MLflow UI:**
 ```
 tags.dashboard.strategy = "e1_simple" AND tags.dashboard.alert.overall = "🔴"
 ```
-Nota: el tag es `dashboard.strategy` (con punto), no `dashboard_strategy`.
 
-#### 3. Comparar Runs
-1. Seleccionar múltiples runs en la tabla
-2. Click "Compare" → ver métricas lado a lado
-3. Usar "Chart" para graficar evolución temporal
+Note the tag is `dashboard.strategy`, with a dot — not `dashboard_strategy`.
 
-#### 4. Gráficos Útiles
-- **Scatter:** `ml_ic` vs `bt_sharpe` → correlación predicción-trading
-- **Line:** `ml_mae` por run → evolución de calidad
-- **Bar:** `dashboard.train_seconds` por ticker → identificar bottlenecks
+### Useful charts
+
+- **Scatter** `ml_ic` vs `bt_sharpe` — does predictive power translate into trading performance?
+- **Line** `ml_mae` per run — quality over time
+- **Bar** `dashboard.train_seconds` per ticker — find the bottlenecks
 
 ---
 
-## Tags de Dashboard
+## Integrating into a pipeline
 
-Cada pipeline registra automáticamente los siguientes tags y métricas:
-
-### Tags (para filtrado)
-```
-dashboard.strategy         = "e1_simple"
-dashboard.strategy_display = "E1 Simple"
-dashboard.ticker           = "AAPL"
-dashboard.run_type         = "train"
-dashboard.alert.overall    = "🟢"
-dashboard.alert.ml_mae     = "🟢"
-dashboard.alert.bt_sharpe  = "🟡"
-...
-```
-
-### Métricas adicionales
-```
-dashboard.train_seconds    = 45.2
-dashboard.predict_seconds  = 0.3
-timing_train_seconds       = 45.2   (también en namespace timing_*)
-timing_predict_seconds     = 0.3
-```
-
----
-
-## Integración en Pipelines
-
-### Context manager (recomendado)
-
-Para integrar en cualquier pipeline, usar el context manager:
+Use the context manager:
 
 ```python
 from src.dashboard.integration import with_dashboard_logging
 
 with mlflow.start_run(run_name=f"E2Simple_{ticker}_{ts}"):
     with with_dashboard_logging("e2_simple", ticker=ticker) as ctx:
-        # ... entrenar y evaluar ...
+        # ... train and evaluate ...
         ctx["train_seconds"] = train_duration
         ctx["predict_seconds"] = pred_duration
-        ctx["metrics"] = {"ml_mae": mae, "bt_sharpe": sharpe, ...}
+        ctx["metrics"] = {"ml_mae": mae, "bt_sharpe": sharpe}
 ```
 
-El context manager registra automáticamente:
-- Tags de estrategia y ticker
-- Tiempos de entrenamiento/predicción (fallback a wall-clock si no se setean)
-- Alertas por umbral para cada métrica
+It automatically logs strategy and ticker tags, training/prediction timings (falling back to
+wall-clock if not set), and a threshold alert for every metric.
+
+Additional metrics logged: `dashboard.train_seconds`, `dashboard.predict_seconds`, plus the same
+values under the `timing_*` namespace.
 
 ---
 
-## Infraestructura
+## Infrastructure
 
-### Modo Local (desarrollo)
+### Local mode (development)
 
 ```bash
-# MLflow UI con backend local SQLite
 mlflow ui --backend-store-uri sqlite:///runs/mlflow_local/mlflow.db --port 5050
 ```
 
-- **Backend store:** `runs/mlflow_local/mlflow.db` (SQLite)
-- **Artifact store:** `runs/mlflow_local/artifacts/` (filesystem)
-- **Adecuado para:** desarrollo, experimentación individual
+Backend store: `runs/mlflow_local/mlflow.db` (SQLite). Artifact store:
+`runs/mlflow_local/artifacts/`. Suited to individual development and experimentation.
 
-### Modo Docker (producción local)
+### Docker mode (local production)
 
 ```bash
-# Levantar Postgres + MinIO + MLflow
 docker compose --profile dashboard up -d
 ```
 
-- **Backend store:** PostgreSQL (`postgres:5432/mlflow_db`)
-- **Artifact store:** MinIO S3 (`s3://mlflow/`)
-- **Adecuado para:** producción local, múltiples usuarios
+Backend store: PostgreSQL (`postgres:5432/mlflow_db`). Artifact store: MinIO (`s3://mlflow/`).
+Suited to local production and multiple users.
 
-### Escalado Futuro — Tracking Server Remoto
-
-Para escalar a un entorno compartido o cloud:
+### Scaling out
 
 ```
 ┌─────────────┐     ┌──────────────────┐     ┌──────────────┐
@@ -435,140 +358,73 @@ Para escalar a un entorno compartido o cloud:
 └─────────────┘     └────────┬─────────┘     └──────────────┘
                              │
                     ┌────────┴─────────┐
-                    │                  │
               ┌─────▼──────┐    ┌──────▼─────┐
-              │ PostgreSQL │    │    S3       │
+              │ PostgreSQL │    │     S3     │
               │ (RDS/Cloud │    │ (AWS/GCS/  │
               │  SQL)      │    │  MinIO)    │
               └────────────┘    └────────────┘
 ```
 
-#### Pasos para escalar:
-
-1. **Postgres externo:**
-   ```bash
-   # Cambiar backend store URI
-   MLFLOW_BACKEND_STORE_URI=postgresql://user:pass@rds-host:5432/mlflow_db
-   ```
-
-2. **S3 real (o MinIO remoto):**
-   ```bash
-   # Cambiar artifact root
-   MLFLOW_DEFAULT_ARTIFACT_ROOT=s3://my-mlflow-bucket/
-   AWS_ACCESS_KEY_ID=...
-   AWS_SECRET_ACCESS_KEY=...
-   ```
-
-3. **Autenticación (cuando sea necesario):**
-   - MLflow con nginx reverse proxy + basic auth
-   - O MLflow con OAuth (MLflow 2.10+)
-
-4. **Docker Compose → Kubernetes:**
-   ```yaml
-   # Helm chart de MLflow o deployment custom
-   # Postgres → CloudSQL/RDS
-   # MinIO → S3/GCS
-   ```
+1. **External Postgres** — `MLFLOW_BACKEND_STORE_URI=postgresql://user:pass@host:5432/mlflow_db`
+2. **Real S3 or remote MinIO** — `MLFLOW_DEFAULT_ARTIFACT_ROOT=s3://my-mlflow-bucket/` plus AWS credentials
+3. **Authentication** — MLflow behind an nginx reverse proxy with basic auth, or MLflow's own OAuth (2.10+)
+4. **Kubernetes** — the MLflow Helm chart or a custom deployment; Postgres → CloudSQL/RDS, MinIO → S3/GCS
 
 ---
 
-## Estructura de Archivos
+## File layout
 
 ```
 src/
 ├── config/
-│   ├── base.yaml                      # Config principal (incluye scoring_weights)
-│   └── dashboard_thresholds.yaml      # Umbrales de alerta por estrategia
+│   ├── base.yaml                      # main config (includes scoring_weights)
+│   └── dashboard_thresholds.yaml      # per-strategy alert thresholds
 ├── dashboard/
-│   ├── __init__.py                    # Helpers: tags, timing, alerts
-│   ├── checker.py                     # CLI: genera reporte de salud (3 vistas)
-│   └── integration.py                 # Context manager para pipelines
-├── lifecycle/
-│   └── promotion.py                   # compute_score() — usado por vista ticker
-runs/
-└── mlflow_local/
-    ├── mlflow.db                      # SQLite — backend store local (single source of truth)
-    └── artifacts/                     # Artifacts de los runs (modelos, configs, etc.)
+│   ├── __init__.py                    # helpers: tags, timing, alerts
+│   ├── checker.py                     # CLI: health report, 3 views
+│   └── integration.py                 # context manager for pipelines
+└── lifecycle/
+    └── promotion.py                   # compute_score() — used by the ticker view
+
+runs/mlflow_local/
+├── mlflow.db                          # SQLite backend store (single source of truth)
+└── artifacts/                         # run artifacts
+
 reports/
-├── timing/
-│   └── timing_log.jsonl               # Log de tiempos (JSONL)
-└── dashboard/
-    ├── dashboard_report_latest.csv    # Último reporte summary
-    ├── ticker_report_*_latest.csv     # Último reporte per-ticker
-    ├── history_report_*_latest.csv    # Último reporte historial
-    └── dashboard_report_*.csv         # Histórico
+├── timing/timing_log.jsonl            # timing log
+└── dashboard/                         # generated reports
 ```
 
 ---
 
 ## FAQ
 
-### ¿Por qué MLflow UI y no Streamlit/Dash?
+**Why the MLflow UI instead of Streamlit or Dash?** Because the pipelines already log to MLflow,
+run comparison is built in, tag and metric filtering is powerful, artifacts (models, predictions,
+backtests) are reachable from the same UI, and the same code scales from local to a remote server.
 
-1. **Ya está integrado** — los pipelines ya registran métricas en MLflow
-2. **Comparación nativa** — MLflow UI tiene comparación de runs built-in
-3. **Filtros potentes** — por tags, métricas, parámetros
-4. **Artifacts** — modelos, predicciones, backtests accesibles desde la UI
-5. **Escalable** — de local a servidor remoto sin cambiar código
+**How do I see only runs with red alerts?** Filter on
+`tags.dashboard.alert.overall = "🔴"`.
 
-### ¿Cómo veo solo los runs con alertas rojas?
+**What is the composite score?** A weighted average of trading metrics, configured in
+`src/config/base.yaml` under `lifecycle.promotion.scoring_weights`. It drives both this dashboard
+and champion/challenger promotion.
 
-En MLflow UI, filtrar por:
-```
-tags.dashboard.alert.overall = "🔴"
-```
+**Are thresholds editable?** Yes — edit
+[`../config/dashboard_thresholds.yaml`](../config/dashboard_thresholds.yaml) and re-run the checker.
 
-### ¿Cómo comparo el promedio vs el último run?
+**Where does MLflow store data?** In `runs/mlflow_local/mlflow.db` (SQLite), the single source of
+truth for metrics. Pipelines and the checker use the same fallback cascade: remote server
+(`MLFLOW_TRACKING_URI`) if configured and reachable → local SQLite → default file store
+(`mlruns/`) as a last resort.
 
-Usar el checker CLI:
-```bash
-python -m src.dashboard.checker --strategy e1_conservative
-```
-
-### ¿Cómo veo métricas por ticker?
-
-```bash
-python -m src.dashboard.checker --view ticker --strategy e1_conservative
-```
-
-### ¿Cómo veo la evolución de un ticker?
-
-```bash
-python -m src.dashboard.checker --view history --strategy e1_conservative --ticker AAPL
-```
-
-### ¿Qué es el score compuesto?
-
-Es un promedio ponderado de métricas de trading, configurado en `src/config/base.yaml` bajo `lifecycle.promotion.scoring_weights`. Se usa tanto para la vista ticker como para la lógica de promoción champion/challenger.
-
-### ¿Los umbrales son editables?
-
-Sí. Editar [`src/config/dashboard_thresholds.yaml`](src/config/dashboard_thresholds.yaml) y re-ejecutar el checker.
-
-### ¿Dónde se guardan los datos de MLflow?
-
-En **`runs/mlflow_local/mlflow.db`** (SQLite). Es la single source of truth para métricas.
-Los pipelines y el checker usan la misma cascada de fallback:
-
-1. Servidor remoto (`MLFLOW_TRACKING_URI`) si está configurado y accesible
-2. SQLite local (`runs/mlflow_local/mlflow.db`)
-3. File store por defecto (`mlruns/`) como último recurso
-
-> **Nota:** La carpeta `mlruns/` ya no se usa. Fue eliminada porque contenía
-> experimentos corruptos. Todo el tracking se hace via SQLite local o servidor remoto.
+> The `mlruns/` folder is no longer used. It was removed because it contained corrupted
+> experiments; all tracking now goes through local SQLite or a remote server.
 
 ---
 
-## Referencias
+## See also
 
-- [README_E1_SIMPLE.md](README_E1_SIMPLE.md) — E1 Simple pipeline
-- [README_E1.md](README_E1.md) — E1 Conservative pipeline
-- [README_E2.md](README_E2.md) — E2 Moderate pipeline
-- [README_E3.md](README_E3.md) — E3 Intraday pipeline
-- [README_E4.md](README_E4.md) — E4 Pairs pipeline
-- [README_DOCKER.md](README_DOCKER.md) — Infraestructura Docker
-
----
-
-**Última actualización:** Febrero 27, 2026
-**Versión:** 2.0
+- [../lifecycle/README_LIFECYCLE.md](../lifecycle/README_LIFECYCLE.md) — model lifecycle and promotion
+- [../../README_DOCKER.md](../../README_DOCKER.md) — Docker infrastructure
+- [../../scripts/README.md](../../scripts/README.md) — evaluation and leaderboard scripts

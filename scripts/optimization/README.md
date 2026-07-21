@@ -1,94 +1,96 @@
-# Optimización de Hiperparámetros con Optuna
+# Hyperparameter optimization with Optuna
 
-Scripts de búsqueda automática de hiperparámetros para las estrategias E1, E2 y E3 usando Optuna como framework de optimización bayesiana y MLflow para tracking de experimentos.
-
----
-
-## Visión general
-
-Cada script sigue el mismo flujo:
-
-```
-Optuna propone hiperparámetros (TPE sampler)
-    → Pipeline de entrenamiento corre sobre todos los tickers
-    → Se calculan métricas agregadas (Sharpe, IC, Calmar, DirAcc)
-    → Se devuelve una métrica objetivo compuesta
-    → Optuna aprende del resultado y propone el siguiente trial
-```
-
-Los estudios son persistentes en SQLite (`runs/optuna_trials/optuna_studies.db`), lo que permite interrumpir y retomar corridas sin perder progreso.
+Automated hyperparameter search for strategies E1, E2 and E3, using Optuna for Bayesian
+optimization and MLflow for experiment tracking.
 
 ---
 
-## Comparativa de estrategias
+## Overview
 
-| Aspecto | E1 Conservative | E2 Moderate | E3 Intraday |
+Every script follows the same loop:
+
+```
+Optuna proposes hyperparameters (TPE sampler)
+    → the training pipeline runs across all tickers
+    → aggregate metrics are computed (Sharpe, IC, Calmar, DirAcc)
+    → a composite objective is returned
+    → Optuna learns from the result and proposes the next trial
+```
+
+Studies persist to SQLite (`runs/optuna_trials/optuna_studies.db`), so a run can be interrupted
+and resumed without losing progress.
+
+---
+
+## Strategy comparison
+
+| Aspect | E1 Conservative | E2 Moderate | E3 Intraday |
 |---|---|---|---|
-| Modelo | GRU 2 capas | LSTM 2 capas | LSTM Ensemble |
-| Horizonte | 90 días | 20 días | 30 min (5-min bars) |
+| Model | GRU, 2 layers | LSTM, 2 layers | LSTM ensemble |
+| Horizon | 90 days | 20 days | 30 min (5-min bars) |
 | Script | `optimize_e1_hyperparameters.py` | `optimize_e2_hyperparameters.py` | `optimize_e3_hyperparameters.py` |
-| Study name default | `e1_hyperparameter_optimization` | `e2_hyperparameter_optimization_timesplit` | `e3_hyperparameter_optimization` |
+| Default study name | `e1_hyperparameter_optimization` | `e2_hyperparameter_optimization_timesplit` | `e3_hyperparameter_optimization` |
 
 ---
 
-## Espacio de búsqueda
+## Search space
 
 ### E1 — GRU Conservative
 
-| Parámetro | Rango | Tipo |
+| Parameter | Range | Meaning |
 |---|---|---|
-| `tau_buy` | [0.02, 0.10] step=0.01 | Umbral señal de compra |
-| `tau_sell` | [-0.02, 0.02] step=0.01 | Umbral señal de venta |
-| `gru_units_1` | [32, 128] step=16 | Unidades capa GRU 1 |
-| `gru_units_2` | [16, 64] step=16 | Unidades capa GRU 2 |
-| `dropout` | [0.20, 0.50] step=0.05 | Regularización |
-| `learning_rate` | [1e-4, 1e-2] | Log-uniforme |
-| `weight_decay` | [1e-6, 1e-2] | Log-uniforme |
-| `batch_size` | {32, 64, 128} | Categórico |
+| `tau_buy` | [0.02, 0.10] step 0.01 | Buy signal threshold |
+| `tau_sell` | [−0.02, 0.02] step 0.01 | Sell signal threshold |
+| `gru_units_1` | [32, 128] step 16 | Units, GRU layer 1 |
+| `gru_units_2` | [16, 64] step 16 | Units, GRU layer 2 |
+| `dropout` | [0.20, 0.50] step 0.05 | Regularization |
+| `learning_rate` | [1e-4, 1e-2] | Log-uniform |
+| `weight_decay` | [1e-6, 1e-2] | Log-uniform |
+| `batch_size` | {32, 64, 128} | Categorical |
 
-**Función objetivo:** `0.35×Sharpe + 0.25×IC + 0.20×DirAcc + 0.20×Calmar + trade_penalty`
+**Objective:** `0.35×Sharpe + 0.25×IC + 0.20×DirAcc + 0.20×Calmar + trade_penalty`
 
 ### E2 — LSTM Moderate
 
-| Parámetro | Rango | Tipo |
+| Parameter | Range | Meaning |
 |---|---|---|
-| `tau_buy` | [0.015, 0.05] step=0.005 | Umbral señal de compra |
-| `tau_sell` | [-0.01, 0.01] step=0.005 | Umbral señal de venta |
-| `lstm_units_1` | [64, 256] step=32 | Unidades capa LSTM 1 |
-| `lstm_units_2` | [32, 128] step=16 | Unidades capa LSTM 2 |
-| `dropout` | [0.10, 0.40] step=0.05 | Regularización |
-| `learning_rate` | [5e-5, 5e-3] | Log-uniforme |
-| `batch_size` | {32, 64, 128} | Categórico |
+| `tau_buy` | [0.015, 0.05] step 0.005 | Buy signal threshold |
+| `tau_sell` | [−0.01, 0.01] step 0.005 | Sell signal threshold |
+| `lstm_units_1` | [64, 256] step 32 | Units, LSTM layer 1 |
+| `lstm_units_2` | [32, 128] step 16 | Units, LSTM layer 2 |
+| `dropout` | [0.10, 0.40] step 0.05 | Regularization |
+| `learning_rate` | [5e-5, 5e-3] | Log-uniform |
+| `batch_size` | {32, 64, 128} | Categorical |
 
-**Función objetivo:** `0.30×Sharpe + 0.20×IC + 0.30×DirAcc + 0.20×Calmar + trade_penalty`
+**Objective:** `0.30×Sharpe + 0.20×IC + 0.30×DirAcc + 0.20×Calmar + trade_penalty`
 
-### E3 — LSTM Ensemble Intraday
+### E3 — LSTM ensemble, intraday
 
-| Parámetro | Rango | Tipo |
+| Parameter | Range | Meaning |
 |---|---|---|
-| `tau_buy` | [0.001, 0.005] step=0.0005 | Umbral señal de compra (en bps) |
-| `tau_sell` | [0.001, 0.005] step=0.0005 | Umbral señal de venta |
-| `lstm_hidden_size` | [64, 256] step=32 | Tamaño capa LSTM oculta |
-| `dense_units` | [16, 64] step=16 | Unidades capa densa |
-| `dropout` | [0.10, 0.40] step=0.05 | Regularización |
-| `learning_rate` | [1e-4, 5e-3] | Log-uniforme |
-| `weight_decay` | [1e-6, 1e-2] | Log-uniforme |
-| `batch_size` | {64, 128, 256, 512} | Categórico |
-| `ensemble_members` | [2, 5] step=1 | Cantidad de miembros del ensemble |
-| `consensus_tol` | [0.0001, 0.002] step=0.0001 | Filtro de consenso entre miembros |
+| `tau_buy` | [0.001, 0.005] step 0.0005 | Buy signal threshold (in bps) |
+| `tau_sell` | [0.001, 0.005] step 0.0005 | Sell signal threshold |
+| `lstm_hidden_size` | [64, 256] step 32 | Hidden LSTM layer size |
+| `dense_units` | [16, 64] step 16 | Dense layer units |
+| `dropout` | [0.10, 0.40] step 0.05 | Regularization |
+| `learning_rate` | [1e-4, 5e-3] | Log-uniform |
+| `weight_decay` | [1e-6, 1e-2] | Log-uniform |
+| `batch_size` | {64, 128, 256, 512} | Categorical |
+| `ensemble_members` | [2, 5] step 1 | Number of ensemble members |
+| `consensus_tol` | [0.0001, 0.002] step 0.0001 | Consensus filter across members |
 
-**Función objetivo:** `0.30×Sharpe + 0.20×IC + 0.25×DirAcc + 0.25×Calmar + trade_penalty`
+**Objective:** `0.30×Sharpe + 0.20×IC + 0.25×DirAcc + 0.25×Calmar + trade_penalty`
 
-> `trade_penalty = -5` si menos del 50% de tickers generan trades (penaliza thresholds demasiado altos que no emiten señales).
+> `trade_penalty = −5` when fewer than 50% of tickers produce any trades. Without it, the
+> optimizer learns that the safest way to maximize risk-adjusted return is to never trade —
+> thresholds so high that no signal ever fires.
 
 ---
 
-## Uso
-
-### Comandos básicos
+## Usage
 
 ```bash
-# E1 — optimización sobre universo completo (50 trials por defecto)
+# E1 — full universe (50 trials by default)
 python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 50
 
 # E2
@@ -98,85 +100,74 @@ python scripts/optimization/optimize_e2_hyperparameters.py --n_trials 50
 python -m scripts.optimization.optimize_e3_hyperparameters --n_trials 50
 ```
 
-### Opciones comunes (disponibles en los tres scripts)
+### Common options (all three scripts)
 
 ```bash
-# Ticker único (más rápido, útil para pruebas)
---ticker AAPL
-
-# Lista explícita de tickers
---tickers AAPL,MSFT,GOOG
-
-# Modo rápido: 3 tickers aleatorios del universo (2 para E3)
---quick
-
-# Optimización independiente por ticker (genera YAML por ticker)
---per_ticker
-
-# Continuar un estudio existente
---study_name nombre_del_estudio
-
-# Timeout total en segundos
---timeout 3600
-
-# MLflow remoto (Docker)
---mlflow_uri http://localhost:5050
-
-# Usar datos hasta la fecha actual (por defecto usa ventana fija del config)
---use-latest-data
+--ticker AAPL                      # single ticker (fastest, good for smoke tests)
+--tickers AAPL,MSFT,GOOG           # explicit list
+--quick                            # 3 random tickers from the universe (2 for E3)
+--per_ticker                       # independent optimization per ticker, emits per-ticker YAML
+--study_name <name>                # resume an existing study
+--timeout 3600                     # total timeout in seconds
+--mlflow_uri http://localhost:5050 # remote MLflow (Docker)
+--use-latest-data                  # use data up to today (default is the config's fixed window)
 ```
 
-### Ajustar rangos de búsqueda en tiempo de ejecución
+### Narrowing ranges at runtime
 
 ```bash
-# Ejemplo E1: acotar rango de tau_buy y learning_rate
+# E1: constrain tau_buy and learning_rate
 python scripts/optimization/optimize_e1_hyperparameters.py \
   --tau_buy_min 0.03 --tau_buy_max 0.07 \
   --learning_rate_min 1e-4 --learning_rate_max 1e-3 \
   --n_trials 30
 
-# Ejemplo E3: limitar ensemble_members y ajustar batch sizes
+# E3: limit ensemble size and batch sizes
 python -m scripts.optimization.optimize_e3_hyperparameters \
   --ensemble_members_min 2 --ensemble_members_max 3 \
   --batch_sizes 64,128 \
   --n_trials 20
 ```
 
-### Método de validación
+### Validation method
 
-Por defecto se usa `walk_forward` con 3 folds (configurable en `src/config/base.yaml` bajo `optuna.<estrategia>.validation`). Se puede cambiar por CLI:
+The default is `walk_forward` with 3 folds, configurable in `src/config/base.yaml` under
+`optuna.<strategy>.validation`, and overridable from the CLI:
 
 ```bash
---validation_method time_split   # split único más rápido
+--validation_method time_split                        # single split, faster
 --validation_method walk_forward --optuna_folds 5
 ```
+
+Note that tuning against walk-forward folds is slower but keeps the search honest — optimizing
+against a single split invites picking hyperparameters that happen to suit one window.
 
 ---
 
 ## Outputs
 
-Todos los resultados se guardan en `reports/hyperparameter_optimization/`:
+Everything lands in `reports/hyperparameter_optimization/`:
 
-| Archivo | Contenido |
+| File | Contents |
 |---|---|
-| `best_params_e{1,2,3}.yaml` | Mejores hiperparámetros del estudio |
-| `e{1,2,3}_all_trials.csv` | Todos los trials del estudio |
-| `e{1,2,3}_run_trials.csv` | Solo los trials de la corrida actual |
-| `e{1,2,3}_tuned_params_by_ticker.yaml` | Overrides por ticker (formato consumible por training) |
-| `e{1,2,3}_tuned_params_by_ticker.meta.yaml` | Idem con metadata del estudio |
-| `e{1,2,3}_optimization_summary.txt` | Resumen textual con top 10 trials |
-| `figures/` | Gráficos: historial, importancias, coordenadas paralelas |
+| `best_params_e{1,2,3}.yaml` | Best hyperparameters of the study |
+| `e{1,2,3}_all_trials.csv` | Every trial in the study |
+| `e{1,2,3}_run_trials.csv` | Only the trials from the current run |
+| `e{1,2,3}_tuned_params_by_ticker.yaml` | Per-ticker overrides, consumable by training |
+| `e{1,2,3}_tuned_params_by_ticker.meta.yaml` | Same, with study metadata |
+| `e{1,2,3}_optimization_summary.txt` | Text summary with the top 10 trials |
+| `figures/` | History, parameter importances, parallel coordinates |
 
-Con `--per_ticker`, los resultados de cada ticker se guardan además en `by_ticker/<TICKER>/`.
+With `--per_ticker`, per-ticker results are additionally written to `by_ticker/<TICKER>/`.
 
 ---
 
-## Persistencia y continuación de estudios
+## Persistence and resuming
 
-Los trials se acumulan en `runs/optuna_trials/optuna_studies.db`. Si se interrumpe una corrida, se puede retomar con el mismo `--study_name` y los trials anteriores se preservan:
+Trials accumulate in `runs/optuna_trials/optuna_studies.db`. If a run is interrupted, resume it
+with the same `--study_name` and the previous trials are preserved:
 
 ```bash
-# Retomar un estudio interrumpido
 python scripts/optimization/optimize_e1_hyperparameters.py \
   --study_name e1_hyperparameter_optimization \
   --n_trials 20
@@ -184,22 +175,21 @@ python scripts/optimization/optimize_e1_hyperparameters.py \
 
 ---
 
-## Tracking con MLflow
+## MLflow tracking
 
-El tracking usa cascade fallback automático:
+Tracking uses an automatic cascade fallback:
 
-1. Servidor remoto (`MLFLOW_TRACKING_URI` en `.env` o `--mlflow_uri`)
-2. SQLite local (`runs/mlflow_local/mlflow.db`)
+1. Remote server (`MLFLOW_TRACKING_URI` in `.env`, or `--mlflow_uri`)
+2. Local SQLite (`runs/mlflow_local/mlflow.db`)
 3. File store (`mlruns/`)
 
-Para visualizar localmente sin Docker:
+To browse locally without Docker:
 
 ```bash
-mlflow ui --backend-store-uri runs/mlflow_local/mlflow.db
-# UI disponible en http://localhost:5000
+mlflow ui --backend-store-uri runs/mlflow_local/mlflow.db   # → http://localhost:5000
 ```
 
-Para visualizar los estudios de Optuna:
+To browse the Optuna studies:
 
 ```bash
 optuna-dashboard sqlite:///runs/optuna_trials/optuna_studies.db
@@ -207,6 +197,8 @@ optuna-dashboard sqlite:///runs/optuna_trials/optuna_studies.db
 
 ---
 
-## Integración con el pipeline de entrenamiento
+## Feeding results back into training
 
-Los parámetros optimizados se inyectan en el pipeline de entrenamiento a través del YAML generado. El path está registrado en `src/config/base.yaml` bajo `optuna.<estrategia>.tuned_params_path`. El pipeline lo lee automáticamente si el archivo existe, sobreescribiendo los valores del config base.
+Optimized parameters reach the training pipeline through the generated YAML. Its path is
+registered in `src/config/base.yaml` under `optuna.<strategy>.tuned_params_path`; the pipeline
+reads it automatically when the file exists, overriding the base config values.

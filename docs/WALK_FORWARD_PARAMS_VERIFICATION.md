@@ -18,12 +18,12 @@ Los scripts de optimización sugieren valores óptimos para:
 
 ```bash
 # E1
-python scripts/optimize_e1_hyperparameters.py \
+python scripts/optimization/optimize_e1_hyperparameters.py \
   --per_ticker --ticker GGAL.BA --n_trials 50 \
   --output_dir runs/optuna_trials
 
 # E2
-python scripts/optimize_e2_hyperparameters.py \
+python scripts/optimization/optimize_e2_hyperparameters.py \
   --per_ticker --ticker NVDA --n_trials 50 \
   --output_dir runs/optuna_trials
 ```
@@ -31,8 +31,8 @@ python scripts/optimize_e2_hyperparameters.py \
 ### 2. Guardado en YAML
 
 **Ubicación del código:**
-- E1: `scripts/optimize_e1_hyperparameters.py` (líneas 811-829)
-- E2: `scripts/optimize_e2_hyperparameters.py` (líneas 676-683)
+- E1: `scripts/optimization/optimize_e1_hyperparameters.py` (líneas 811-829)
+- E2: `scripts/optimization/optimize_e2_hyperparameters.py` (líneas 676-683)
 
 **Formato del YAML guardado:**
 
@@ -123,7 +123,7 @@ print(f"    ▶ Ejecutando walk-forward ({n_folds} folds, test={test_size})")
 ### Test Realizado
 
 ```bash
-$ python scripts/optimize_e1_hyperparameters.py \
+$ python scripts/optimization/optimize_e1_hyperparameters.py \
     --per_ticker --ticker GGAL.BA --n_trials 3 \
     --output_dir runs/optuna_trials
 ```
@@ -187,12 +187,12 @@ Trial 2:
 
 ```bash
 # 1. Optimizar (genera YAML con parámetros óptimos)
-python scripts/optimize_e1_hyperparameters.py \
+python scripts/optimization/optimize_e1_hyperparameters.py \
   --per_ticker --ticker GGAL.BA --n_trials 100
 
 # 2. Entrenar con parámetros optimizados (carga automática desde YAML)
 export E1_TUNED_PARAMS_PATH=runs/optuna_trials/e1_tuned_params_by_ticker.yaml
-python -m src.train_e1_pipeline --tickers GGAL.BA
+python -m src.e1.train_pipeline --tickers GGAL.BA
 
 # Los logs mostrarán:
 #   ▶ Ejecutando walk-forward (3 folds, ...)
@@ -201,10 +201,10 @@ python -m src.train_e1_pipeline --tickers GGAL.BA
 
 ## Archivos Modificados
 
-1. **scripts/optimize_e1_hyperparameters.py** (líneas 811-829):
+1. **scripts/optimization/optimize_e1_hyperparameters.py** (líneas 811-829):
    - Agregado `n_folds` e `internal_val_fraction` al diccionario guardado
 
-2. **scripts/optimize_e2_hyperparameters.py** (líneas 676-683):
+2. **scripts/optimization/optimize_e2_hyperparameters.py** (líneas 676-683):
    - Agregado fallbacks para `n_folds` (5) e `internal_val_fraction` (0.15)
 
 3. **src/train_e1_pipeline.py** (líneas 70-80):

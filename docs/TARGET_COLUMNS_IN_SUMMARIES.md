@@ -129,7 +129,7 @@ python -m py_compile \
 
 ### Run Pipeline
 ```bash
-python -m src.train_e1_simple_pipeline --tickers NVDA,AAPL
+python -m src.e1.train_simple_pipeline --tickers NVDA,AAPL
 ```
 
 ### Check Summary

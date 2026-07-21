@@ -13,11 +13,11 @@
 #### Modo Local vs Remoto
 - **Local** (default): No requiere Docker, tracking en SQLite
   ```bash
-  python scripts/optimize_e1_hyperparameters.py --n_trials 50
+  python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 50
   ```
 - **Remoto**: Usa servidor MLflow en Docker
   ```bash
-  python scripts/optimize_e1_hyperparameters.py --n_trials 50 --mlflow_uri http://localhost:5050
+  python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 50 --mlflow_uri http://localhost:5050
   ```
 
 #### Manejo Correcto de Runs en MLflow
@@ -149,7 +149,7 @@ rm -rf runs/mlflow_local/*
 git pull origin main
 
 # 3. Ejecutar optimización con nueva configuración
-python scripts/optimize_e1_hyperparameters.py --n_trials 10 --quick
+python scripts/optimization/optimize_e1_hyperparameters.py --n_trials 10 --quick
 
 # 4. Verificar que no hay warnings
 # ✅ No debe aparecer: FutureWarning filesystem

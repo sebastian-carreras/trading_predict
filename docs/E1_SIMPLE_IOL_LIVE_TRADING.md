@@ -16,24 +16,24 @@ IOL_PASSWORD=tu_password_iol
 
 ```bash
 # Entrenar para un ticker argentino (IOL)
-python -m src.train_e1_simple_pipeline --tickers GGAL
+python -m src.e1.train_simple_pipeline --tickers GGAL
 
 # O para ticker US (si tienes modelo entrenado)
-python -m src.train_e1_simple_pipeline --tickers AAPL
+python -m src.e1.train_simple_pipeline --tickers AAPL
 ```
 
 ### 3. Ejecutar Trading en Vivo
 
 ```bash
 # Dry run (simular sin ejecutar)
-python scripts/e1_simple_iol_live_trade.py \
+python scripts/trading/e1_simple_iol_live_trade.py \
   --ticker GGAL \
   --model runs/e1_simple/20260119_120000/GGAL/GGAL_model.pth \
   --quantity 10 \
   --dry-run
 
 # Ejecutar orden real en IOL (ambiente de prueba)
-python scripts/e1_simple_iol_live_trade.py \
+python scripts/trading/e1_simple_iol_live_trade.py \
   --ticker GGAL \
   --model runs/e1_simple/20260119_120000/GGAL/GGAL_model.pth \
   --quantity 10
@@ -162,16 +162,16 @@ El script usa un **decision score simplificado** basado solo en la predicción:
 ### Desarrollo
 ```bash
 # 1. Entrenar modelo con datos históricos
-python -m src.train_e1_simple_pipeline --tickers GGAL
+python -m src.e1.train_simple_pipeline --tickers GGAL
 
 # 2. Probar predicción en vivo (dry run)
-python scripts/e1_simple_iol_live_trade.py \
+python scripts/trading/e1_simple_iol_live_trade.py \
   --ticker GGAL \
   --model runs/e1_simple/latest/GGAL/GGAL_model.pth \
   --dry-run
 
 # 3. Si decision = BUY y score alto, ejecutar orden pequeña
-python scripts/e1_simple_iol_live_trade.py \
+python scripts/trading/e1_simple_iol_live_trade.py \
   --ticker GGAL \
   --model runs/e1_simple/latest/GGAL/GGAL_model.pth \
   --quantity 1
@@ -180,7 +180,7 @@ python scripts/e1_simple_iol_live_trade.py \
 ### Automatización (Cron/Airflow)
 ```bash
 # Ejecutar diariamente a las 10 AM (antes de apertura del mercado)
-0 10 * * 1-5 /path/to/venv/bin/python /path/to/scripts/e1_simple_iol_live_trade.py --ticker GGAL --model /path/to/model.pth --quantity 5
+0 10 * * 1-5 /path/to/venv/bin/python /path/to/scripts/trading/e1_simple_iol_live_trade.py --ticker GGAL --model /path/to/model.pth --quantity 5
 ```
 
 ## 📚 Documentación API IOL
@@ -197,7 +197,7 @@ python scripts/e1_simple_iol_live_trade.py \
 
 ### Error: "Modelo no encontrado"
 - Verificar path al `.pth`
-- Entrenar modelo si no existe: `python -m src.train_e1_simple_pipeline --tickers GGAL`
+- Entrenar modelo si no existe: `python -m src.e1.train_simple_pipeline --tickers GGAL`
 
 ### Error: "Insuficientes datos"
 - El modelo requiere al menos 360 días de historia

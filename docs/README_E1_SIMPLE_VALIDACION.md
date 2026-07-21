@@ -37,7 +37,7 @@ PY
 ## Paso 3: Correr el pipeline (sin descarga/limpieza)
 ```bash
 PYTHONHASHSEED=42 /opt/anaconda3/bin/conda run -p /opt/anaconda3 --no-capture-output \
-  python -m src.train_e1_simple_pipeline \
+  python -m src.e1.train_simple_pipeline \
   --tickers AAPL \
   --config src/config/base.yaml \
   --skip-download \
