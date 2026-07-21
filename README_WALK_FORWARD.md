@@ -1,47 +1,52 @@
-# Walk-Forward Validation - Estrategias E1 y E2
+# Walk-forward validation — strategies E1 and E2
 
-## Objetivo
+## Goal
 
-Validar la **robustez temporal** de las estrategias E1 (GRU Conservadora) y E2 (LSTM Moderada) mediante validación walk-forward, demostrando que los modelos mantienen capacidad predictiva en múltiples ventanas temporales no vistas durante el entrenamiento.
+Validate the **temporal robustness** of E1 (Conservative GRU) and E2 (Moderate LSTM) through
+walk-forward validation, showing that the models keep predictive power across multiple time
+windows never seen during training.
 
-## ¿Qué es Walk-Forward Validation?
+## What is walk-forward validation?
 
-Walk-forward es una técnica de validación específica para series temporales que:
+A validation technique built specifically for time series:
 
-1. **Divide los datos temporalmente** en N folds consecutivos
-2. **Entrena progresivamente**: cada fold usa todos los datos anteriores para entrenamiento
-3. **Valida hacia adelante**: cada fold evalúa en una ventana de test futura
-4. **Respeta causalidad**: nunca usa información del futuro
+1. **Splits data chronologically** into N consecutive folds
+2. **Trains progressively**: each fold trains on all preceding data
+3. **Validates forward**: each fold is evaluated on a future test window
+4. **Respects causality**: never uses information from the future
 
-### Ventajas vs Split Simple (70/15/15)
+### Why not a simple 70/15/15 split
 
-| Aspecto | Split Simple | Walk-Forward |
-|---------|-------------|--------------|
-| **Ventanas de validación** | 1 única ventana (15%) | N ventanas independientes |
-| **Robustez temporal** | No detecta *concept drift*\* | Detecta degradación en el tiempo |
-| **Uso de datos** | Descarta 85% en test | Usa 100% de datos de forma eficiente |
-| **Rigor académico** | Básico | Gold standard para series temporales |
+| Aspect | Simple split | Walk-forward |
+|---|---|---|
+| **Validation windows** | 1 single window (15%) | N independent windows |
+| **Temporal robustness** | Can't detect *concept drift*\* | Detects degradation over time |
+| **Data usage** | Tests on 15% only | Uses the full history efficiently |
+| **Academic rigor** | Basic | Gold standard for time series |
 
-(*) Concept drift: Concept drift es cuando la relación entre tus variables de entrada y la salida que querés predecir cambia con el tiempo, haciendo que el modelo que entrenaste deje de representar bien la realidad y empiece a rendir peor. Imaginá que entrenás un modelo hoy, asumiendo que “el mundo del dataset” va a seguir siendo parecido mañana. Concept drift es justamente cuando el mundo cambia: las reglas que unían X → y ya no son las mismas.
+(\*) **Concept drift** is when the relationship between your input variables and the target
+changes over time, so the model you trained stops representing reality and starts performing
+worse. You train a model today assuming the "world of the dataset" will look similar tomorrow.
+Concept drift is when the world changes: the rules linking X → y are no longer the same.
 
-## ¿Por qué usar Walk-Forward en este proyecto (FIUBA)?
+## Why walk-forward matters here
 
-En este trabajo final, walk-forward aporta valor concreto por el tipo de problema (series financieras) y por el contexto académico (validación sólida, no solo performance puntual):
+For financial series specifically, walk-forward earns its cost:
 
-- **Evaluación temporal realista**: entrena con pasado y evalúa en futuro, respetando causalidad.
-- **Menor riesgo de sobreestimar resultados**: evita depender de una sola ventana de test favorable.
-- **Robustez frente a cambios de régimen**: permite observar estabilidad del modelo en distintos períodos de mercado.
-- **Evidencia más defendible en tesis**: reporta desempeño multi-ventana out-of-sample, no un único split.
-- **Coherencia con objetivos del proyecto**: prioriza decisiones informadas y métricas de riesgo por encima de optimizar solo un caso puntual.
-- **Mejor aprovechamiento del histórico**: cada fold agrega evidencia OOS sin romper el orden temporal.
-- **Criterio común entre estrategias**: facilita comparar E1/E2 bajo una metodología homogénea de validación.
+- **Realistic temporal evaluation** — trains on the past, evaluates on the future, respecting causality.
+- **Less risk of overstating results** — doesn't depend on one favorable test window.
+- **Robustness across regime changes** — shows model stability in different market conditions.
+- **More defensible evidence** — reports multi-window out-of-sample performance, not a single split.
+- **Better use of history** — every fold adds out-of-sample evidence without breaking time order.
+- **A common yardstick** — E1 and E2 are compared under one homogeneous validation methodology.
 
-> Recomendación práctica del proyecto: usar walk-forward para validación/evaluación final, y reservar configuraciones más livianas para iteración rápida durante tuning cuando el costo computacional sea restrictivo.
+> Practical note: use walk-forward for final validation and evaluation; keep lighter
+> configurations for fast iteration during tuning when compute cost is a constraint.
 
-### Esquema Visual
+### Visual scheme
 
 ```
-Walk-Forward con 5 folds (expanding window):
+Walk-forward with 5 folds (expanding window):
 
 Fold 1: [train.............] -> [test1]
 Fold 2: [train..................] -> [test2]
@@ -49,54 +54,54 @@ Fold 3: [train.......................] -> [test3]
 Fold 4: [train................................] -> [test4]
 Fold 5: [train.......................................] -> [test5]
 
-Ventana completa OOS: [test1][test2][test3][test4][test5]
+Full OOS window: [test1][test2][test3][test4][test5]
 ```
 
-## Configuración
+## Configuration
 
-### En `src/config/base.yaml`
+### In `src/config/base.yaml`
 
 ```yaml
 splits:
-  method: "walk_forward"  # Activa walk-forward (vs "time_split")
-  folds: 5                # Número de ventanas de validación
+  method: "walk_forward"  # enables walk-forward (vs "time_split")
+  folds: 5                # number of validation windows
 
-  # Embargo para evitar leakage temporal
+  # Embargo, to prevent temporal leakage
   embargo_days:
-    e1: 90   # Gap entre train y test (= horizon_days E1)
-    e2: 20   # Gap entre train y test (= horizon_days E2)
-    e3: 6    # horizon_bars=6; en barras (5-min), no en días — mismo principio que E1/E2
+    e1: 90   # gap between train and test (= horizon_days for E1)
+    e2: 20   # gap between train and test (= horizon_days for E2)
+    e3: 6    # horizon_bars=6; in 5-min bars, not days — same principle as E1/E2
 ```
 
-### Parámetros Clave
+### Key parameters
 
-- **`folds`**: Número de ventanas de test (5 por defecto)
-  - Más folds = más granularidad temporal, pero menor tamaño de test por fold
-  - Recomendado: 5-10 para series largas (>1000 muestras)
+- **`folds`** — number of test windows (default 5).
+  More folds means finer temporal granularity but a smaller test set per fold. 5–10 is
+  reasonable for long series (>1000 samples).
 
-- **`embargo_days.e1`**: Gap temporal entre train y test
-  - **CRÍTICO**: debe ser ≥ `horizon_days` (90 para E1)
-  - Evita contaminar train con información que "mira hacia el futuro"
-  - Sin embargo: al predecir retorno a 90 días en t, ya conoceríamos el target en train+validation
+- **`embargo_days.e1`** — temporal gap between train and test.
+  **Critical: must be ≥ `horizon_days`** (90 for E1). Without it, predicting a 90-day forward
+  return at time *t* means the target is already known inside the training window — textbook
+  leakage.
 
-- **`test_size`**: Tamaño de cada ventana de test
-  - Por defecto: `n_samples / (folds + 1)` = distribución uniforme
-  - Puede ajustarse manualmente en config con clave `splits.test_size`
+- **`test_size`** — size of each test window.
+  Defaults to `n_samples / (folds + 1)`, an even distribution. Override with `splits.test_size`.
 
-## 🚀 Ejecución
+## Running it
 
-### Opción 1: Ejecutar con Walk-Forward (Modo Recomendado)
+Make sure `splits.method = "walk_forward"` in `base.yaml`, then:
 
-**E1 (Conservadora - GRU):**
 ```bash
-# Asegurar que splits.method = "walk_forward" en base.yaml
-python -m src.e1.train_pipeline --tickers AAPL
+python -m src.e1.train_pipeline --tickers AAPL   # E1 — Conservative, GRU
+python -m src.e2.train_pipeline --tickers NVDA   # E2 — Moderate, LSTM
+python -m src.e3.train_pipeline --tickers AAPL   # E3 — Intraday, LSTM ensemble (5-min bars)
 ```
 
-**Output esperado:**
+Expected output shape:
+
 ```
-✓ Usando datos limpios: AAPL_daily.csv
-▶ Ejecutando walk-forward (5 folds, test=auto)
+✓ Using clean data: AAPL_daily.csv
+▶ Running walk-forward (5 folds, test=auto)
   Fold 1: 2018-11-19 -> 2020-03-27 | MAE=0.1372 IC=0.319 Sharpe=0.61
   Fold 2: 2020-03-30 -> 2021-08-03 | MAE=0.2355 IC=0.766 Sharpe=2.49
   Fold 3: 2021-08-04 -> 2022-12-07 | MAE=0.2646 IC=0.108 Sharpe=-0.08
@@ -105,178 +110,108 @@ python -m src.e1.train_pipeline --tickers AAPL
 ✓ AAPL: MAE=0.1727 IC=-0.254
 ```
 
-**E2 (Moderada - LSTM):**
-```bash
-# Asegurar que splits.method = "walk_forward" en base.yaml
-python -m src.e2.train_pipeline --tickers NVDA
-```
+## Generated files
 
-**Output esperado:**
-```
-✓ Procesando NVDA (E2 - Moderada)
-▶ Ejecutando walk-forward (5 folds, test=auto)
-  Fold 1: 2019-01-15 -> 2020-05-22 | MAE=0.0934 IC=0.512 Sharpe=1.23
-  Fold 2: 2020-05-25 -> 2021-10-01 | MAE=0.1245 IC=0.687 Sharpe=2.71
-  Fold 3: 2021-10-04 -> 2023-02-08 | MAE=0.1678 IC=0.234 Sharpe=0.45
-  Fold 4: 2023-02-09 -> 2024-06-17 | MAE=0.1123 IC=0.598 Sharpe=1.89
-  Fold 5: 2024-06-18 -> 2025-10-25 | MAE=0.0987 IC=0.445 Sharpe=1.12
-✓ NVDA: MAE=0.1193 IC=0.495
-```
-
-**E3 (Intraday - LSTM Ensemble, datos 5-min):**
-```bash
-# Asegurar que splits.method = "walk_forward" en base.yaml
-python -m src.e3.train_pipeline --tickers AAPL
-```
-
-## 📁 Archivos Generados
-
-Cada ejecución walk-forward genera (en `runs/<estrategia>/<timestamp>/<ticker>/`):
-
-**E1:** `runs/e1_conservative/<timestamp>/<ticker>/`
-**E2:** `runs/e2_moderate/<timestamp>/<ticker>/`
+Each walk-forward run writes to `runs/<strategy>/<timestamp>/<ticker>/` — `runs/e1_conservative/…`
+for E1, `runs/e2_moderate/…` for E2.
 
 ### 1. `<ticker>_walkforward_folds.csv`
+Per-fold metrics.
 
-Métricas por fold individual:
+| fold | window | ml_mae | ml_ic | bt_sharpe | bt_calmar | bt_profit_factor | … |
+|---|---|---|---|---|---|---|---|
+| 1 | 2018-11-19 -> 2020-03-27 | 0.137 | 0.319 | 0.61 | 1.07 | 1.23 | … |
+| 2 | 2020-03-30 -> 2021-08-03 | 0.236 | 0.766 | 2.49 | 9.16 | 2.87 | … |
 
-| fold | window | ml_mae | ml_ic | bt_sharpe | bt_calmar | bt_profit_factor | ... |
-|------|--------|--------|-------|-----------|-----------|------------------|-----|
-| 1 | 2018-11-19 -> 2020-03-27 | 0.137 | 0.319 | 0.61 | 1.07 | 1.23 | ... |
-| 2 | 2020-03-30 -> 2021-08-03 | 0.236 | 0.766 | 2.49 | 9.16 | 2.87 | ... |
-| ... | ... | ... | ... | ... | ... | ... | ... |
-
-**Columnas clave:**
-- `test_start`, `test_end`: ventana temporal de cada fold
-- `n_train`, `n_val`, `n_test`: tamaños de splits
-- `ml_*`: métricas de machine learning (MAE, IC, directional accuracy)
-- `bt_*`: métricas de trading (Sharpe, Calmar, max drawdown, profit factor)
+Key columns: `test_start` / `test_end` (the fold's window), `n_train` / `n_val` / `n_test`
+(split sizes), `ml_*` (machine-learning metrics — MAE, IC, directional accuracy), `bt_*`
+(trading metrics — Sharpe, Calmar, max drawdown, profit factor).
 
 ### 2. `<ticker>_walkforward_predictions.csv`
-
-Predicciones combinadas de todos los folds:
-
-| timestamp | fold | y_true | y_pred |
-|-----------|------|--------|--------|
-| 2018-11-19 | 1 | 0.123 | 0.087 |
-| 2020-03-30 | 2 | -0.045 | 0.012 |
-| ... | ... | ... | ... |
+Predictions from all folds, concatenated: `timestamp`, `fold`, `y_true`, `y_pred`.
 
 ### 3. `<ticker>_walkforward_backtest.csv`
-
-Backtest completo (concatenación de todos los folds):
-
-| timestamp | pos | signal | gross_ret | costs | net_ret | equity | turnover |
-|-----------|-----|--------|-----------|-------|---------|--------|----------|
-| 2018-11-19 | 1.0 | 1.0 | 0.0023 | 0.0005 | 0.0018 | 100180 | 1.0 |
-| ... | ... | ... | ... | ... | ... | ... | ... |
+Full backtest across all folds: `timestamp`, `pos`, `signal`, `gross_ret`, `costs`, `net_ret`,
+`equity`, `turnover`.
 
 ### 4. `<ticker>_walkforward_metrics.png`
-
-Gráfico de IC y Sharpe por fold:
-
-![Walk-Forward Metrics Example](docs/walkforward_example.png)
-
-- **Panel superior**: IC (Information Coefficient) por ventana
-- **Panel inferior**: Sharpe ratio por ventana
-- **Eje X**: etiquetas de ventanas temporales
+IC and Sharpe per fold — IC on the top panel, Sharpe on the bottom, time windows on the x-axis.
 
 ### 5. `<ticker>_fold<N>_backtest.csv`
-
-Backtest detallado de cada fold individual (5 archivos):
-- `AAPL_fold1_backtest.csv`
-- `AAPL_fold2_backtest.csv`
-- ...
-
-Útil para debugging de performance en ventanas específicas.
+Detailed backtest for each individual fold (one file per fold). Useful for debugging performance
+in a specific window.
 
 ### 6. `summary_all.csv`
-
-Resumen agregado con métricas combinadas:
+Aggregate summary:
 
 ```csv
 ticker,n_samples,n_test,folds,ml_mae,ml_ic,bt_sharpe,bt_calmar,...
 AAPL,2045,1700,5,0.173,-0.254,0.635,0.581,...
 ```
 
-**Métricas agregadas:**
-- `ml_ic`: IC calculado sobre predicciones concatenadas de todos los folds
-- `bt_sharpe`: Sharpe del backtest completo (all folds combined)
+Here `ml_ic` is computed over the concatenated predictions from all folds, and `bt_sharpe` is the
+Sharpe of the combined backtest.
 
-## Interpretación de Resultados
+## Reading the results
 
-### Métricas ML
+### ML metrics
 
-**Information Coefficient (IC):**
-- **IC > 0.05**: Capacidad predictiva positiva (umbral mínimo)
-- **IC > 0.10**: Buena capacidad predictiva
-- **IC < 0**: Señal de overfitting o modelo sin capacidad predictiva
+**Information Coefficient (IC)** — `> 0.05` is the minimum bar for positive predictive power;
+`> 0.10` is good; `< 0` signals overfitting or no predictive ability.
 
-**Directional Accuracy:**
-- **> 50%**: Modelo predice correctamente la dirección del movimiento
-- **< 50%**: Modelo peor que random guess (preocupante)
+**Directional accuracy** — above 50% means the model gets the direction right more often than
+not. Below 50% is worse than a coin flip and worth investigating.
 
-### Métricas de Trading
+### Trading metrics
 
-**Sharpe Ratio:**
-- **> 1.0**: Excelente estrategia risk-adjusted
-- **0.5 - 1.0**: Buena estrategia
-- **< 0.0**: Estrategia no rentable
+**Sharpe ratio** — `> 1.0` excellent risk-adjusted; `0.5–1.0` good; `< 0` not profitable.
 
-**Calmar Ratio:**
-- Retorno anualizado / Max Drawdown
-- **> 1.0**: Estrategia con buen control de riesgo
+**Calmar ratio** — annualized return over max drawdown; `> 1.0` indicates good risk control.
 
-**Profit Factor:**
-- Ganancias brutas / Pérdidas brutas
-- **> 1.5**: Estrategia robusta
-- **1.0 - 1.5**: Aceptable
-- **< 1.0**: Estrategia perdedora
+**Profit factor** — gross profits over gross losses; `> 1.5` robust, `1.0–1.5` acceptable,
+`< 1.0` losing.
 
-### Ejemplo de Análisis
+### Worked example
 
 ```
-Fold 1: IC=0.319, Sharpe=0.61  → Modelo funciona, pero Sharpe moderado
-Fold 2: IC=0.766, Sharpe=2.49  → Excelente performance (bull market 2020)
-Fold 3: IC=0.108, Sharpe=-0.08 → Concept drift (bear market 2022)
-Fold 4: IC=0.692, Sharpe=0.59  → Modelo recupera capacidad predictiva
-Fold 5: IC=0.274, Sharpe=0.79  → Performance estable
+Fold 1: IC=0.319, Sharpe=0.61  → model works, moderate Sharpe
+Fold 2: IC=0.766, Sharpe=2.49  → excellent (2020 bull market)
+Fold 3: IC=0.108, Sharpe=-0.08 → concept drift (2022 bear market)
+Fold 4: IC=0.692, Sharpe=0.59  → predictive power recovers
+Fold 5: IC=0.274, Sharpe=0.79  → stable
 
-Agregado: IC=-0.254, Sharpe=0.635
+Aggregate: IC=-0.254, Sharpe=0.635
 ```
 
-**Interpretación:**
-- Modelo muestra capacidad predictiva en 4/5 folds (IC > 0.1)
-- ⚠  Fold 3 (2021-2022): degradación severa (bear market)
-- ⚠  IC agregado negativo sugiere que el modelo podría beneficiarse de:
-  - Retraining periódico (drift detection)
-  - Features adicionales para capturar regímenes de mercado
-  - Ensemble de modelos para mayor robustez
+The model shows predictive power in 4 of 5 folds, with a severe degradation in fold 3 (the
+2021–2022 bear market).
 
-## 🔍 Diferencias Técnicas Walk-Forward vs Split Simple
+Note the aggregate IC is **negative** while every individual fold is positive — that is not a
+contradiction, it's Simpson's paradox showing up in the concatenation. Each fold ranks well
+internally, but the folds sit at different return levels, so pooling them and ranking across the
+whole series destroys the signal. It argues for periodic retraining and drift detection, features
+that capture market regime, and treating per-fold IC as the honest number rather than the pooled one.
 
-### Split Simple (`time_split`)
+## Walk-forward vs. simple split, technically
+
+### Simple split (`time_split`)
 
 ```python
-# En src/e1/train_pipeline.py (sin walk-forward)
 idx_train, idx_val, idx_test = time_split(len(X))  # 70/15/15
 X_train, y_train = X[idx_train], y[idx_train]
 X_test, y_test = X[idx_test], y[idx_test]
 
-# Entrenar 1 modelo
 model.fit(X_train, y_train, X_val, y_val)
 y_pred = model.predict(X_test)
 
-# 1 métrica IC en test único
 ic = np.corrcoef(y_test, y_pred)[0, 1]
 ```
 
-**Output:** 1 valor de IC, 1 backtest
+Output: one IC value, one backtest.
 
-### Walk-Forward (`walk_forward`)
+### Walk-forward (`walk_forward`)
 
 ```python
-# En src/e1/train_pipeline.py (con walk-forward)
 from sklearn.model_selection import TimeSeriesSplit
 
 splitter = TimeSeriesSplit(n_splits=5, test_size=340, gap=90)
@@ -284,103 +219,75 @@ splitter = TimeSeriesSplit(n_splits=5, test_size=340, gap=90)
 for fold, (train_idx, test_idx) in enumerate(splitter.split(X)):
     X_train, X_test = X[train_idx], X[test_idx]
 
-    # Entrenar modelo específico para este fold
-    model = GRURegressor(...)
+    model = GRURegressor(...)          # a fresh model per fold
     model.fit(X_train, y_train, X_val, y_val)
 
-    # Predecir en test fold
     y_pred = model.predict(X_test)
 
-    # Métricas por fold
     ic_fold = np.corrcoef(y_test, y_pred)[0, 1]
     sharpe_fold = compute_sharpe(backtest(y_pred))
 
     print(f"Fold {fold}: IC={ic_fold:.3f} Sharpe={sharpe_fold:.2f}")
 
-# Métricas agregadas (concatenando todos los folds)
 ic_combined = compute_ic(all_y_true, all_y_pred)
 ```
 
-**Output:** N valores de IC (1 por fold) + 1 IC agregado
+Output: N per-fold IC values plus one aggregate.
 
-## Justificación Académica
+## Why this is the standard
 
-Walk-forward validation es **gold standard** en investigación de trading porque:
+Walk-forward validation is the gold standard in trading research because it **replicates real
+production** (models retrain on a growing history), **detects concept drift** (it shows when a
+model stops working), **prevents cherry-picking** (you can't select the most favorable test
+window), and **maximizes data usage** (validating across the whole series instead of a single 15%
+slice).
 
-1. **Replica producción real**: modelos se reentrenan con datos históricos crecientes
-2. **Detecta concept drift**: identifica cuándo el modelo deja de funcionar
-3. **Evita cherry-picking**: no permite seleccionar "la mejor ventana de test"
-4. **Maximiza uso de datos**: valida en 100% de muestras (vs 15% en split simple)
+### References
 
-### Referencias
+- **López de Prado, M. (2018).** *Advances in Financial Machine Learning*. Wiley. Ch. 7,
+  "Cross-Validation in Finance".
+- **Aronson, D. (2006).** *Evidence-Based Technical Analysis*. Wiley. Ch. 9, "Walk-Forward Analysis".
 
-- **Prado, M. L. (2018).** *Advances in Financial Machine Learning*. Wiley. Cap. 7: "Cross-Validation in Finance"
-- **Aronson, D. (2006).** *Evidence-Based Technical Analysis*. Wiley. Cap. 9: "Walk-Forward Analysis"
+## Troubleshooting
 
-## 🛠 Troubleshooting
+**`No samples available for walk-forward`** — the dataset is too small after dropping NaNs and
+applying the lookback. Reduce the per-fold test size:
 
-### Error: "No hay muestras disponibles para walk-forward"
-
-**Causa:** Dataset muy pequeño después de eliminar NaNs y aplicar lookback.
-
-**Solución:**```yaml
-# Reducir tamaño de test por fold
+```yaml
 splits:
-  test_size: 100  # En lugar de test_size automático
+  test_size: 100   # instead of the automatic size
 ```
 
-### Warning: "IC=nan en fold X"
+**`IC=nan in fold X`** — all predictions or all targets are constant in that fold (std = 0).
+Check that the fold has enough variability in returns; it can also indicate poor data quality in
+that window.
 
-**Causa:** Todas las predicciones o targets son constantes en ese fold (std = 0).
+**`test_size <= gap_samples`** — the test window is smaller than the embargo. Either raise
+`test_size` or lower the embargo, the latter carefully — the embargo is what prevents leakage:
 
-**Solución:**
-- Verificar que el fold tenga suficiente variabilidad en retornos
-- Puede ser señal de datos de mala calidad en esa ventana
-
-### Error: "test_size <= gap_samples"
-
-**Causa:** El tamaño de test es menor o igual que el embargo (gap).
-
-**Solución:**```yaml
+```yaml
 splits:
-  test_size: 200  # Aumentar manualmente
+  test_size: 200
   embargo_days:
-    e1: 60  # O reducir embargo (con precaución!)
+    e1: 60   # only with good reason
 ```
 
-## Próximos Pasos
+## Differences by strategy
 
-1. **Optimizar hiperparámetros** (disponible para E2):
-   - Buscar `tau_buy`, `tau_sell` y arquitectura óptimos vía Optuna
-   - Ver `scripts/optimization/optimize_e2_hyperparameters.py`
+| Aspect | E1 (GRU Conservative) | E2 (LSTM Moderate) | E3 (LSTM Intraday) |
+|---|---|---|---|
+| **Horizon** | 90 days | 20 days | 30 min (6 × 5-min bars) |
+| **Embargo** | 90 days (= horizon) | 20 days (= horizon) | 6 bars (= horizon_bars) |
+| **Model** | GRU, 2 layers, 64–32 units | LSTM, 2 layers, 128–64 units | LSTM ensemble, 3 members |
+| **Objective** | Information Coefficient | Sharpe + profit factor + CAGR | Sharpe + profit factor |
+| **Filters** | none | optional `rsi14_min/max` | none |
+| **Complexity** | ~70K parameters | ~100K parameters | 3× the base model |
+| **Speed** | ~15–20% faster | slower but more expressive | slowest (ensemble + 5-min data) |
 
-2. **Detección de drift**:
-   - Implementar monitoreo de IC por ventana deslizante
-   - Retraining automático cuando IC < threshold
-
-3. **Portfolio optimization**:
-   - Aplicar walk-forward a múltiples tickers simultáneamente
-   - Optimizar pesos de portfolio maximizando Sharpe global
-
-## Diferencias por Estrategia en Walk-Forward
-
-| Aspecto | E1 (GRU Conservadora) | E2 (LSTM Moderada) | E3 (LSTM Intraday) |
-|---------|----------------------|-------------------|-------------------|
-| **Horizon** | 90 días | 20 días | 30-min (6 barras × 5-min) |
-| **Embargo** | 90 días (= horizon) | 20 días (= horizon) | 6 barras (= horizon_bars) |
-| **Modelo** | GRU (2 capas, 64-32 unidades) | LSTM (2 capas, 128-64 unidades) | LSTM Ensemble (3 miembros) |
-| **Objetivo** | Information Coefficient | Sharpe + Profit Factor + CAGR | Sharpe + Profit Factor |
-| **Filtros** | No tiene RSI filters | rsi14_min/max opcionales | No tiene |
-| **Complejidad** | Menos parámetros (~70K) | Más parámetros (~100K) | 3× modelo base |
-| **Velocidad** | ~15-20% más rápida | Más lenta pero más expresiva | Más lenta (ensemble + datos 5-min) |
-
-**Recomendación de uso:**
-- **E1**: Para estrategias de largo plazo, mayor estabilidad temporal
-- **E2**: Para estrategias tácticas, mayor capacidad de capturar patrones complejos
-- **E3**: Para trading intraday, requiere datos de barras 5-min
+**When to use which:** E1 for long-horizon strategies where temporal stability matters; E2 for
+tactical strategies that need to capture more complex patterns; E3 for intraday, which requires
+5-minute bar data.
 
 ---
 
-**Documentado:** 2026-05-01 (actualizado con E3)
-**Autor:** Sebastian Carreras
-**Proyecto:** Trading Predict - FIUBA IA CEIA 18co
+*Trading Predict — AI Specialization, FIUBA (CEIA 18co). Last updated 2026-07-21.*

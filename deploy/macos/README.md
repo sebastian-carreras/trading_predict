@@ -1,63 +1,62 @@
 # macOS deploy — LaunchAgents
 
-Automatización local (macOS `launchd`) que deja la Mac lista cada mañana para
-que los DAGs de retrain de `trading_predict` corran sin intervención:
+Local automation (macOS `launchd`) that gets the Mac ready each morning so the `trading_predict`
+retraining DAGs run without intervention:
 
-| Archivo | Qué hace | Hora local |
+| File | What it does | Local time |
 |---|---|---|
-| `ensure-docker-up.sh` | Abre Docker Desktop (si hace falta), espera al daemon y levanta el stack `docker compose --profile all up -d`. Idempotente. | — |
-| `com.trading.ensure-docker.plist` | Dispara el script de arriba. | 04:51 |
-| `com.trading.morning-caffeinate.plist` | Mantiene la Mac despierta 90 min (`caffeinate`) para cubrir retrain + `daily_report`. | 04:52 |
+| `ensure-docker-up.sh` | Opens Docker Desktop if needed, waits for the daemon, and brings up the stack with `docker compose --profile all up -d`. Idempotent. | — |
+| `com.trading.ensure-docker.plist` | Triggers the script above. | 04:51 |
+| `com.trading.morning-caffeinate.plist` | Keeps the Mac awake for 90 minutes (`caffeinate`) to cover retraining plus `daily_report`. | 04:52 |
 
-Estos disparos van 1–2 min después del wake programado con `pmset` (04:50), de
-modo que la máquina ya esté despierta cuando arrancan.
+Both fire 1–2 minutes after the scheduled `pmset` wake (04:50), so the machine is already awake
+when they start.
 
-## Requisitos previos
+## Prerequisites
 
-- **Docker Desktop** instalado.
-- **Wake programado** con `pmset` para que la Mac despierte antes de los agentes:
+- **Docker Desktop** installed.
+- A **scheduled wake** via `pmset`, so the Mac is up before the agents fire:
   ```bash
   sudo pmset repeat wake MTWRFSU 04:50:00
   ```
 
-## Instalación
+## Installation
 
-1. Copiar el script a una ruta local estable (fuera de iCloud) y hacerlo ejecutable:
+1. Copy the script to a stable local path (outside iCloud) and make it executable:
    ```bash
    sudo cp ensure-docker-up.sh /usr/local/bin/ensure-docker-up.sh
    sudo chmod +x /usr/local/bin/ensure-docker-up.sh
    ```
 
-   El script **requiere** la variable `TRADING_PREDICT_DIR` (falla si no está).
-   Como `launchd` corre con un entorno mínimo, se define dentro del `.plist` de
-   `ensure-docker`, que ya trae la clave con un placeholder — reemplazá el valor
-   por tu ruta real antes de copiarlo:
+   The script **requires** the `TRADING_PREDICT_DIR` variable and fails without it. Since
+   `launchd` runs with a minimal environment, it's defined inside the `ensure-docker` `.plist`,
+   which ships with a placeholder — replace the value with your real path before copying:
    ```xml
    <key>EnvironmentVariables</key>
    <dict>
        <key>TRADING_PREDICT_DIR</key>
-       <string>/ruta/a/tu/trading_predict</string>
+       <string>/path/to/your/trading_predict</string>
    </dict>
    ```
 
-2. Copiar los plists a `~/Library/LaunchAgents/` y cargarlos:
+2. Copy the plists to `~/Library/LaunchAgents/` and load them:
    ```bash
-   cp com.trading.ensure-docker.plist    ~/Library/LaunchAgents/
+   cp com.trading.ensure-docker.plist      ~/Library/LaunchAgents/
    cp com.trading.morning-caffeinate.plist ~/Library/LaunchAgents/
 
    launchctl load ~/Library/LaunchAgents/com.trading.ensure-docker.plist
    launchctl load ~/Library/LaunchAgents/com.trading.morning-caffeinate.plist
    ```
 
-## Verificar
+## Verifying
 
 ```bash
-launchctl list | grep com.trading                 # deben aparecer los dos labels
-launchctl start com.trading.ensure-docker          # disparo manual de prueba
-tail -f /tmp/ensure-docker-up.log                  # seguir el log del script
+launchctl list | grep com.trading          # both labels should appear
+launchctl start com.trading.ensure-docker  # manual test trigger
+tail -f /tmp/ensure-docker-up.log          # follow the script log
 ```
 
-## Desinstalar
+## Uninstalling
 
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.trading.ensure-docker.plist
@@ -67,8 +66,8 @@ rm ~/Library/LaunchAgents/com.trading.morning-caffeinate.plist
 sudo rm /usr/local/bin/ensure-docker-up.sh
 ```
 
-## Notas
+## Notes
 
-- Los logs van a `/tmp/ensure-docker-up.log` y `/tmp/morning-caffeinate.log`
-  (se limpian en cada reinicio; suficiente para diagnóstico del día).
-- `caffeinate -s` solo evita el system sleep con el cargador conectado.
+- Logs go to `/tmp/ensure-docker-up.log` and `/tmp/morning-caffeinate.log`. They're cleared on
+  every reboot, which is enough for same-day diagnosis.
+- `caffeinate -s` only prevents system sleep while the charger is connected.

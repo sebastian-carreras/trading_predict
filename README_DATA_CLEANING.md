@@ -1,214 +1,178 @@
-# Limpieza y Validación de Datos
+# Data cleaning and validation
 
-Sistema de limpieza automática de datos OHLCV para detectar y corregir problemas de calidad antes del entrenamiento.
-
----
-
-## **¿Por qué es necesario?**
-
-Los datos descargados de yfinance/IOL pueden tener:
-- **Valores nulos** (fechas sin datos, APIs fallidas)
-- **Timestamps duplicados** (errores de API)
-- **Volumen = 0** (días sin trading, datos incorrectos)
-- **Gaps temporales** (datos faltantes por períodos prolongados)
-
-**Sin limpieza**, estos problemas causan:
-- Errores en cálculo de features (NaN propagation)
-- Modelos entrenados con datos incorrectos
-- IC negativo por datos contaminados
+Automated OHLCV cleaning that detects and fixes data-quality problems before training.
 
 ---
 
-## **Fuentes de Datos**
+## Why this exists
 
-### **Datos Diarios (E1/E2)**
+Data downloaded from yfinance or IOL routinely contains **null values** (missing dates, failed
+API calls), **duplicate timestamps** (API errors), **zero volume** (non-trading days or bad
+records), and **temporal gaps** (long stretches of missing data).
 
-| Fuente | Cobertura | Uso |
-|--------|-----------|-----|
-| **yfinance** | Todos los tickers | Fuente primaria para USA tickers |
-| **IOL API** | Activos argentinos (`.BA`, `AL*`, `GD*`, `AE*`) | Fuente primaria para Arg tickers |
-
-### **Datos Intraday (E3)**
-
-| Fuente | Cobertura | Frecuencia |
-|--------|-----------|------------|
-| **Alpaca Markets** | Acciones US (AAPL, NVDA, SPY, etc.) | Barras de 5 min |
-| **yfinance** | Fallback cuando Alpaca no disponible | Barras de 5 min |
+Left uncleaned, those propagate: NaNs spread through feature computation, models train on corrupt
+inputs, and the Information Coefficient goes negative for reasons that have nothing to do with
+the model. Cleaning the data moved IC from **−0.124 to +0.232** on the affected tickers — a
+larger improvement than any architecture change made in this project.
 
 ---
 
-## **Sistema de Diagnóstico**
+## Data sources
 
-Detecta automáticamente:
+### Daily data (E1 / E2)
 
-### **1. Valores Nulos**
+| Source | Coverage | Role |
+|---|---|---|
+| **yfinance** | All tickers | Primary source for US tickers |
+| **IOL API** | Argentine assets (`.BA`, `AL*`, `GD*`, `AE*`) | Primary source for Argentine tickers |
+
+### Intraday data (E3)
+
+| Source | Coverage | Frequency |
+|---|---|---|
+| **Alpaca Markets** | US equities (AAPL, NVDA, SPY, …) | 5-minute bars |
+| **yfinance** | Fallback when Alpaca is unavailable | 5-minute bars |
+
+---
+
+## Diagnostics
+
+The cleaner detects four problem classes and reports each per ticker:
+
+**Null values**
 ```
 Ticker: AAPL
-  ⚠  Nulos detectados en: volume, adj_close
+  ⚠  Nulls detected in: volume, adj_close
      - volume: 12 (0.5%)
      - adj_close: 3 (0.1%)
 ```
 
-### **2. Timestamps Duplicados**
-```
-  ⚠  5 timestamps duplicados
-```
+**Duplicate timestamps** — `⚠  5 duplicate timestamps`
 
-### **3. Volumen Cero**
-```
-  ⚠  18 días con volumen=0
-```
+**Zero volume** — `⚠  18 days with volume=0`
 
-### **4. Gaps Temporales**
+**Temporal gaps**
 ```
-  ⚠  2 gaps grandes en serie temporal (>4 días)
-     - 2020-03-15: gap de 7 días
-     - 2023-11-23: gap de 5 días
+  ⚠  2 large gaps in the time series (>4 days)
+     - 2020-03-15: 7-day gap
+     - 2023-11-23: 5-day gap
 ```
 
 ---
 
-## **Estrategias de Limpieza**
+## Cleaning strategies
 
-### **1. Forward Fill (Recomendado) - `forward_fill`**
-```python
-strategy="forward_fill"
-```
+### 1. Forward fill (default) — `forward_fill`
 
-**Qué hace:**
-- Propaga el último valor válido hacia adelante
-- Si hay nulos al inicio (no hay valor previo), usa backward fill
-- **Conservador**: no inventa datos, usa últimos valores conocidos
+Propagates the last valid value forward; if nulls appear at the start with no prior value, it
+falls back to a backward fill. Conservative: it never invents data, it reuses the last known value.
 
-**Cuándo usar:**
-- Siempre (estrategia por defecto)
-- Ideal para precios (close, high, low) → precio se mantiene hasta nuevo tick
-- Volumen → si no hay datos, asume volumen del día anterior
+Use it always, unless you have a specific reason not to. It matches how prices actually behave —
+a price holds until the next tick — and for volume it assumes the previous day's level.
 
-**Ejemplo:**
 ```
 close:  [100, 105, NaN, NaN, 110]
         ↓
 clean:  [100, 105, 105, 105, 110]
 ```
 
----
+### 2. Linear interpolation — `interpolate`
 
-### **2. Interpolación Lineal - `interpolate`**
-```python
-strategy="interpolate"
-```
+Interpolates linearly between known values. Smoother than forward fill.
 
-**Qué hace:**
-- Interpola linealmente entre valores conocidos
-- Más "suave" que forward fill
+Reasonable for small gaps (1–2 days) and continuous non-price features. **Be careful with
+prices:** interpolation invents values that never traded, which is a subtle form of lying to your
+backtest.
 
-**Cuándo usar:**
-- Gaps pequeños (1-2 días)
-- Features continuas (no precios)
-- **Cuidado**: puede introducir valores irreales (ej. precio interpolado que nunca existió)
-
-**Ejemplo:**
 ```
 close:  [100, NaN, NaN, 110]
         ↓
 clean:  [100, 103.3, 106.6, 110]
 ```
 
----
+### 3. Drop rows — `drop`
 
-### **3. Eliminar Filas - `drop`**
-```python
-strategy="drop"
-```
+Removes any row containing at least one null.
 
-**Qué hace:**
-- Elimina cualquier fila con al menos un nulo
+**Never use this for time series.** It breaks temporal continuity, which silently corrupts every
+window-based feature and every walk-forward split downstream. Only defensible if you have a large
+surplus of history and can afford to lose days.
 
-**Cuándo usar:**
-- **NUNCA para series temporales** (pierdes continuidad temporal)
-- Solo si tienes exceso de datos (>10 años) y puedes perder días
-
-**Ejemplo:**
 ```
 df:     [100, 105, NaN, 110, 115]
         ↓
-clean:  [100, 105, 110, 115]  # Se pierde el día con NaN
+clean:  [100, 105, 110, 115]   # the NaN day is gone, and so is the time continuity
 ```
 
 ---
 
-## **Uso**
+## Usage
 
-### **Descarga de datos**
+### Downloading
+
 ```bash
-# Descarga diaria (yfinance + IOL fallback)
-python -m src.data.download_daily
-
-# Forzar re-descarga completa
-python -m src.data.download_daily --force
+python -m src.data.download_daily            # daily (yfinance + IOL fallback)
+python -m src.data.download_daily --force    # force a full re-download
 ```
 
-### **Limpieza de datos**
+### Cleaning
+
 ```bash
-# Ver qué problemas hay en los datos (forward fill por defecto)
-python scripts/data/run_data_cleaning.py
-
-# Usar interpolación en vez de forward fill
-python scripts/data/run_data_cleaning.py --interpolate
-
-# Eliminar filas con nulos (no recomendado)
-python scripts/data/run_data_cleaning.py --drop
+python scripts/data/run_data_cleaning.py                # diagnose + forward fill (default)
+python scripts/data/run_data_cleaning.py --interpolate  # use interpolation instead
+python scripts/data/run_data_cleaning.py --drop         # drop null rows (not recommended)
 ```
 
-**Output:**
+Output:
+
 ```
 ================================================================================
-LIMPIEZA DE DATOS - Estrategia: FORWARD_FILL
+DATA CLEANING — strategy: FORWARD_FILL
 ================================================================================
 
  AAPL
-  ✓ Sin valores nulos detectados
-  ✓ Guardado: AAPL_daily.csv (2515 días)
+  ✓ No nulls detected
+  ✓ Saved: AAPL_daily.csv (2515 days)
 
  YPFD.BA
-  ⚠  Nulos detectados en: volume
+  ⚠  Nulls detected in: volume
      - volume: 5 (0.2%)
-  🔧 volume: 5 nulos (0.2%) → ✓ Forward fill
-  ✓ Guardado: YPFD.BA_daily.csv (1980 días)
+  🔧 volume: 5 nulls (0.2%) → ✓ forward fill
+  ✓ Saved: YPFD.BA_daily.csv (1980 days)
 
 ================================================================================
-RESUMEN DE LIMPIEZA
+CLEANING SUMMARY
 ================================================================================
-Total tickers procesados: 101
-  ✓ Limpiados: 99
-   Rechazados: 2
+Total tickers processed: 101
+  ✓ Cleaned:  99
+    Rejected: 2
 
-📄 Reporte de calidad guardado en: data/clean/data_quality_report.json
+📄 Quality report saved to: data/clean/data_quality_report.json
 ```
 
 ---
 
-## **Estructura de Archivos**
+## File layout
+
 ```
 data/
 ├── raw/
-│   ├── daily/                   # ~105 CSVs OHLCV diarios (yfinance + IOL)
+│   ├── daily/                   # ~105 daily OHLCV CSVs (yfinance + IOL)
 │   │   ├── AAPL_daily.csv
 │   │   ├── YPFD.BA_daily.csv
-│   │   └── ...
-│   └── intraday/                # 14 CSVs de barras 5-min (Alpaca)
+│   │   └── …
+│   └── intraday/                # 14 CSVs of 5-min bars (Alpaca)
 │       ├── AAPL_5min.csv
 │       ├── NVDA_5min.csv
-│       └── ...
-├── clean/                       # ~101 CSVs limpios (listos para training)
+│       └── …
+├── clean/                       # ~101 cleaned CSVs, ready for training
 │   ├── AAPL_daily.csv
 │   ├── YPFD.BA_daily.csv
-│   ├── ...
-│   └── data_quality_report.json # Reporte de diagnóstico por ticker
-├── cache/                       # Caché temporario
-├── features/                    # Salidas de feature engineering
-└── snapshots/                   # Outputs de EDA
+│   ├── …
+│   └── data_quality_report.json # per-ticker diagnostic report
+├── cache/                       # temporary cache
+├── features/                    # feature-engineering outputs
+└── snapshots/                   # EDA outputs
     ├── e1_conservative_eda_v1/
     ├── e2_moderate_eda_v1/
     └── e3_intraday_eda_v1/
@@ -216,26 +180,27 @@ data/
 
 ---
 
-## **Tickers Soportados (~101 en `data/clean/`)**
+## Supported tickers (~101 in `data/clean/`)
 
-### Activos Argentinos (~65)
-- **Acciones blue-chip**: YPFD.BA, GGAL.BA, PAMP.BA, BYMA.BA, CEPU.BA, BBAR.BA, BMA.BA, EDN.BA, LOMA.BA, ALUA.BA, AGRO.BA, METR.BA, TGSU2.BA, TGNO4.BA
-- **Bonos soberanos**: AL29, AL30, AL35, AL41, GD29, GD30, GD35, GD38, GD41, GD46, AE38
-- **Otros**: A3.BA, CECO2.BA, CELU.BA, ETHA.BA, YPF
+**Argentine assets (~65)**
+- *Blue-chip equities:* YPFD.BA, GGAL.BA, PAMP.BA, BYMA.BA, CEPU.BA, BBAR.BA, BMA.BA, EDN.BA,
+  LOMA.BA, ALUA.BA, AGRO.BA, METR.BA, TGSU2.BA, TGNO4.BA
+- *Sovereign bonds:* AL29, AL30, AL35, AL41, GD29, GD30, GD35, GD38, GD41, GD46, AE38
+- *Others:* A3.BA, CECO2.BA, CELU.BA, ETHA.BA, YPF
 
-### Activos Internacionales (~36)
-- **Tecnología**: AAPL, NVDA, GOOGL, AMZN, META, NFLX, AMD, TSLA
-- **Finanzas**: JPM, BAC, CAT, DE, XOM, CVX
-- **Consumo/Salud**: JNJ, PG, V, KO, PEP
-- **ETFs de índices**: SPY, QQQ
+**International assets (~36)**
+- *Technology:* AAPL, NVDA, GOOGL, AMZN, META, NFLX, AMD, TSLA
+- *Financials & industrials:* JPM, BAC, CAT, DE, XOM, CVX
+- *Consumer & healthcare:* JNJ, PG, V, KO, PEP
+- *Index ETFs:* SPY, QQQ
 
-El universo de tickers por estrategia está definido en `src/config/base.yaml`.
+The per-strategy ticker universe is defined in `src/config/base.yaml`.
 
 ---
 
-## **Reporte de Calidad (JSON)**
+## Quality report (JSON)
 
-El archivo `data/clean/data_quality_report.json` contiene diagnóstico detallado:
+`data/clean/data_quality_report.json` holds the full per-ticker diagnosis:
 
 ```json
 {
@@ -254,22 +219,12 @@ El archivo `data/clean/data_quality_report.json` contiene diagnóstico detallado
   "CEPU.BA": {
     "ticker": "CEPU.BA",
     "total_rows": 180,
-    "null_counts": {
-      "open": 50,
-      "high": 50,
-      "low": 50
-    },
-    "null_percentages": {
-      "open": 27.8,
-      "high": 27.8,
-      "low": 27.8
-    },
+    "null_counts": { "open": 50, "high": 50, "low": 50 },
+    "null_percentages": { "open": 27.8, "high": 27.8, "low": 27.8 },
     "features_with_nulls": ["open", "high", "low"],
     "zero_volume_days": 10,
     "duplicate_timestamps": 0,
-    "data_gaps_days": [
-      {"date": "2023-11-23", "gap_days": 5}
-    ],
+    "data_gaps_days": [{ "date": "2023-11-23", "gap_days": 5 }],
     "status": "rejected",
     "rows_after_cleaning": 130
   }
@@ -278,9 +233,9 @@ El archivo `data/clean/data_quality_report.json` contiene diagnóstico detallado
 
 ---
 
-## **Configuración**
+## Configuration
 
-El universo de tickers y parámetros se leen de `src/config/base.yaml`:
+Ticker universe and date range come from `src/config/base.yaml`:
 
 ```yaml
 data:
@@ -289,102 +244,90 @@ data:
   timezone: "America/New_York"
 ```
 
-### **Umbral mínimo de días:**
+Minimum history threshold:
+
 ```python
-min_days=252  # 1 año bursátil — tickers con menos son rechazados
+min_days=252   # one trading year — tickers with less are rejected
 ```
 
 ---
 
-## **Decisiones sobre Features con Nulos**
+## Deciding what to do with nulls
 
-### **Si una feature tiene muchos nulos (>10%):**
+When a feature has a lot of nulls, first look at the cause:
 
-1. **Analizar causa**:
-   ```bash
-   cat data/clean/data_quality_report.json | jq '.TICKER'
-   ```
+```bash
+cat data/clean/data_quality_report.json | jq '.TICKER'
+```
 
-2. **Decidir acción**:
-   - **< 5% nulos**: Forward fill es seguro
-   - **5-10% nulos**: Considerar eliminar feature o ticker
-   - **> 10% nulos**: Eliminar ticker (datos de mala calidad)
+Then apply the threshold:
 
-3. **Implementar**: En el pipeline de training, rechazar el ticker antes de entrenar.
+| Null share | Action |
+|---|---|
+| < 5% | Forward fill is safe |
+| 5–10% | Consider dropping the feature or the ticker |
+| > 10% | Drop the ticker — the data is too poor to trust |
+
+Rejection happens in the training pipeline, before the model is built.
 
 ---
 
-## **Validación Post-Limpieza**
+## Post-cleaning validation
 
-Los pipelines E1 y E2 priorizan datos limpios automáticamente:
+The E1 and E2 pipelines automatically prefer cleaned data:
 
 ```python
-# En src/e1/train_pipeline.py / src/e2/train_pipeline.py
+# src/e1/train_pipeline.py / src/e2/train_pipeline.py
 clean_csv_path = data_dir / "clean" / f"{ticker}_daily.csv"
 
 if clean_csv_path.exists():
-    csv_path = clean_csv_path  # Usa datos limpios
+    csv_path = clean_csv_path                                    # use cleaned data
 else:
-    csv_path = data_dir / "raw" / "daily" / f"{ticker}_daily.csv"  # Fallback a raw
+    csv_path = data_dir / "raw" / "daily" / f"{ticker}_daily.csv"  # fall back to raw
 ```
 
 ---
 
-## **Impacto en IC**
+## Troubleshooting
 
-**Antes** (sin limpieza):
-- Nulos propagados a features → NaN en MACD, RSI, etc.
-- Modelo entrena con datos corruptos → IC negativo
+**Ticker rejected for insufficient history**
 
-**Después** (con limpieza):
-- Features calculadas correctamente
-- IC mejorado de -0.124 → +0.232
-
----
-
-## **Troubleshooting**
-
-### **Ticker rechazado por pocos días**
 ```
- TICKER descartado: solo 180 días después de limpieza (< 252 requerido)
+ TICKER discarded: only 180 days after cleaning (< 252 required)
 ```
 
-**Solución**: Ticker tiene demasiados nulos. Opciones:
-1. Eliminar ticker del config en `src/config/base.yaml`
-2. Descargar más historia (`period="15y"`)
-3. Reducir `min_days` (no recomendado)
+The ticker had too many nulls. Either remove it from `src/config/base.yaml`, download more
+history (`period="15y"`), or lower `min_days` — the last one only with good reason, since short
+series make walk-forward folds meaningless.
 
-### **Features siguen teniendo NaN después de limpieza**
+**Features still contain NaN after cleaning**
+
 ```python
-# Debug en el pipeline
 features = compute_features(ohlcv)
 print(features.isna().sum())
 ```
 
-**Causa probable**: Features calculadas requieren ventanas (ej. SMA(200) → primeros 200 días son NaN).
-**Solución**: `make_sequences()` ya elimina filas con NaN al construir las secuencias. Esto es normal.
+Usually expected: window-based features need warm-up (an SMA(200) is NaN for the first 200 days).
+`make_sequences()` already drops NaN rows when building sequences, so this is normal.
 
-### **Datos intraday faltantes (E3)**
+**Missing intraday data (E3)**
+
 ```bash
-# Verificar archivos existentes
-ls data/raw/intraday/
-
-# Re-descargar desde Alpaca (requiere credenciales en .env)
-python -m src.e3.intraday_data
+ls data/raw/intraday/                # check what exists
+python -m src.e3.intraday_data       # re-download from Alpaca (needs credentials in .env)
 ```
 
 ---
 
-## **Referencias**
+## Reference
 
-| Componente | Archivo |
-|------------|---------|
-| Descarga diaria | `src/data/download_daily.py` |
-| Limpieza diaria | `src/data/clean_daily.py` |
-| Script manual | `scripts/data/run_data_cleaning.py` |
-| Datos intraday (E3) | `src/e3/intraday_data.py` |
+| Component | File |
+|---|---|
+| Daily download | `src/data/download_daily.py` |
+| Daily cleaning | `src/data/clean_daily.py` |
+| Manual script | `scripts/data/run_data_cleaning.py` |
+| Intraday data (E3) | `src/e3/intraday_data.py` |
 | IOL API | `src/data/iol_api.py` |
-| Pipeline E1 | `src/e1/train_pipeline.py` |
-| Pipeline E2 | `src/e2/train_pipeline.py` |
-| Configuración | `src/config/base.yaml` |
-| Reporte de calidad | `data/clean/data_quality_report.json` |
+| E1 pipeline | `src/e1/train_pipeline.py` |
+| E2 pipeline | `src/e2/train_pipeline.py` |
+| Configuration | `src/config/base.yaml` |

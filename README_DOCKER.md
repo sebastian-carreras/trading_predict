@@ -1,6 +1,6 @@
-# Integración Docker: Airflow + MLflow + FastAPI + PostgreSQL
+# Docker stack: Airflow + MLflow + FastAPI + PostgreSQL
 
-## 📋 Arquitectura
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -11,7 +11,7 @@
 │  │   Airflow   │───▶│  MLflow  │───▶│   FastAPI   │         │
 │  │  Scheduler  │    │ Tracking │    │     API     │         │
 │  │  Webserver  │    │  Server  │    │   (8800)    │         │
-│  │   (8080)    │    │  (5000)  │    └─────────────┘         │
+│  │   (8080)    │    │  (5050)  │    └─────────────┘         │
 │  └─────────────┘    └──────────┘           │                │
 │        │                  │                │                │
 │        │           ┌──────┴──────┐         │                │
@@ -27,7 +27,7 @@
 │        ▼                                                    │
 │  ┌──────────────────────────────────────────────┐           │
 │  │          MinIO (S3-compatible)               │           │
-│  │  - MLflow artifacts (modelos, métricas)      │           │
+│  │  - MLflow artifacts (models, metrics)        │           │
 │  │  - Datasets                                  │           │
 │  │            (9000, UI: 9001)                  │           │
 │  └──────────────────────────────────────────────┘           │
@@ -35,141 +35,122 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## 🚀 Inicio Rápido
+## Quick start
 
-### 1. Configurar variables de entorno
+### 1. Configure environment variables
 
 ```bash
-# Copiar template y editar
 cp .env.example .env
 ```
 
-### 2. Levantar servicios
+All ports are configurable there (`AIRFLOW_PORT`, `MLFLOW_PORT`, `FASTAPI_PORT`). The values
+below are the ones this project uses; `docker-compose.yaml` falls back to the container-internal
+defaults if a variable is left empty.
+
+### 2. Start the services
 
 ```bash
-# Opción A: Solo MLflow + PostgreSQL
-docker-compose --profile mlflow up -d
-
-# Opción B: Solo Airflow
-docker-compose --profile airflow up -d
-
-# Opción C: Stack completo (recomendado)
-docker-compose --profile all up -d
+docker-compose --profile mlflow up -d    # MLflow + PostgreSQL only
+docker-compose --profile airflow up -d   # Airflow only
+docker-compose --profile all up -d       # full stack (recommended)
 ```
 
-### 2.b Modo transparente MLflow (offline→online)
+### 2b. Transparent MLflow mode (offline → online)
 
-Para que los entrenamientos ejecutados sin Docker aparezcan luego en la UI de MLflow:
+To make training runs executed *without* Docker show up in the MLflow UI afterwards:
 
 ```bash
 bash scripts/mlflow/up_transparent_mlflow.sh
 ```
 
-Este script:
-- alinea la versión de MLflow del contenedor con tu entorno local,
-- reconstruye el servicio `mlflow`,
-- y lo levanta apuntando a `runs/mlflow_local` (mismo store de ejecuciones offline).
+The script aligns the container's MLflow version with your local environment, rebuilds the
+`mlflow` service, and points it at `runs/mlflow_local` — the same store the offline runs write to.
 
-### 3. Acceder a interfaces
+### 3. Interfaces
 
-- **Airflow UI**: http://localhost:8080
-  - Usuario: `admin` (configurable en .env)
-  - Password: `admin123`
+| Service | URL | Credentials |
+|---|---|---|
+| Airflow UI | http://localhost:8080 | `_AIRFLOW_WWW_USER_USERNAME` / `_AIRFLOW_WWW_USER_PASSWORD` |
+| MLflow UI | http://localhost:5050 | — |
+| FastAPI docs | http://localhost:8800/docs | — |
+| MinIO UI | http://localhost:9001 | `MINIO_ACCESS_KEY` / `MINIO_SECRET_ACCESS_KEY` |
 
-- **MLflow UI**: http://localhost:5050
-  - Tracking de experimentos
-  - Registro de modelos
+> Credentials come from your `.env` (see `.env.example` for the variable names and their local
+> development defaults). They are not reproduced here on purpose — see [Security](#security).
 
-- **FastAPI Docs**: http://localhost:8800/docs
-  - Swagger UI interactivo
-  - Endpoints de predicción
+## Scheduling — how the DAGs actually run
 
-- **MinIO UI**: http://localhost:9001
-  - Usuario: `minio_admin`
-  - Password: `minio_secret_key_123`
+The three strategies share a single `models/registry.json`, which `ModelRegistry` loads whole and
+rewrites whole, with no locking or merging. Running them concurrently silently clobbers writes —
+this happened for real on 2026-07-17. The schedule is built to make concurrency impossible:
 
-## Flujo de Trabajo
+| DAG | Schedule | Why |
+|---|---|---|
+| `e2_moderate_pipeline` | `0 8 * * *` (08:00 UTC / 05:00 ART) | The **cron anchor** — the only time-triggered retraining DAG |
+| `e1_conservative_pipeline` | Dataset-triggered on `trading://registry/e2_moderate` | Starts only once E2 has fully finished, however long it takes |
+| `e3_intraday_pipeline` | `None` — **manual only** | E3 is a documented negative result (median Sharpe −2.6, doesn't beat intraday costs). Not worth daily compute, and not worth the registry collision risk |
+| `reporting/daily_report` | Dataset-triggered on both E1 and E2 | Data-aware, not clock-scheduled |
 
-### Pipeline E1 (Conservadora - GRU)
-
-**Schedule**: Lunes 2 AM (semanal)
+Trigger any of them by hand:
 
 ```bash
-# Activar DAG manualmente en Airflow UI
-# O trigger desde CLI:
 docker exec -it airflow_webserver airflow dags trigger e1_conservative_pipeline
+docker exec -it airflow_webserver airflow dags trigger e3_intraday_pipeline
 ```
 
-**Pasos**:
-1. Descarga datos diarios (Yahoo Finance o IOL)
-2. Calcula 15 features técnicos
-3. Entrena modelos GRU por ticker
-4. Registra experimentos en MLflow
-5. Guarda artefactos en MinIO
-6. Notifica a FastAPI (modelos disponibles)
+### What the E1 pipeline does
 
-**Outputs**:
-- `runs/e1_conservative/<timestamp>/` - Predicciones y métricas
-- MLflow experiments: `E1_Conservative_Strategy`
-- MinIO bucket: `s3://mlflow/`
+1. Download daily data (Yahoo Finance or IOL)
+2. Compute technical features
+3. Train a GRU model per ticker
+4. Log experiments to MLflow
+5. Store artifacts in MinIO
+6. Evaluate and promote against the current champion
 
-### Pipeline E3 (Intradía - LSTM Ensemble)
+Outputs land in `runs/e1_conservative/<timestamp>/`, the MLflow experiment
+`E1_Conservative_Strategy`, and the `s3://mlflow/` MinIO bucket.
 
-**Schedule**: Diario 1 AM
+### What the E3 pipeline does
 
-```bash
-docker exec -it airflow_webserver airflow dags trigger train_e3_pipeline
-```
+1. Download 5-minute bars (last 60 days)
+2. Train an ensemble of 3 LSTMs
+3. Backtest with 20 bps intraday costs
+4. Log to MLflow
 
-**Pasos**:
-1. Descarga datos 5-min (últimos 60 días)
-2. Entrena ensemble de 3 LSTM
-3. Ejecuta backtest con costos 20 bps
-4. Registra en MLflow
-5. Actualiza modelos en FastAPI
+Outputs land in `runs/e3_intraday/<timestamp>/` and the `E3_Intraday_Strategy` experiment.
 
-**Outputs**:
-- `runs/e3_intraday/<timestamp>/` - Backtests y métricas
-- MLflow experiments: `E3_Intraday_Strategy`
+## Local development
 
-## 🔧 Desarrollo Local
-
-### Ejecutar pipelines sin Docker (debugging)
+Run pipelines without Docker, for debugging:
 
 ```bash
-# Activar ambiente Python
 conda activate ia_ceia_18co
 
-# E1 manual
-python -m src.train_e1_pipeline --tickers AAPL
-
-# E3 manual
+python -m src.e1.train_pipeline --tickers AAPL
 python -m src.e3.train_pipeline --tickers SPY
 
-# Con tracking MLflow
+# with MLflow tracking against the containerized server
 export MLFLOW_TRACKING_URI=http://localhost:5050
-python -m src.train_e1_pipeline
+python -m src.e1.train_pipeline
 ```
 
-### Logs de Airflow
+### Airflow logs
 
 ```bash
-# Ver logs de scheduler
 docker logs -f airflow_scheduler
 
-# Ver logs de un DAG específico
-docker exec -it airflow_webserver airflow tasks test e1_conservative_pipeline download_daily_data 2026-01-06
+# test a single task of a DAG
+docker exec -it airflow_webserver airflow tasks test \
+  e1_conservative_pipeline download_daily_data 2026-01-06
 ```
 
-## 📡 API Endpoints (FastAPI)
+## API endpoints (FastAPI)
 
-### Health check
 ```bash
+# Health check
 curl http://localhost:8800/health
-```
 
-### Registrar modelos (desde Airflow)
-```bash
+# Register models (called from Airflow)
 curl -X POST http://localhost:8800/models/register \
   -H "Content-Type: application/json" \
   -d '{
@@ -177,130 +158,109 @@ curl -X POST http://localhost:8800/models/register \
     "run_dir": "/opt/airflow/runs/e1_conservative/20260106_020530",
     "timestamp": "2026-01-06T02:05:30"
   }'
-```
 
-### Predicción E1
-```bash
+# E1 prediction
 curl -X POST http://localhost:8800/predict/e1/AAPL \
   -H "Content-Type: application/json" \
   -d '{"use_latest_data": true}'
-```
 
-### Ver estado de modelos
-```bash
+# Model status
 curl http://localhost:8800/models/status
 ```
 
-## 🗄 Base de Datos PostgreSQL
-
-### Conectar desde terminal
+## PostgreSQL
 
 ```bash
-# Entrar al container
 docker exec -it postgres psql -U airflow
 
-# Ver bases de datos
-\l
-
-# Conectar a MLflow DB
-\c mlflow_db
-
-# Ver tablas de MLflow
-\dt
-
-# Ver experimentos
-SELECT experiment_id, name FROM experiments;
+\l                                            # list databases
+\c mlflow_db                                  # connect to the MLflow DB
+\dt                                           # list tables
+SELECT experiment_id, name FROM experiments;  # list experiments
 ```
 
-## 📦 MinIO (S3)
-
-### Ver artifacts de MLflow
+## MinIO (S3)
 
 ```bash
-# Listar buckets
-docker exec -it minio mc ls s3/mlflow
-
-# Ver artifacts de un experimento
-docker exec -it minio mc ls s3/mlflow/0/<run_id>/artifacts/
+docker exec -it minio mc ls s3/mlflow                          # list buckets
+docker exec -it minio mc ls s3/mlflow/0/<run_id>/artifacts/    # artifacts of a run
 ```
 
-## 🛑 Detener servicios
+## Stopping
 
 ```bash
-# Detener todos
-docker-compose --profile all down
-
-# Detener y eliminar volúmenes (¡cuidado!)
-docker-compose --profile all down -v
+docker-compose --profile all down       # stop
+docker-compose --profile all down -v    # stop and delete volumes (destroys data)
 ```
 
-## Monitoreo
-
-### Ver recursos Docker
+## Monitoring
 
 ```bash
-# Uso de recursos
-docker stats
-
-# Logs combinados
-docker-compose --profile all logs -f
-
-# Solo un servicio
-docker-compose logs -f mlflow
+docker stats                            # resource usage
+docker-compose --profile all logs -f    # combined logs
+docker-compose logs -f mlflow           # one service
 ```
 
-## 🔐 Seguridad
+## Security
 
-**Para producción**:
-1. Cambiar todas las contraseñas en `.env`
-2. Usar secretos externos (no .env commiteado)
-3. Configurar SSL/TLS para endpoints públicos
-4. Restringir acceso a red (firewall)
-5. Usar autenticación en FastAPI (OAuth2, API keys)
+The defaults above are for local development only. Before exposing this anywhere:
 
-## Estructura de Volúmenes
+1. Change every password in `.env`
+2. Use external secret management — never commit `.env`
+3. Configure SSL/TLS for public endpoints
+4. Restrict network access at the firewall
+5. Add authentication to FastAPI (OAuth2 or API keys)
+
+This repo runs `detect-secrets` as a pre-commit hook to keep credentials out of the history.
+
+## Volume layout
 
 ```
 docker volumes:
 ├── db_data/              # PostgreSQL data
 ├── minio_data/           # MinIO buckets
 └── airflow/
-    ├── dags/             # DAGs de Airflow (subcarpetas por estrategia)
+    ├── dags/             # Airflow DAGs (one subfolder per strategy)
     │   ├── E1/
     │   ├── E2/
     │   ├── E3/
     │   └── E4/
-    ├── logs/             # Logs de ejecución
-    ├── plugins/          # Plugins custom
+    ├── logs/             # execution logs
+    ├── plugins/          # custom plugins
     └── config/           # Airflow config
 ```
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
-### Airflow no inicia
+**Airflow won't start** — reinitialize:
+
 ```bash
-# Reiniciar init
 docker-compose --profile all down
 docker volume rm trading_predict_db_data
 docker-compose --profile all up airflow-init
 docker-compose --profile all up -d
 ```
 
-### MLflow no conecta a PostgreSQL
+**MLflow can't connect to PostgreSQL** — make sure the database exists:
+
 ```bash
-# Verificar que DB existe
 docker exec -it postgres psql -U airflow -c "CREATE DATABASE mlflow_db;"
 ```
 
-### MinIO buckets no se crean
+**MinIO buckets aren't created** — create them by hand:
+
 ```bash
-# Crear manualmente
 docker exec -it minio mc mb s3/mlflow
 docker exec -it minio mc mb s3/data
 ```
 
+**A DAG doesn't appear** — validate the DAG files parse:
+
+```bash
+python scripts/airflow/validate_dags.py
+```
+
 ---
 
-**Proyecto**: Trading Predict
-**Stack**: Airflow 2.8.1 + MLflow + FastAPI + PostgreSQL 13 + MinIO
-**Autor**: Sebastian Carreras - FIUBA AI Posgrado
+*Stack: Airflow 2.8.1 + MLflow + FastAPI + PostgreSQL 13 + MinIO. Trading Predict — AI
+Specialization, FIUBA. Last updated 2026-07-21.*

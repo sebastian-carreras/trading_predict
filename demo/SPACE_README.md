@@ -34,21 +34,21 @@ Source code: https://github.com/sebastian-carreras/trading_predict
 
 ---
 
-## Nota de deploy (por qué Static y no Gradio)
+## Deploy notes (why Static and not Gradio)
 
-Este Space corre como **`sdk: static`** — HTML + JS + Plotly.js servidos desde
-`demo/index.html`, con los assets pre-computados por `demo/bundle_assets.py`.
+This Space runs as **`sdk: static`** — HTML + JS + Plotly.js served from
+`demo/index.html`, with assets pre-computed by `demo/bundle_assets.py`.
 
-Originalmente se construyó como app **Gradio** (`demo/app.py`), pero HF dejó el
-free tier de Gradio detrás de PRO (ZeroGPU) y el SDK Docker es pago, así que se
-pivoteó a Static reutilizando el 100% de los assets. `app.py` (Gradio) y
-`app_streamlit.py` quedan en el repo como frontends alternativos, **no** como lo
-que se despliega.
+It was originally built as a **Gradio** app (`demo/app.py`), but Hugging Face moved
+the Gradio free tier behind PRO (ZeroGPU) and the Docker SDK is paid, so it was
+pivoted to Static while reusing 100% of the assets. `app.py` (Gradio) and
+`app_streamlit.py` remain in the repo as alternate frontends — they are **not**
+what gets deployed.
 
-Por eso el front-matter de arriba **no** lleva `sdk_version` ni `app_file`: los
-Spaces estáticos no los usan. Si alguna vez se vuelve a Gradio, hay que
-reponerlos y usar el `sdk_version` que HF ofrezca al crear el Space (no uno
-fijado a mano).
+That's why the front-matter above carries **no** `sdk_version` and no `app_file`:
+static Spaces don't use them. If this ever moves back to Gradio, both need to be
+restored, using the `sdk_version` Hugging Face offers when creating the Space
+rather than one pinned by hand.
 
-Otros detalles que costaron en su momento: los binarios van por **git-LFS**, y
-`short_description` tiene un límite de **60 caracteres** (por eso es corta).
+Two other things that cost time: binaries have to go through **git-LFS**, and
+`short_description` has a **60-character limit** — hence the terse one above.

@@ -1,121 +1,107 @@
-# Model Lifecycle System
+# Model lifecycle system
 
-Sistema de gestión del ciclo de vida de modelos: registro, validación, comparación, promoción y retiro.
+Manages the full model lifecycle: registration, validation, comparison, promotion and retirement.
 
-## Arquitectura general
+## Overview
 
 ```
 Training Pipeline ──► Guardrails ──► Registry (candidate) ──► Promotion CLI ──► Champion / Retired
-                      (validación)    (registro)               (comparación)
+                      (validation)   (registration)           (comparison)
 ```
 
-Cada ticker se evalúa de forma independiente. El estado de todos los modelos se persiste en un único archivo JSON con escrituras atómicas.
+Every ticker is evaluated independently. The state of all models is persisted in a single JSON
+file, written atomically.
 
-## Etapas del modelo
+## Model stages
 
-| Etapa | Descripción |
-|-------|-------------|
-| **Baseline** | Referencia fija (ej: Linear Regression). Nunca se promueve. |
-| **Candidate** | Modelo recién entrenado, pendiente de evaluación. |
-| **Champion** | Modelo activo en uso. Uno por ticker por estrategia. |
-| **Retired** | Campeones anteriores archivados (máx. 5 por ticker). |
+| Stage | Description |
+|---|---|
+| **Baseline** | Fixed reference (e.g. Linear Regression). Never promoted. |
+| **Candidate** | Freshly trained model, awaiting evaluation. |
+| **Champion** | The model in use. One per ticker per strategy. |
+| **Retired** | Archived former champions (max. 5 per ticker). |
 
-## Archivos clave
+## Key files
 
-| Archivo | Propósito |
-|---------|-----------|
-| `src/lifecycle/registry.py` | CRUD central del estado de modelos (`ModelRegistry`) |
-| `src/lifecycle/guardrails.py` | Validación técnica Phase-1 |
-| `src/lifecycle/promotion.py` | Scoring compuesto y lógica de comparación |
-| `src/lifecycle/loader.py` | Carga de modelos champion/baseline desde disco |
-| `scripts/evaluation/promote_candidate.py` | CLI de evaluación y promoción |
-| `src/config/base.yaml` | Configuración (sección `lifecycle`) |
-| `models/registry.json` | Estado actual de todos los modelos |
-| `models/promotion_log.jsonl` | Log de auditoría de decisiones de promoción |
-| `models/metrics_log.jsonl` | Historial de métricas (para calibración futura Phase-2) |
+| File | Purpose |
+|---|---|
+| `src/lifecycle/registry.py` | Central CRUD over model state (`ModelRegistry`) |
+| `src/lifecycle/guardrails.py` | Phase-1 technical validation |
+| `src/lifecycle/promotion.py` | Composite scoring and comparison logic |
+| `src/lifecycle/loader.py` | Loads champion/baseline models from disk |
+| `scripts/evaluation/promote_candidate.py` | Evaluation and promotion CLI |
+| `src/config/base.yaml` | Configuration (`lifecycle` section) |
+| `models/registry.json` | Current state of every model |
+| `models/promotion_log.jsonl` | Audit log of promotion decisions |
+| `models/metrics_log.jsonl` | Metric history (for future Phase-2 calibration) |
 
-## Flujo de trabajo
+## Workflow
 
-### 1. Entrenamiento
+### 1. Training
 
-El pipeline de entrenamiento (ej: `python -m src.e1.train_pipeline`) automáticamente:
-1. Entrena el modelo y guarda artefactos en `runs/<strategy>/<timestamp>/<TICKER>/`
-2. Ejecuta guardrails de validación técnica
-3. Registra el modelo como **candidate** en el registry
+The training pipeline (e.g. `python -m src.e1.train_pipeline`) automatically:
 
-### 2. Guardrails (validación técnica)
+1. Trains the model and writes artifacts to `runs/<strategy>/<timestamp>/<TICKER>/`
+2. Runs the technical validation guardrails
+3. Registers the model as a **candidate** in the registry
 
-Phase-1 rechaza modelos técnicamente rotos:
-- Archivo del modelo (`.pth`) existe
-- Sin NaN/Inf en predicciones
-- Sin NaN/Inf en backtest
+### 2. Guardrails (technical validation)
+
+Phase-1 rejects models that are technically broken, before any metric comparison happens:
+
+- The model file (`.pth`) exists
+- No NaN/Inf in predictions
+- No NaN/Inf in the backtest
 - Sharpe ratio > 0
-- No peor que baseline en IC (si hay baseline disponible)
+- Not worse than the baseline on IC (when a baseline is available)
 
-### 3. Evaluación y promoción
+### 3. Evaluation and promotion
 
-Compara el candidate contra el champion actual usando un **score compuesto ponderado**:
+The candidate is compared against the current champion using a **weighted composite score**:
 
 ```
-score = Σ (weight_i × metric_i_normalizado)
+score = Σ (weight_i × normalized_metric_i)
 ```
 
-El candidate se promueve si supera al champion por un margen mínimo (default: 5%).
+The candidate is promoted only if it beats the champion by a minimum margin (default 5%).
 
-**Pesos por defecto (globales):**
+**Default global weights:**
 
-| Métrica | Peso |
-|---------|------|
+| Metric | Weight |
+|---|---|
 | `bt_sharpe` | 0.35 |
 | `ml_ic` | 0.25 |
 | `ml_directional_accuracy` | 0.20 |
 | `bt_calmar` | 0.20 |
 
-Los pesos se pueden personalizar por estrategia en `base.yaml` (sección `lifecycle.promotion.per_strategy`).
+Weights can be overridden per strategy in `base.yaml`, under
+`lifecycle.promotion.per_strategy`.
 
-## Comandos CLI
-
-### Evaluar candidatos (dry-run)
+## CLI
 
 ```bash
+# Evaluate candidates (dry run — changes nothing)
 python -m scripts.evaluation.promote_candidate
-```
 
-Muestra qué candidatos serían promovidos **sin modificar nada**.
-
-### Ejecutar promoción
-
-```bash
+# Execute promotions
 python -m scripts.evaluation.promote_candidate --execute
-```
 
-### Filtrar por tickers específicos
-
-```bash
+# Restrict to specific tickers
 python -m scripts.evaluation.promote_candidate --tickers AAPL,MSFT --execute
-```
 
-### Forzar promoción (ignora scoring)
-
-```bash
+# Force promotion, bypassing scoring
 python -m scripts.evaluation.promote_candidate --tickers YPFD.BA --force --execute
-```
 
-### Ver detalle por métrica
-
-```bash
+# Per-metric detail
 python -m scripts.evaluation.promote_candidate --verbose
-```
 
-### Ver log de auditoría
-
-```bash
+# Inspect the audit log
 python -m scripts.evaluation.promote_candidate --show-log 20
 ```
 
-## Configuración
+## Configuration
 
-La configuración del lifecycle está en `src/config/base.yaml` bajo la sección `lifecycle`:
+Lifecycle configuration lives in `src/config/base.yaml` under `lifecycle`:
 
 ```yaml
 lifecycle:
@@ -132,9 +118,9 @@ lifecycle:
       worse_than_baseline: true
 
   promotion:
-    auto_promote: false          # Dry-run por defecto
-    first_champion_strategy: "promote"  # Si no hay champion, promover automáticamente
-    min_improvement: 0.05        # Mejora mínima del 5%
+    auto_promote: false                 # dry run by default
+    first_champion_strategy: "promote"  # with no champion yet, promote automatically
+    min_improvement: 0.05               # 5% minimum improvement
     require_positive_sharpe: true
 
     scoring_weights:
@@ -161,15 +147,15 @@ lifecycle:
     keep_last_n: 5
 ```
 
-### Resolución jerárquica de config por estrategia
+### Hierarchical config resolution
 
-1. Match exacto: `per_strategy.e1_conservative`
-2. Fallback por prefijo: `per_strategy.e1` (para `e1_conservative`)
-3. Fallback global: config de nivel superior
+1. Exact match: `per_strategy.e1_conservative`
+2. Prefix fallback: `per_strategy.e1` (covers `e1_conservative`)
+3. Global fallback: the top-level config
 
-## Estructura del registry
+## Registry structure
 
-`models/registry.json` almacena el estado de todos los modelos:
+`models/registry.json` holds the state of every model:
 
 ```json
 {
@@ -179,10 +165,10 @@ lifecycle:
     "e1": {
       "tickers": {
         "YPFD.BA": {
-          "baseline":  { "variant": "e1_baseline", "run_dir": "...", "metrics": {...} },
-          "champion":  { "variant": "e1_conservative", "run_dir": "...", "metrics": {...} },
-          "candidate": { "variant": "e1_conservative", "run_dir": "...", "metrics": {...} },
-          "retired":   [{ "variant": "e1_simple", "reason": "superseded_by_...", "metrics": {...} }]
+          "baseline":  { "variant": "e1_baseline", "run_dir": "...", "metrics": {} },
+          "champion":  { "variant": "e1_conservative", "run_dir": "...", "metrics": {} },
+          "candidate": { "variant": "e1_conservative", "run_dir": "...", "metrics": {} },
+          "retired":   [{ "variant": "e1_simple", "reason": "superseded_by_...", "metrics": {} }]
         }
       }
     }
@@ -190,14 +176,17 @@ lifecycle:
 }
 ```
 
-## Skills de Claude Code
+> Never edit `registry.json` by hand. All writes go through `ModelRegistry`, which uses
+> `tempfile` + `os.replace` so a crash can't leave the file half-written.
 
-Además del CLI, hay skills disponibles para uso interactivo:
+## Claude Code skills
 
-| Skill | Uso | Descripción |
-|-------|-----|-------------|
-| `/model-status` | `/model-status` | Ver estado de todos los modelos |
-| `/compare-models` | `/compare-models e1 AAPL` | Comparar baseline vs champion vs candidate |
-| `/promote-model` | `/promote-model e1 AAPL` | Promover candidate a champion (interactivo) |
-| `/retire-model` | `/retire-model e1 AAPL` | Retirar champion actual |
-| `/new-experiment` | `/new-experiment e1 attention_gru` | Crear scaffold para nueva variante |
+Beyond the CLI, these skills are available for interactive use:
+
+| Skill | Example | Description |
+|---|---|---|
+| `/model-status` | `/model-status` | Show the state of every model |
+| `/compare-models` | `/compare-models e1 AAPL` | Compare baseline vs champion vs candidate |
+| `/promote-model` | `/promote-model e1 AAPL` | Promote candidate to champion (interactive) |
+| `/retire-model` | `/retire-model e1 AAPL` | Retire the current champion |
+| `/new-experiment` | `/new-experiment e1 attention_gru` | Scaffold a new variant |

@@ -1,53 +1,54 @@
-# Demo hosteada — trading_predict
+# Hosted demo — trading_predict
 
-Showcase del sistema MLOps de trading con ML, desplegado en **Hugging Face Spaces
-(SDK Static)**. **Lector fino**: la página lee solo `assets/` (pre-calculado), sin
-backend, sin torch/mlflow/secretos.
+Showcase of the ML trading MLOps system, deployed on **Hugging Face Spaces (Static SDK)**.
+It's a **thin reader**: the page loads only the pre-computed `assets/` — no backend, no torch,
+no MLflow, no secrets.
 
-**▶️ En vivo:** https://huggingface.co/spaces/chatoxz/trading-predict-demo
+**▶️ Live:** https://huggingface.co/spaces/chatoxz/trading-predict-demo
 
-## Arquitectura
+## Architecture
 
-- **`bundle_assets.py`** — corre en el repo completo. Lee `models/registry.json`,
-  las predicciones y backtests walk-forward de cada champion, el leaderboard ya
-  generado y figuras curadas → produce `assets/` self-contained (~17 MB).
-  Re-correlo después de cada retrain para refrescar la demo.
-- **`index.html`** — **la app desplegada**: página estática (HTML + JS + Plotly.js
-  desde CDN) que lee `assets/` por fetch y arma las 5 tabs (Overview, Performance
-  con drilldown interactivo, Champion vs Baseline, Drift & Estabilidad, Metodología).
-- **`app.py`** (Gradio) y **`app_streamlit.py`** (Streamlit) — front-ends alternativos
-  equivalentes, por si se despliega en otro entorno. No se usan en el Space Static.
-- **`assets/`** — datos + figuras del bundle (regenerados, no editar a mano).
+- **`bundle_assets.py`** — runs against the full repo. Reads `models/registry.json`, the
+  walk-forward predictions and backtests of every champion, the generated leaderboard and a set
+  of curated figures → produces a self-contained `assets/` bundle (~17 MB). Re-run it after each
+  retrain to refresh the demo.
+- **`index.html`** — **the deployed app**: a static page (HTML + JS + Plotly.js from CDN) that
+  fetches `assets/` and builds the five tabs (Overview, Performance with interactive drilldown,
+  Champion vs Baseline, Drift & Stability, Methodology).
+- **`app.py`** (Gradio) and **`app_streamlit.py`** (Streamlit) — equivalent alternate frontends,
+  in case this is deployed elsewhere. Neither is used by the static Space.
+- **`assets/`** — bundled data and figures. Generated, never edited by hand.
 
-## Correr local
+## Running locally
 
 ```bash
-python -m demo.bundle_assets          # (re)genera assets/ desde el repo completo
-cd demo && python -m http.server 8899 # servir estático → http://127.0.0.1:8899/index.html
+python -m demo.bundle_assets           # (re)generate assets/ from the full repo
+cd demo && python -m http.server 8899  # serve statically → http://127.0.0.1:8899/index.html
 ```
 
-## Por qué Static (y no Gradio)
+## Why Static and not Gradio
 
-HF cambió su política: en el free tier los Spaces **Gradio corren en ZeroGPU**
-(gateado, requiere PRO para CPU-basic) y **Docker es pago**. **Static es gratis sin
-PRO** — y como la demo es un dashboard de solo-lectura, encaja perfecto en HTML+JS.
+Hugging Face changed its policy: on the free tier, **Gradio Spaces run on ZeroGPU** (gated,
+requires PRO for CPU-basic) and **Docker is paid**. **Static is free without PRO** — and since
+this demo is a read-only dashboard, plain HTML + JS fits it perfectly.
 
-## Deploy a Hugging Face Spaces (SDK: Static, gratis)
+## Deploying to Hugging Face Spaces (Static SDK, free)
 
-1. **huggingface.co/new-space** → SDK **Static**, template **Blank**, `apache-2.0`, público.
-2. El repo del Space necesita: `index.html`, `assets/` y un `README.md` con
-   `sdk: static` en la metadata YAML (ver `SPACE_README.md`).
-3. Las figuras PNG se versionan por **git-LFS** (HF rechaza binarios en git normal):
-   `git lfs install && git lfs track "*.png"` antes de commitear, o
-   `git lfs migrate import --include="*.png"` si ya están commiteadas.
-4. `git push` (auth: usuario + **token Write** de huggingface.co/settings/tokens).
+1. **huggingface.co/new-space** → SDK **Static**, template **Blank**, `apache-2.0`, public.
+2. The Space repo needs `index.html`, `assets/`, and a `README.md` carrying `sdk: static` in its
+   YAML front-matter — see `SPACE_README.md`.
+3. PNG figures must be versioned through **git-LFS** (HF rejects binaries in plain git):
+   run `git lfs install && git lfs track "*.png"` before committing, or
+   `git lfs migrate import --include="*.png"` if they're already committed.
+4. `git push`, authenticating with your username and a **Write token** from
+   huggingface.co/settings/tokens.
 
-Static buildea en segundos (solo sirve archivos), sin secretos ni ZeroGPU.
+Static builds in seconds since it only serves files — no secrets, no ZeroGPU.
 
-## Honestidad de las cifras
+## Honesty of the numbers
 
-- Las medianas del Overview se **recalculan en vivo** desde el registry (no se
-  hardcodean de `README.md`).
-- **E3 (intradía)** se muestra como **resultado negativo** (Sharpe < 0, no supera
-  costos): se reporta, no se esconde.
-- El ticker sintético de test (`AAA`) se filtra del bundle.
+- The Overview medians are **recomputed live** from the registry; they are never hardcoded from
+  the README.
+- **E3 (intraday)** is displayed as a **negative result** (Sharpe < 0, doesn't beat costs). It's
+  reported, not hidden.
+- The synthetic test ticker (`AAA`) is filtered out of the bundle.
