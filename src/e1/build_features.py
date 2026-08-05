@@ -12,15 +12,22 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from ..data.macro import align_exog as _align_exog  # alineado exógeno PIT-safe (compartido)
 
-def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Calcula features para E1 (conservadora, largo plazo).
+
+def compute_e1_features(df: pd.DataFrame, exog: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Calcula las features base de E1 (+ exógenas opcionales).
 
     Args:
         df: DataFrame con OHLCV diario (index=timestamp, cols: open/high/low/close/volume)
+        exog: DataFrame exógeno opcional (macro/cross-asset) de src.data.macro.load_exog_for.
+            Si se pasa, se agregan las features de los Bloques A/B/C/D (ver docs/FEATURES.md),
+            alineadas por fecha con ffill (PIT-safe). Si es None, se devuelven solo las base —
+            comportamiento idéntico al histórico (compatibilidad hacia atrás). DESACTIVADO por
+            default (data.exog.enabled: false); disponible para exploración per-ticker futura.
 
     Returns:
-        DataFrame con features (mismo índice que df)
+        DataFrame de features (mismo índice que df).
     """
     out = pd.DataFrame(index=df.index)
 
@@ -248,6 +255,32 @@ def compute_e1_features(df: pd.DataFrame) -> pd.DataFrame:
     #   - adx_14 > 60 → Tendencia MUY FUERTE → posible agotamiento (cuidado con reversión)
     # IMPORTANTE: ADX NO dice si la tendencia es alcista o bajista, solo qué tan fuerte es
     out["adx_14"] = dx.rolling(14).mean()
+
+    # ── Features exógenas (macro / cross-asset) — opcional (data.exog.enabled) ──────
+    # Espejo del bloque de E2 (src/e2/build_features.py). Solo si se pasó `exog`. Alineación
+    # PIT-safe (ffill): cada fila usa el último valor exógeno conocido ≤ esa fecha. Ver
+    # src/data/macro.py y docs/FEATURES.md. DESACTIVADO por default; para exploración futura.
+    if exog is not None and len(getattr(exog, "columns", [])):
+        from ..data.macro import EXOG_HELPER_COLS  # import perezoso
+
+        aligned = _align_exog(exog, out.index)
+        helpers = set(EXOG_HELPER_COLS)
+
+        # Bloques A/C/D — passthrough de features globales (mismas para todo ticker)
+        for col in aligned.columns:
+            if col not in helpers:
+                out[col] = aligned[col]
+
+        # Bloque B — fuerza relativa sectorial (per-ticker). E1 usa ret_4w (momentum 20d,
+        # análogo a ret_20d de E2) y un retorno diario local para beta.
+        if {"sector_ret20", "spy_ret20"}.issubset(aligned.columns):
+            out["rel_strength_sector"] = out["ret_4w"] - aligned["sector_ret20"]
+            out["sector_rotation"] = aligned["sector_ret20"] - aligned["spy_ret20"]
+        if "spy_ret1d" in aligned.columns:
+            ret_1d_local = log_close.diff()
+            cov = ret_1d_local.rolling(60).cov(aligned["spy_ret1d"])
+            var = aligned["spy_ret1d"].rolling(60).var()
+            out["beta_60"] = cov / (var + 1e-12)
 
     return out
 

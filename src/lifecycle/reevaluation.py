@@ -30,6 +30,12 @@ import pandas as pd
 
 from ..backtest.backtest_daily import backtest_daily_signals, summarize_backtest
 from ..features.build_sequences_e1e2 import make_sequences
+from ..metrics.skill import (
+    directional_accuracy_edge,
+    naive_up_rate,
+    pesaran_timmermann,
+    sharpe_excess,
+)
 from .loader import ModelLoader
 from .registry import ModelRegistry
 
@@ -38,24 +44,52 @@ from .registry import ModelRegistry
 # Strategy dispatch (feature/target builders + model classes)
 # ---------------------------------------------------------------
 def _strategy_kit(strategy: str):
-    """Return ``(compute_features, make_target, {model_class_name: cls})``."""
+    """Return ``(compute_features, make_target)`` for a strategy prefix.
+
+    Model reconstruction no longer lives here: the model class is resolved from
+    the global model registry inside ``_rebuild_model`` (keyed by the payload's
+    ``model_class`` string). Adding a new model therefore requires **no edit**
+    to this function — only registering the class via ``@register_model``.
+    """
     prefix = strategy.split("_", 1)[0].lower()
     if prefix == "e1":
         from ..e1.build_features import compute_e1_features, make_target_e1
-        from ..e1.gru import GRURegressor
-        return compute_e1_features, make_target_e1, {"GRURegressor": GRURegressor}
+        return compute_e1_features, make_target_e1
     if prefix == "e2":
         from ..e2.build_features import compute_e2_features, make_target_e2
-        from ..e2.lstm import LSTMRegressor
-        return compute_e2_features, make_target_e2, {"LSTMRegressor": LSTMRegressor}
+        return compute_e2_features, make_target_e2
     raise ValueError(f"Re-evaluation not supported for strategy={strategy!r}")
 
 
-def _rebuild_model(payload: dict[str, Any], model_classes: dict[str, Any]):
-    """Reconstruct a frozen predictor from a saved ``model.pth`` payload."""
-    cls = model_classes.get(payload.get("model_class"))
-    if cls is None:
-        raise ValueError(f"Unknown model_class={payload.get('model_class')!r}")
+def _exog_for(strategy: str, ticker: str | None, feat_names: list[str], root: Path | None = None):
+    """Carga el frame exógeno si el modelo (por sus feature_names) usa features exógenas.
+
+    Devuelve None para modelos base, E1, o ticker desconocido → la reevaluación recompone
+    features solo del OHLCV, como siempre. NO construye el cache por red
+    (build_if_missing=False): si falta, propaga y el llamador degrada a 'stored'/None.
+    """
+    if not ticker or not strategy.lower().startswith(("e1", "e2")):
+        return None
+    from ..data.macro import EXOG_FEATURE_COLS, load_exog_for
+
+    if not any(f in set(EXOG_FEATURE_COLS) for f in feat_names):
+        return None
+    return load_exog_for(ticker, root=root, build_if_missing=False)
+
+
+def _rebuild_model(payload: dict[str, Any]):
+    """Reconstruct a frozen predictor from a saved ``model.pth`` payload.
+
+    Resolves the class from the global model registry (single source of truth),
+    then delegates to the class's ``from_payload`` when present. Falls back to
+    the historical state_dict path for older payloads or classes without the
+    torch mixin.
+    """
+    from ..models.registry import get_model_class
+
+    cls = get_model_class(payload["model_class"])  # raises ValueError if unknown
+    if hasattr(cls, "from_payload"):
+        return cls.from_payload(payload)
     model = cls(**payload["model_kwargs"])
     model.model.load_state_dict(payload["state_dict"])
     model.model.eval()
@@ -88,6 +122,9 @@ def predict_series(
     strategy: str,
     payload: dict[str, Any],
     ohlcv: pd.DataFrame,
+    *,
+    ticker: str | None = None,
+    root: Path | None = None,
 ) -> pd.Series:
     """Predicted forward returns for every reconstructable window-end date.
 
@@ -97,14 +134,15 @@ def predict_series(
     and a realised target survive ``make_sequences``' dropna — which is exactly
     the set usable for a fair backtest comparison.
     """
-    compute_features, make_target, model_classes = _strategy_kit(strategy)
-    model = _rebuild_model(payload, model_classes)
+    compute_features, make_target = _strategy_kit(strategy)
+    model = _rebuild_model(payload)
 
     lookback = int(payload["lookback_days"])
     horizon = int(payload["horizon_days"])
     feat_names = list(payload["feature_names"])
 
-    features = compute_features(ohlcv)
+    exog = _exog_for(strategy, ticker, feat_names, root)
+    features = compute_features(ohlcv, exog=exog) if exog is not None else compute_features(ohlcv)
     # Select + order features exactly as during training.
     features = features[feat_names]
     target = make_target(ohlcv, horizon_days=horizon)
@@ -136,7 +174,7 @@ def champion_predictions(
     payload = loader.load_champion(strategy, ticker)
     if payload is None:
         return None
-    return predict_series(strategy, payload, ohlcv)
+    return predict_series(strategy, payload, ohlcv, ticker=ticker, root=root)
 
 
 # ---------------------------------------------------------------
@@ -146,6 +184,9 @@ def predict_latest(
     strategy: str,
     payload: dict[str, Any],
     ohlcv: pd.DataFrame,
+    *,
+    ticker: str | None = None,
+    root: Path | None = None,
 ) -> tuple[float, pd.Timestamp] | None:
     """The model's forecast for the MOST RECENT window (no realised target).
 
@@ -155,11 +196,15 @@ def predict_latest(
     model's predicted forward return as of today. Returns None when there is
     not enough history or the champion's feature set no longer exists (drift).
     """
-    compute_features, _make_target, model_classes = _strategy_kit(strategy)
+    compute_features, _make_target = _strategy_kit(strategy)
     lookback = int(payload["lookback_days"])
     feat_names = list(payload["feature_names"])
 
-    features = compute_features(ohlcv)
+    try:
+        exog = _exog_for(strategy, ticker, feat_names, root)
+    except Exception:
+        return None  # cache exógeno ausente/ilegible → tratar como no-servable (drift)
+    features = compute_features(ohlcv, exog=exog) if exog is not None else compute_features(ohlcv)
     try:
         features = features[feat_names].dropna()
     except KeyError:
@@ -172,7 +217,7 @@ def predict_latest(
     std_X = np.asarray(payload["scaler_X"]["std"], dtype=np.float32)
     X_s = ((window - mean_X) / std_X).astype(np.float32)
 
-    model = _rebuild_model(payload, model_classes)
+    model = _rebuild_model(payload)
     y_pred_s = model.predict(X_s)
     mean_y = float(payload["scaler_y"]["mean"])
     std_y = float(payload["scaler_y"]["std"])
@@ -198,7 +243,7 @@ def champion_latest_forecast(
     if payload is None:
         return None
     try:
-        return predict_latest(strategy, payload, ohlcv)
+        return predict_latest(strategy, payload, ohlcv, ticker=ticker, root=root)
     except Exception:
         return None
 
@@ -298,6 +343,15 @@ def recompute_metrics_on_window(
     metrics["ml_ic"] = _information_coefficient(yt, yp)
     metrics["ml_mae"] = float(np.mean(np.abs(yt - yp)))
     metrics["ml_rmse"] = float(np.sqrt(np.mean((yt - yp) ** 2)))
+
+    # Métricas neutrales a la deriva, mismas claves que escribe el entrenamiento, para
+    # que la comparación justa champion-vs-candidato pueda usarlas. Ver src/metrics/skill.py.
+    metrics["ml_naive_up_rate"] = naive_up_rate(yt)
+    metrics["ml_dir_acc_edge"] = directional_accuracy_edge(yt, yp)
+    pt_stat, pt_pvalue = pesaran_timmermann(yt, yp)
+    metrics["ml_pt_stat"] = pt_stat
+    metrics["ml_pt_pvalue"] = pt_pvalue
+    metrics["bt_sharpe_excess"] = sharpe_excess(metrics.get("bt_sharpe", float("nan")), close)
     return metrics
 
 

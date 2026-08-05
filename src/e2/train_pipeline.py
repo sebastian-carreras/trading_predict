@@ -42,12 +42,20 @@ except ImportError:
 
 from .build_features import compute_e2_features, make_target_e2
 from .lstm import LSTMRegressor
+from ..models.registry import get_model_class
+from ..models.verify import roundtrip_enabled, verify_model_roundtrip
 from ..features.build_sequences_e1e2 import (
     make_sequences,
     temporal_train_val_split,
     time_split,
 )
 from ..backtest.backtest_daily import backtest_daily_signals, summarize_backtest
+from ..metrics.skill import (
+    directional_accuracy_edge,
+    naive_up_rate,
+    pesaran_timmermann,
+    sharpe_excess,
+)
 from ..utils import (
     apply_training_window,
     ensure_dir,
@@ -374,6 +382,7 @@ def run_e2_walk_forward(
     seed: int,
     lookback_days: int,
     horizon_days: int,
+    model_class_name: str = "LSTMRegressor",  # Clase de modelo (dispatch por config)
 ) -> dict:
     """Ejecuta walk-forward completo con LSTM y retorna resumen."""
 
@@ -482,14 +491,15 @@ def run_e2_walk_forward(
         y_train_s = scale_y(y_train)
         y_val_s = scale_y(y_val)
 
-        # Entrenar LSTM
-        model = LSTMRegressor(
-            input_size=X_train.shape[-1],
-            hidden_sizes=list(lstm_units),
-            dropout=dropout,
-            dense_units=dense_units,
-            seed=seed,
-        )
+        # Entrenar LSTM. Receta única (instanciación + payload) → fidelidad por construcción.
+        model_kwargs = {
+            "input_size": int(X_train.shape[-1]),
+            "hidden_sizes": list(lstm_units),
+            "dropout": float(dropout),
+            "dense_units": int(dense_units),
+            "seed": int(seed),
+        }
+        model = get_model_class(model_class_name)(**model_kwargs)  # Dispatch por config
 
         train_started_at = datetime.now(timezone.utc).isoformat()
         train_start = time.perf_counter()
@@ -568,14 +578,8 @@ def run_e2_walk_forward(
             "ticker": ticker,
             "strategy": "e2_moderate",
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "model_class": "LSTMRegressor",
-            "model_kwargs": {
-                "input_size": int(X_train.shape[-1]),
-                "hidden_sizes": list(lstm_units),
-                "dropout": float(dropout),
-                "dense_units": int(dense_units),
-                "seed": int(seed),
-            },
+            "model_class": model_class_name,  # Dispatch por config
+            "model_kwargs": model_kwargs,  # Misma receta usada para instanciar
             "lookback_days": int(lookback_days),
             "horizon_days": int(horizon_days),
             "feature_names": list(feat_names),
@@ -619,6 +623,14 @@ def run_e2_walk_forward(
         trading_metrics = summarize_backtest(bt)
         sharpe = trading_metrics.get("sharpe", float("nan"))
 
+        # Métricas neutrales a la deriva: contrastan contra los contrafácticos triviales
+        # ("siempre sube" / "comprar y mantener"). Ver src/metrics/skill.py.
+        # Informativas: no deciden promoción todavía.
+        naive_up = naive_up_rate(y_test)
+        dir_acc_edge = directional_accuracy_edge(y_test, y_pred)
+        sharpe_exc = sharpe_excess(sharpe, close_prices)
+        pt_stat, pt_pvalue = pesaran_timmermann(y_test, y_pred)
+
         ic_str = "nan" if np.isnan(ic) else f"{ic:.3f}"
         sharpe_str = "nan" if np.isnan(sharpe) else f"{sharpe:.2f}"
         # Log de fold: train Y test explícitos para evidenciar la ventana CRECIENTE
@@ -647,7 +659,12 @@ def run_e2_walk_forward(
             "ml_rmse": rmse,
             "ml_directional_accuracy": dir_acc,
             "ml_ic": ic,
+            "ml_naive_up_rate": naive_up,
+            "ml_dir_acc_edge": dir_acc_edge,
+            "ml_pt_stat": pt_stat,
+            "ml_pt_pvalue": pt_pvalue,
             **{f"bt_{k}": float(v) for k, v in trading_metrics.items()},
+            "bt_sharpe_excess": sharpe_exc,
         })
 
         preds_df = pd.DataFrame(
@@ -675,9 +692,11 @@ def run_e2_walk_forward(
     dir_acc_all = float(np.mean(np.sign(y_true_all) == np.sign(y_pred_all)))
     ic_all = compute_information_coefficient(y_true_all, y_pred_all)
 
+    close_all = ohlcv.loc[combined_preds.index, "close"].to_numpy()
+
     bt_all = backtest_daily_signals(
         timestamps=pd.DatetimeIndex(combined_preds.index),
-        close_prices=ohlcv.loc[combined_preds.index, "close"].to_numpy(),
+        close_prices=close_all,
         pred_returns=y_pred_all,
         tau_buy=tau_buy,
         tau_sell=tau_sell,
@@ -688,6 +707,14 @@ def run_e2_walk_forward(
     )
     trading_metrics_all = summarize_backtest(bt_all)
     bt_all.to_csv(out_dir / f"{ticker}_walkforward_backtest.csv")
+
+    # Contrafácticos triviales sobre la ventana pooled (ver src/metrics/skill.py).
+    naive_up_all = naive_up_rate(y_true_all)
+    dir_acc_edge_all = directional_accuracy_edge(y_true_all, y_pred_all)
+    sharpe_excess_all = sharpe_excess(
+        trading_metrics_all.get("sharpe", float("nan")), close_all,
+    )
+    pt_stat_all, pt_pvalue_all = pesaran_timmermann(y_true_all, y_pred_all)
 
     plot_path = out_dir / f"{ticker}_walkforward_metrics.png"
     save_walkforward_plot(fold_df, ticker, plot_path)
@@ -705,6 +732,10 @@ def run_e2_walk_forward(
             f"No se guardó el modelo walk-forward en {model_path}. "
             "Setear REQUIRE_MODEL_SAVE=0 para permitir continuar sin guardar."
         )
+
+    # Guard opcional de reconstrucción (ver VERIFY_MODEL_ROUNDTRIP).
+    if roundtrip_enabled() and last_model_payload is not None:
+        verify_model_roundtrip(model, last_model_payload, X_test_s[:64])
 
     # Guardar scalers
     scaler_path = None
@@ -737,7 +768,12 @@ def run_e2_walk_forward(
         "ml_rmse": rmse_all,
         "ml_directional_accuracy": dir_acc_all,
         "ml_ic": ic_all,
+        "ml_naive_up_rate": naive_up_all,
+        "ml_dir_acc_edge": dir_acc_edge_all,
+        "ml_pt_stat": pt_stat_all,
+        "ml_pt_pvalue": pt_pvalue_all,
         **{f"bt_{k}": float(v) for k, v in trading_metrics_all.items()},
+        "bt_sharpe_excess": sharpe_excess_all,
         "timing_train_seconds": round(total_train_seconds, 2),
         "timing_predict_seconds": round(total_predict_seconds, 4),
         "predictions_file": as_relative(
@@ -798,6 +834,7 @@ def run_e2_for_ticker(
     horizon_days = int(e2.get("horizon_days", 20))
 
     model_cfg = e2.get("model", {})
+    model_class_name = str(model_cfg.get("class", "LSTMRegressor"))  # Dispatch por config (default = comportamiento actual)
     lstm_units_raw = model_cfg.get("lstm_units", model_cfg.get("units", [128, 64]))
     if isinstance(lstm_units_raw, (list, tuple)):
         lstm_units = [int(x) for x in lstm_units_raw]
@@ -837,8 +874,35 @@ def run_e2_for_ticker(
     train_data_end = str(ohlcv.index.max().date()) if len(ohlcv) else None
 
     # ---------- Features y target ----------
-    active_features = e2["features"]["active"]  # Subset activo para entrenar (ver base.yaml)
-    features = compute_e2_features(ohlcv)[active_features]
+    active_features = list(e2["features"]["active"])  # Subset activo (ver base.yaml)
+
+    # Features exógenas (macro/cross-asset): solo si están activas para ESTE ticker
+    # (data.exog.enabled + allowlist data.exog.tickers, o --exog para todos).
+    exog = None
+    try:
+        from ..data.macro import exog_active_for_ticker, load_exog_for
+
+        if exog_active_for_ticker(config, ticker):
+            exog = load_exog_for(ticker, config)
+    except Exception as exc:
+        print(f"  ⚠️  Exógenas no disponibles para {ticker} ({exc}); se entrena con base.")
+        exog = None
+
+    feats_all = compute_e2_features(ohlcv, exog=exog)
+
+    # Agregar el núcleo exógeno al set activo, solo columnas presentes: si el fetch falló
+    # se degrada a base-only con warning en vez de romper (robustez para Airflow).
+    if exog is not None:
+        core = list(e2["features"].get("exog_core", []))
+        present = [c for c in core if c in feats_all.columns]
+        missing = [c for c in core if c not in feats_all.columns]
+        if missing:
+            print(f"  ⚠️  exog_core sin datos, omitidas: {missing}")
+        if present:
+            print(f"  ✓ Exógenas activas (+{len(present)}): {present}")
+        active_features = active_features + present
+
+    features = feats_all[active_features]
     target = make_target_e2(ohlcv, horizon_days=horizon_days)
 
     X, y, ts, feat_names = make_sequences(features, target, lookback=lookback_days)
@@ -883,6 +947,7 @@ def run_e2_for_ticker(
             allow_short=allow_short, max_position=max_position,
             seed=seed, lookback_days=lookback_days,
             horizon_days=horizon_days,
+            model_class_name=model_class_name,  # Clase de modelo (dispatch por config)
         )
 
         # Agregar hiperparámetros al summary
@@ -982,14 +1047,15 @@ def run_e2_for_ticker(
     y_train_s = scale_y(y_train)
     y_val_s = scale_y(y_val)
 
-    # Train
-    model = LSTMRegressor(
-        input_size=X_train_s.shape[-1],
-        hidden_sizes=lstm_units,
-        dropout=dropout,
-        dense_units=dense_units,
-        seed=seed,
-    )
+    # Train. Receta única (instanciación + payload) → fidelidad por construcción.
+    model_kwargs = {
+        "input_size": int(X_train_s.shape[-1]),
+        "hidden_sizes": list(lstm_units),
+        "dropout": float(dropout),
+        "dense_units": int(dense_units),
+        "seed": int(seed),
+    }
+    model = get_model_class(model_class_name)(**model_kwargs)  # Dispatch por config
 
     print(f"  Entrenando LSTM para {ticker}...")
     train_started_at = datetime.now(timezone.utc).isoformat()
@@ -1031,14 +1097,8 @@ def run_e2_for_ticker(
             "ticker": ticker,
             "strategy": "e2_moderate",
             "created_at": datetime.now(timezone.utc).isoformat(),
-            "model_class": "LSTMRegressor",
-            "model_kwargs": {
-                "input_size": int(X_train_s.shape[-1]),
-                "hidden_sizes": list(lstm_units),
-                "dropout": float(dropout),
-                "dense_units": int(dense_units),
-                "seed": int(seed),
-            },
+            "model_class": model_class_name,  # Dispatch por config
+            "model_kwargs": model_kwargs,  # Misma receta usada para instanciar
             "lookback_days": int(lookback_days),
             "horizon_days": int(horizon_days),
             "feature_names": list(feat_names),
@@ -1063,6 +1123,10 @@ def run_e2_for_ticker(
             f"No se guardó el modelo en {model_path}. "
             "Setear REQUIRE_MODEL_SAVE=0 para continuar sin guardar."
         )
+
+    # Guard opcional de reconstrucción (ver VERIFY_MODEL_ROUNDTRIP).
+    if roundtrip_enabled():
+        verify_model_roundtrip(model, payload, X_test_s[:64])
 
     # Predict
     pred_started_at = datetime.now(timezone.utc).isoformat()
@@ -1238,6 +1302,13 @@ def main() -> None:
             "(ignora data.training_window.daily.end del config; start se preserva)."
         ),
     )
+    parser.add_argument(
+        "--exog", action="store_true",
+        help=(
+            "Activar features exógenas (macro/cross-asset, Bloques A/B/C/D) para esta corrida: "
+            "fuerza data.exog.enabled=true y agrega e2.features.exog_core al set activo (ablación)."
+        ),
+    )
     args = parser.parse_args()
 
     if args.skip_download and args.use_latest_data:
@@ -1252,6 +1323,11 @@ def main() -> None:
         cfg_path = root / cfg_path
 
     config = load_yaml(cfg_path)
+
+    # Override por corrida: --exog fuerza data.exog.enabled=true (ablación sin editar YAML).
+    if args.exog:
+        config.setdefault("data", {}).setdefault("exog", {})["enabled"] = True
+        print("🌐 Exógenas ACTIVADAS por --exog (Bloques A/B/C/D; se agrega exog_core al set activo)")
 
     # Tickers
     tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]

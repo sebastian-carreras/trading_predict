@@ -44,7 +44,15 @@ except ImportError:
 from .build_features import compute_e1_features, make_target_e1
 from ..features.build_sequences_e1e2 import make_sequences, time_split, temporal_train_val_split
 from .gru import GRURegressor
+from ..models.registry import get_model_class
+from ..models.verify import roundtrip_enabled, verify_model_roundtrip
 from ..backtest.backtest_daily import backtest_daily_signals, summarize_backtest
+from ..metrics.skill import (
+    directional_accuracy_edge,
+    naive_up_rate,
+    pesaran_timmermann,
+    sharpe_excess,
+)
 from ..utils import (
     apply_training_window,
     ensure_dir,
@@ -504,6 +512,7 @@ def run_e1_walk_forward(  # Walk-forward completo
     seed: int,  # Semilla para inicialización aleatoria
     lookback_days: int,  # Ventana histórica usada para features
     horizon_days: int,  # Horizonte de predicción siguiente
+    model_class_name: str = "GRURegressor",  # Clase de modelo (dispatch por config)
 ) -> dict:  # Retorna resumen
     """Ejecuta el walk-forward completo y resume resultados"""
 
@@ -646,13 +655,16 @@ def run_e1_walk_forward(  # Walk-forward completo
         y_train_s = scale_y(y_train)  # y train escalado
         y_val_s = scale_y(y_val)  # y val escalado
 
-        model = GRURegressor(
-            input_size=X_train.shape[-1],  # Número de features
-            hidden_sizes=list(gru_units),  # Arquitectura GRU
-            dropout=dropout,  # Dropout entre capas
-            dense_units=dense_units,  # Tamaño de la capa densa
-            seed=seed,  # Seed para reproducibilidad
-        )
+        # Receta única: se usa para instanciar Y para el payload → imposible que
+        # el modelo entrenado y el guardado difieran (fidelidad por construcción).
+        model_kwargs = {
+            "input_size": int(X_train.shape[-1]),  # Número de features
+            "hidden_sizes": list(gru_units),  # Arquitectura GRU
+            "dropout": float(dropout),  # Dropout entre capas
+            "dense_units": int(dense_units),  # Tamaño de la capa densa
+            "seed": int(seed),  # Seed para reproducibilidad
+        }
+        model = get_model_class(model_class_name)(**model_kwargs)  # Dispatch por config
 
         train_started_at = datetime.now(timezone.utc).isoformat()
         train_start = time.perf_counter()
@@ -729,14 +741,8 @@ def run_e1_walk_forward(  # Walk-forward completo
             "ticker": ticker,  # Ticker del activo
             "strategy": "e1_conservative",  # Nombre de estrategia
             "created_at": datetime.now(timezone.utc).isoformat(),  # Timestamp UTC de entrenamiento
-            "model_class": "GRURegressor",  # Clase del modelo
-            "model_kwargs": {
-                "input_size": int(X_train.shape[-1]),  # Número de features
-                "hidden_sizes": list(gru_units),  # Arquitectura GRU
-                "dropout": float(dropout),  # Dropout
-                "dense_units": int(dense_units),  # Capa densa final
-                "seed": int(seed),  # Semilla
-            },
+            "model_class": model_class_name,  # Clase del modelo (dispatch por config)
+            "model_kwargs": model_kwargs,  # Misma receta usada para instanciar
             "lookback_days": int(lookback_days),  # Lookback usado
             "horizon_days": int(horizon_days),  # Horizonte objetivo
             "feature_names": list(feat_names),  # Lista de features
@@ -773,6 +779,14 @@ def run_e1_walk_forward(  # Walk-forward completo
 
         sharpe = trading_metrics.get("sharpe", float("nan"))  # Sharpe del fold
 
+        # Métricas neutrales a la deriva: contrastan contra los contrafácticos triviales
+        # ("siempre sube" / "comprar y mantener"), que con horizontes largos son fuertes.
+        # Ver src/metrics/skill.py. Informativas: no deciden promoción todavía.
+        naive_up = naive_up_rate(y_test)  # Qué saca "predecir siempre que sube"
+        dir_acc_edge = directional_accuracy_edge(y_test, y_pred)  # Cuánto le gana el modelo
+        sharpe_exc = sharpe_excess(sharpe, close_prices)  # Sharpe vs comprar y mantener
+        pt_stat, pt_pvalue = pesaran_timmermann(y_test, y_pred)  # Test direccional (informativo)
+
         ic_str = "nan" if np.isnan(ic) else f"{ic:.3f}"  # IC formateado
         sharpe_str = "nan" if np.isnan(sharpe) else f"{sharpe:.2f}"  # Sharpe formateado
         # Log de fold: mostramos train Y test para dejar explícito que la ventana
@@ -804,7 +818,12 @@ def run_e1_walk_forward(  # Walk-forward completo
                 "ml_rmse": rmse,  # RMSE ML
                 "ml_directional_accuracy": dir_acc,  # Directional accuracy
                 "ml_ic": ic,  # IC
+                "ml_naive_up_rate": naive_up,  # Baseline "siempre sube"
+                "ml_dir_acc_edge": dir_acc_edge,  # DirAcc - naive (neutral a la deriva)
+                "ml_pt_stat": pt_stat,  # Pesaran-Timmermann (informativo)
+                "ml_pt_pvalue": pt_pvalue,  # p-valor una cola (informativo)
                 **{f"bt_{k}": float(v) for k, v in trading_metrics.items()},  # Métricas de backtest
+                "bt_sharpe_excess": sharpe_exc,  # Sharpe - buy&hold (neutral a la deriva)
             }
         )
 
@@ -836,9 +855,11 @@ def run_e1_walk_forward(  # Walk-forward completo
     dir_acc_all = float(np.mean(np.sign(y_true_all) == np.sign(y_pred_all)))  # Direccional global
     ic_all = compute_information_coefficient(y_true_all, y_pred_all)  # IC global
 
+    close_all = ohlcv.loc[combined_preds.index, "close"].to_numpy()  # Precios de cierre globales
+
     bt_all = backtest_daily_signals(
         timestamps=pd.DatetimeIndex(combined_preds.index),  # Timestamps globales
-        close_prices=ohlcv.loc[combined_preds.index, "close"].to_numpy(),  # Precios de cierre
+        close_prices=close_all,  # Precios de cierre
         pred_returns=y_pred_all,  # Predicciones globales
         tau_buy=tau_buy,  # Umbral compra
         tau_sell=tau_sell,  # Umbral venta
@@ -849,6 +870,14 @@ def run_e1_walk_forward(  # Walk-forward completo
     )
     trading_metrics_all = summarize_backtest(bt_all)  # Métricas globales
     bt_all.to_csv(out_dir / f"{ticker}_walkforward_backtest.csv")  # Guardar backtest
+
+    # Contrafácticos triviales sobre la ventana pooled (ver src/metrics/skill.py).
+    naive_up_all = naive_up_rate(y_true_all)  # Baseline "siempre sube"
+    dir_acc_edge_all = directional_accuracy_edge(y_true_all, y_pred_all)  # DirAcc - naive
+    sharpe_excess_all = sharpe_excess(
+        trading_metrics_all.get("sharpe", float("nan")), close_all,
+    )  # Sharpe - buy&hold
+    pt_stat_all, pt_pvalue_all = pesaran_timmermann(y_true_all, y_pred_all)  # Test direccional
 
     plot_path = out_dir / f"{ticker}_walkforward_metrics.png"  # Path gráfico
     save_walkforward_plot(fold_df, ticker, plot_path)  # Generar gráfico IC/Sharpe
@@ -872,6 +901,12 @@ def run_e1_walk_forward(  # Walk-forward completo
                 f"El pipeline terminó pero NO se guardó el modelo walk-forward en {model_path}. "
                 "Si querés permitir continuar sin guardar, setear REQUIRE_MODEL_SAVE=0."
             )  # Error si se exige guardado
+
+        # Guard opcional: reconstruir el modelo desde el payload y confirmar que
+        # predice igual que el modelo vivo. Falla fuerte y temprano si el .pth no
+        # es reconstruible (rompería promoción/serving). Activar con VERIFY_MODEL_ROUNDTRIP=1.
+        if roundtrip_enabled() and model is not None:
+            verify_model_roundtrip(model, last_model_payload, X_test_s[:64])
 
     scaler_path = None
     if last_mean_X is not None and last_std_X is not None:
@@ -900,7 +935,12 @@ def run_e1_walk_forward(  # Walk-forward completo
         "ml_rmse": rmse_all,  # RMSE global
         "ml_directional_accuracy": dir_acc_all,  # Accuracy direccional
         "ml_ic": ic_all,  # IC global
+        "ml_naive_up_rate": naive_up_all,  # Baseline "siempre sube"
+        "ml_dir_acc_edge": dir_acc_edge_all,  # DirAcc - naive (neutral a la deriva)
+        "ml_pt_stat": pt_stat_all,  # Pesaran-Timmermann (informativo)
+        "ml_pt_pvalue": pt_pvalue_all,  # p-valor una cola (informativo)
         **{f"bt_{k}": float(v) for k, v in trading_metrics_all.items()},  # Métricas backtest
+        "bt_sharpe_excess": sharpe_excess_all,  # Sharpe - buy&hold (neutral a la deriva)
         "timing_train_seconds": round(total_train_seconds, 2),  # Timing train total
         "timing_predict_seconds": round(total_predict_seconds, 4),  # Timing predict total
         "predictions_file": as_relative(out_dir / f"{ticker}_walkforward_predictions.csv"),  # CSV preds
@@ -954,6 +994,7 @@ def run_e1_for_ticker(
     horizon_days = int(e1.get("horizon_days", 90))  # Horizonte por default 90
 
     model_cfg = e1.get("model", {})  # Sección de modelo
+    model_class_name = str(model_cfg.get("class", "GRURegressor"))  # Dispatch por config (default = comportamiento actual)
     gru_units = model_cfg.get("gru_units", [96, 32])  # Arquitectura GRU
     dropout = float(model_cfg.get("dropout", 0.2))  # Dropout
     dense_units = int(model_cfg.get("dense_units", 32))  # Dense units
@@ -990,8 +1031,34 @@ def run_e1_for_ticker(
     train_data_end = str(ohlcv.index.max().date()) if len(ohlcv) else None
 
     # Features
-    active_features = e1["features"]["active"]  # Subset activo para entrenar (ver base.yaml)
-    features = compute_e1_features(ohlcv)[active_features]  # Features E1
+    active_features = list(e1["features"]["active"])  # Subset activo (ver base.yaml)
+
+    # Features exógenas (macro/cross-asset): solo si están activas para ESTE ticker
+    # (data.exog.enabled + allowlist data.exog.tickers, o --exog). DESACTIVADO por default;
+    # disponible para exploración per-ticker futura (mismo mecanismo que E2).
+    exog = None
+    try:
+        from ..data.macro import exog_active_for_ticker, load_exog_for
+
+        if exog_active_for_ticker(config, ticker):
+            exog = load_exog_for(ticker, config)
+    except Exception as exc:
+        print(f"  ⚠️  Exógenas no disponibles para {ticker} ({exc}); se entrena con base.")
+        exog = None
+
+    feats_all = compute_e1_features(ohlcv, exog=exog)  # Features E1 (+ exóg si activas)
+
+    if exog is not None:
+        core = list(e1["features"].get("exog_core", []))
+        present = [c for c in core if c in feats_all.columns]
+        missing = [c for c in core if c not in feats_all.columns]
+        if missing:
+            print(f"  ⚠️  exog_core sin datos, omitidas: {missing}")
+        if present:
+            print(f"  ✓ Exógenas activas (+{len(present)}): {present}")
+        active_features = active_features + present
+
+    features = feats_all[active_features]  # Features E1
     target = make_target_e1(ohlcv, horizon_days=horizon_days)  # Target futuro
     # make_sequences alinea X/y/ts y descarta filas iniciales sin contexto suficiente.
 
@@ -1043,6 +1110,7 @@ def run_e1_for_ticker(
             seed=seed,  # Seed
             lookback_days=lookback_days,  # Lookback
             horizon_days=horizon_days,  # Horizon
+            model_class_name=model_class_name,  # Clase de modelo (dispatch por config)
         )  # Ejecutar walk-forward
 
         # Agregar hiperparámetros al summary para tracking en JSONL
@@ -1157,13 +1225,15 @@ def run_e1_for_ticker(
     # Entrenar modelo GRU (Gated Recurrent Unit)
     # - Red recurrente para modelar secuencias temporales
     # - Capaz de capturar dependencias a largo plazo
-    model = GRURegressor(
-        input_size=X_train_s.shape[-1],  # Número de features (columnas)
-        hidden_sizes=gru_units,  # Unidades en capas recurrentes
-        dropout=dropout,  # Regularización: desactivar unidades al azar
-        dense_units=dense_units,  # Unidades en capa densa final
-        seed=seed,  # Para reproducibilidad
-    )
+    # Receta única (instanciación + payload) → fidelidad por construcción.
+    model_kwargs = {
+        "input_size": int(X_train_s.shape[-1]),  # Número de features (columnas)
+        "hidden_sizes": list(gru_units),  # Unidades en capas recurrentes
+        "dropout": float(dropout),  # Regularización: desactivar unidades al azar
+        "dense_units": int(dense_units),  # Unidades en capa densa final
+        "seed": int(seed),  # Para reproducibilidad
+    }
+    model = get_model_class(model_class_name)(**model_kwargs)  # Dispatch por config
 
     print(f"Entrenando GRU para {ticker}...")  # Log inicio entrenamiento
     train_started_at = datetime.now(timezone.utc).isoformat()
@@ -1209,14 +1279,8 @@ def run_e1_for_ticker(
             "ticker": ticker,  # Ticker
             "strategy": "e1_conservative",  # Estrategia
             "created_at": datetime.utcnow().isoformat(),  # Timestamp
-            "model_class": "GRURegressor",  # Clase del modelo
-            "model_kwargs": {
-                "input_size": int(X_train_s.shape[-1]),  # Input size
-                "hidden_sizes": list(gru_units),  # GRU units
-                "dropout": float(dropout),  # Dropout
-                "dense_units": int(dense_units),  # Dense units
-                "seed": int(seed),  # Seed
-            },
+            "model_class": model_class_name,  # Clase del modelo (dispatch por config)
+            "model_kwargs": model_kwargs,  # Misma receta usada para instanciar
             "lookback_days": int(lookback_days),  # Lookback
             "horizon_days": int(horizon_days),  # Horizon
             "feature_names": list(feat_names),  # Feature names
@@ -1235,6 +1299,10 @@ def run_e1_for_ticker(
             f"El pipeline terminó pero NO se guardó el modelo en {model_path}. "
             "Si querés permitir continuar sin guardar, setear REQUIRE_MODEL_SAVE=0."
         )  # Error si se exige guardado
+
+    # Guard opcional de reconstrucción (ver VERIFY_MODEL_ROUNDTRIP).
+    if roundtrip_enabled():
+        verify_model_roundtrip(model, payload, X_test_s[:64])
 
     # Predicciones en test (normalizadas)
     pred_started_at = datetime.now(timezone.utc).isoformat()
@@ -1439,6 +1507,14 @@ def main() -> None:
             "(ignora data.training_window.daily.end del config; start se preserva)."
         ),
     )
+    parser.add_argument(
+        "--exog", action="store_true",
+        help=(
+            "Activar features exógenas (macro/cross-asset) para esta corrida: fuerza "
+            "data.exog.enabled=true y agrega e1.features.exog_core al set activo (exploración). "
+            "DESACTIVADO por default."
+        ),
+    )
     args = parser.parse_args()  # Parseo de argumentos
 
     if args.skip_download and args.use_latest_data:
@@ -1453,6 +1529,11 @@ def main() -> None:
         cfg_path = root / cfg_path  # Resolver a path absoluto
 
     config = load_yaml(cfg_path)  # Cargar YAML de config
+
+    # Override por corrida: --exog fuerza data.exog.enabled=true (exploración sin editar YAML).
+    if args.exog:
+        config.setdefault("data", {}).setdefault("exog", {})["enabled"] = True
+        print("🌐 Exógenas ACTIVADAS por --exog (E1; se agrega exog_core al set activo)")
 
     # Tickers E1
     tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]  # Tickers por CLI

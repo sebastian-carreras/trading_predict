@@ -141,6 +141,7 @@ class E2HyperparameterOptimizer:
         validation_method: Optional[str] = None,
         validation_folds: Optional[int] = None,
         use_latest_data: bool = False,
+        exog: bool = False,
     ):
         """
         Args:
@@ -155,6 +156,14 @@ class E2HyperparameterOptimizer:
         """
         self.config = load_yaml(config_path)
         self.root = project_root()
+
+        # Tunear CON features exógenas (Bloques A/B/C/D): prende data.exog.enabled para
+        # que run_e2_for_ticker cargue el exog y agregue exog_core al set activo en cada
+        # trial. Con la allowlist vacía (data.exog.tickers: []) aplica a todos los tickers.
+        # Ver src/data/macro.py::exog_active_for_ticker.
+        if exog:
+            self.config.setdefault("data", {}).setdefault("exog", {})["enabled"] = True
+            print("🌐 Optuna CON exógenas (data.exog.enabled=True; tuneando sobre 21 features)")
 
         # Validación: CLI > config > default
         optuna_val = self.config.get("optuna", {}).get("e2_moderate", {}).get("validation", {})
@@ -1313,6 +1322,15 @@ def main():
             "data.training_window.daily."
         ),
     )
+    parser.add_argument(
+        "--exog",
+        action="store_true",
+        help=(
+            "Tunear CON features exógenas (Bloques A/B/C/D): prende data.exog.enabled "
+            "para que cada trial entrene sobre 21 features (12 base + núcleo exog). "
+            "Usar --output_dir distinto para no pisar el yaml base."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -1418,6 +1436,7 @@ def main():
                 validation_method=args.validation_method,
                 validation_folds=args.optuna_folds,
                 use_latest_data=args.use_latest_data,
+                exog=args.exog,
             )
 
             study_name = _study_name_for_ticker(args.study_name, t)
@@ -1483,6 +1502,7 @@ def main():
             validation_method=args.validation_method,
             validation_folds=args.optuna_folds,
             use_latest_data=args.use_latest_data,
+            exog=args.exog,
         )
 
         study = None

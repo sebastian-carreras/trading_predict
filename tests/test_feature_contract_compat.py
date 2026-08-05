@@ -47,6 +47,27 @@ def _synthetic_ohlcv(n: int = 260, seed: int = 0) -> pd.DataFrame:
     )
 
 
+def _catalog_columns(prefix: str, ohlcv: pd.DataFrame) -> set[str]:
+    """Columnas que compute_e{1,2}_features PUEDE producir hoy (catálogo completo).
+
+    Para E2 el catálogo incluye las features exógenas (Bloques A/B/C/D): igual que
+    la reproducción en producción (``reevaluation._exog_for`` pasa el exog), acá se
+    pasa un frame exógeno sintético para que las columnas macro sean producibles.
+    El test solo compara NOMBRES de columna, así que valores sintéticos alcanzan.
+    """
+    compute_features = COMPUTE_FUNCS[prefix]
+    if prefix in ("e1", "e2"):
+        from src.data.macro import EXOG_HELPER_COLS, GLOBAL_FEATURE_COLS
+
+        cols = list(GLOBAL_FEATURE_COLS) + list(EXOG_HELPER_COLS)
+        rng = np.random.default_rng(1)
+        exog = pd.DataFrame(
+            {c: rng.normal(0, 1, len(ohlcv)) for c in cols}, index=ohlcv.index
+        )
+        return set(compute_features(ohlcv, exog=exog).columns)
+    return set(compute_features(ohlcv).columns)
+
+
 def _iter_model_entries(prefix: str):
     """Yield (ticker, stage, run_dir) for every model artifact reference of a strategy."""
     if not REGISTRY_PATH.exists():
@@ -82,8 +103,7 @@ def test_current_feature_code_covers_all_registered_models(prefix):
     reconstructable by the current compute_e{1,2}_features — i.e. no feature
     it was trained on may have been silently deleted since."""
     pytest.importorskip("torch")
-    compute_features = COMPUTE_FUNCS[prefix]
-    current_columns = set(compute_features(_synthetic_ohlcv()).columns)
+    current_columns = _catalog_columns(prefix, _synthetic_ohlcv())
 
     missing: dict[str, list[str]] = {}
     checked = 0
@@ -116,8 +136,7 @@ def test_active_features_config_is_valid_subset_of_catalog(prefix, strategy_key)
     """strategies.<strategy_key>.features.active in base.yaml must be non-empty
     and every name in it must actually be computable today — catches a typo or
     stale feature name in config, independent of any local model artifacts."""
-    compute_features = COMPUTE_FUNCS[prefix]
-    current_columns = set(compute_features(_synthetic_ohlcv()).columns)
+    current_columns = _catalog_columns(prefix, _synthetic_ohlcv())
 
     cfg = yaml.safe_load(BASE_CONFIG_PATH.read_text())
     active = cfg["strategies"][strategy_key]["features"]["active"]

@@ -82,6 +82,21 @@ def refresh_data_for_training(
     tickers = [t for t in tickers if t]
     settings = resolve_download_settings(config, granularity=granularity)
 
+    # Features exógenas (macro / cross-asset): refresco no fatal del cache global,
+    # solo si data.exog.enabled y no se pidió --skip-download (que significa "usar los
+    # datos/cachés existentes"). Si el cache no existe, load_exog_for lo construye al
+    # vuelo la primera vez. Ver src/data/macro.py.
+    if granularity == "daily" and not skip_download:
+        try:
+            from .macro import exog_enabled, refresh_exog
+
+            if exog_enabled(config):
+                print("\nRefrescando features exógenas (macro/cross-asset)...")
+                if refresh_exog(config, root=root):
+                    print("✓ Cache exógeno actualizado\n")
+        except Exception as exc:
+            print(f"⚠️  Exógenas (refresco omitido): {exc}\n")
+
     if skip_download or not settings["enabled"]:
         motivo = "--skip-download" if skip_download else "data.download.enabled=false"
         print(f"\nUsando datos existentes (descarga omitida: {motivo})\n")

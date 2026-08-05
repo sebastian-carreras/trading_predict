@@ -1,0 +1,59 @@
+# Mapa ticker → ETF sectorial (SPDR Select Sector), para el Bloque B (fuerza
+# relativa sectorial) de las features exógenas. Ver src/data/macro.py y docs/FEATURES.md.
+#
+# Uso: rel_strength_sector = ret_20d_ticker − ret_20d_ETF ; sector_rotation = ret_20d_ETF − ret_20d_SPY.
+# Fallback: cualquier ticker no listado usa "SPY" (rel_strength = ticker − mercado, rotation ≈ 0).
+#
+# ETFs disponibles (los que baja macro.py): XLK, XLF, XLV, XLE, XLY, XLP, XLI, XLC, XLU, XLB, XLRE.
+#
+# NOTA sobre tickers .BA: el mapeo a un ETF sectorial de EE.UU. captura la tendencia
+# GLOBAL del sector, no el contexto local argentino (mercado/moneda distintos). Es una
+# aproximación deliberada para la Fase 1; el contexto argentino propio (CCL, riesgo país,
+# Merval) llega en la Fase 3 (Bloque G). La ablación dirá si aporta para los .BA.
+
+default: "SPY"
+
+map:
+  # ── E2 (universo objetivo de la Fase 1) ──────────────────────────────
+  NVDA: "XLK"     # Semiconductores
+  GOOGL: "XLC"    # Communication Services
+  AMZN: "XLY"     # Consumo discrecional
+  META: "XLC"     # Communication Services
+  NFLX: "XLC"     # Communication Services
+  BBAR.BA: "XLF"  # Banco (AR) — proxy financieras global
+  BMA.BA: "XLF"   # Banco Macro (AR)
+  EDN.BA: "XLU"   # Edenor — utilities/energía eléctrica
+  TGSU2.BA: "XLE" # TGS — transporte de gas / energía
+  LOMA.BA: "XLB"  # Loma Negra — materiales (cemento)
+  LLY: "XLV"      # Salud/Farma
+  ISRG: "XLV"     # Salud/MedTech
+  ABBV: "XLV"     # Salud/Farma
+  VRTX: "XLV"     # Salud/Biotech
+  AVGO: "XLK"     # Semiconductores
+  QCOM: "XLK"     # Semiconductores
+  NOW: "XLK"      # Software
+  CRM: "XLK"      # Software
+  ORCL: "XLK"     # Software/Cloud
+  MA: "XLF"       # Pagos — Financieras (GICS reclasificó pagos a Financials en 2023)
+  SPGI: "XLF"     # S&P Global — Financieras/Data
+  GS: "XLF"       # Goldman Sachs — Banca
+  COST: "XLP"     # Costco — Staples
+  HD: "XLY"       # Home Depot — Discrecional
+  WMT: "XLP"      # Walmart — Staples
+  MCD: "XLY"      # McDonald's — Discrecional
+  GE: "XLI"       # GE Aerospace — Industriales
+  UNP: "XLI"      # Union Pacific — Industriales/Transporte
+  HON: "XLI"      # Honeywell — Industriales
+  TMUS: "XLC"     # T-Mobile — Communication Services/Telecom
+
+  # ── E1 (para reuso futuro cuando se extienda la Fase 1 a E1) ─────────
+  AAPL: "XLK"
+  MSFT: "XLK"
+  JNJ: "XLV"
+  PG: "XLP"
+  V: "XLF"
+  YPFD.BA: "XLE"  # YPF — energía
+  GGAL.BA: "XLF"  # Grupo Galicia — banco
+  PAMP.BA: "XLE"  # Pampa Energía — energía
+  BYMA.BA: "XLF"  # Bolsas y Mercados — financieras
+  CEPU.BA: "XLU"  # Central Puerto — utilities/generación

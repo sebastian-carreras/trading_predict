@@ -102,6 +102,25 @@ data:
     daily_period: "10y"     # período de bootstrap cuando el CSV diario aún no existe
     intraday_period: "60d"  # período de bootstrap cuando el CSV intradía aún no existe
 
+  # Features exógenas (macro / cross-asset / commodities) — Fase 1: Bloques A+B+C+D.
+  # Ver src/data/macro.py y docs/FEATURES.md. DEFAULT false → cero impacto en el pipeline
+  # diario del champion; se activa por corrida con --exog o poniendo enabled: true tras la
+  # ablación. Cuando enabled, el pipeline (1) refresca el cache exógeno al entrenar, (2)
+  # carga el exog por ticker y (3) agrega strategies.<e>.features.exog_core al set activo.
+  # No requiere API keys en la Fase 1 (FRED se baja por su CSV público).
+  exog:
+    # PAUSADO: la ablación/selección previa quedó INVALIDADA por un bug de datos — la serie
+    # ICE BofA HY OAS (BAMLH0A0HYM2) tiene la historia pública restringida en FRED, dejaba
+    # hy_oas_z NaN antes de 2023 y RECORTABA el train set de los modelos exógenos (entrenaban
+    # ~2023-2026 vs base 2016-2026 → comparación injusta). Corregido: hy_oas_z ahora es un
+    # proxy HYG/LQD (yfinance, historia completa). Re-ablación con datos corregidos en curso
+    # antes de re-activar con una selección válida. Ver reports/ablation/ablation_report.md.
+    enabled: false
+    history_start: "2014-01-01"  # bootstrap con warmup para rolling de 252d antes de 2016
+    # Allowlist per-ticker (se repuebla tras la re-ablación con datos corregidos + held-out).
+    # Lista vacía/ausente = exógenas para todos (modo ablación con --exog).
+    tickers: []
+
 costs:
   # Costos round-trip (entrada+salida). Usar en backtest neto.
   daily_round_trip_bps: 10
@@ -158,6 +177,24 @@ strategies:
         - bb_pct_b
         - bb_bandwidth
         - adx_14
+
+      # Núcleo exógeno (Bloques A/B/C/D) que se AGREGA a `active` cuando data.exog.enabled
+      # (o --exog). DESACTIVADO por default (data.exog.enabled: false) — disponible para
+      # exploración per-ticker futura. Se calcula en compute_e1_features(df, exog=...).
+      # Catálogo completo disponible (ver docs/FEATURES.md):
+      #   A: vix_ts, vix_pctl_252, hy_oas_z, curve_10y2y, dxy_mom_20, spy_mom_20, spy_mom_60
+      #   B: rel_strength_sector, sector_rotation, beta_60   C: breakeven_10y, jobless_claims_z, nfci, rate_shock_10y
+      #   D: oil_mom_20, copper_mom_20, gold_mom_20, soy_mom_20
+      exog_core:
+        - vix_ts
+        - vix_pctl_252
+        - hy_oas_z
+        - curve_10y2y
+        - spy_mom_20
+        - rel_strength_sector
+        - sector_rotation
+        - breakeven_10y
+        - nfci
 
     risk:
       stop_loss_pct: 0.10
@@ -223,6 +260,24 @@ strategies:
         - bb_pct_b
         - adx_14
         - skew_ret_20d
+
+      # Núcleo exógeno (Fase 1, Bloques A/B/C/D) que se AGREGA a `active` cuando
+      # data.exog.enabled (o --exog). Se calcula en compute_e2_features(df, exog=...).
+      # Catálogo completo disponible (activar por ablación editando esta lista):
+      #   A: vix_ts, vix_pctl_252, hy_oas_z, curve_10y2y, dxy_mom_20, spy_mom_20, spy_mom_60
+      #   B: rel_strength_sector, sector_rotation, beta_60
+      #   C: breakeven_10y, jobless_claims_z, nfci, rate_shock_10y
+      #   D: oil_mom_20, copper_mom_20, gold_mom_20, soy_mom_20
+      exog_core:
+        - vix_ts
+        - vix_pctl_252
+        - hy_oas_z
+        - curve_10y2y
+        - spy_mom_20
+        - rel_strength_sector
+        - sector_rotation
+        - breakeven_10y
+        - nfci
 
     risk:
       stop_loss_pct: 0.07   # Stop loss del 7%
