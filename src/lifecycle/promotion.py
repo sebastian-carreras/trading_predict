@@ -74,6 +74,21 @@ _DEFAULT_PROMOTION_CONFIG: dict[str, Any] = {
         "bt_calmar": 0.20,
     },
     "per_strategy": {},
+    # Regla v2 (compuertas + métrica primaria). Ver compute_score_v2. En MODO SOMBRA:
+    # se calcula y se registra, pero la decisión que se ejecuta sigue siendo la v1.
+    "v2": {
+        "enabled": True,        # calcular la v2 (sombra)
+        "active": False,        # que la v2 DECIDA (paso 4 del plan; requiere piso de ruido)
+        "primary_metric": "bt_sharpe_excess",
+        "gates": {
+            "bt_sharpe": 0.0,
+            "ml_ic": 0.0,
+            "ml_dir_acc_edge": 0.0,
+        },
+        # Mejora absoluta mínima en la métrica primaria. 0.0 hasta que
+        # scripts/evaluation/noise_floor.py mida la dispersión semilla-a-semilla.
+        "min_improvement_abs": 0.0,
+    },
 }
 
 
@@ -99,6 +114,12 @@ class PromotionDecision:
     eval_window_start: str | None = None
     eval_window_end: str | None = None
     eval_n_samples: int | None = None
+    # --- Regla v2 en MODO SOMBRA: se calcula y se registra, no decide nada ---
+    score_v2_candidate: float | None = None
+    score_v2_champion: float | None = None
+    would_promote_v2: bool | None = None
+    v2_gates_passed: bool | None = None
+    reason_v2: str = ""
 
 
 # ---------------------------------------------------------------
@@ -132,6 +153,13 @@ def _append_promotion_log(
         "eval_window_start": decision.eval_window_start,
         "eval_window_end": decision.eval_window_end,
         "eval_n_samples": decision.eval_n_samples,
+        # Sombra v2: permite comparar ambas reglas sobre el mismo histórico sin
+        # que la v2 haya decidido nada. Ver scripts/evaluation/backfill_score_v2.py.
+        "score_v2_candidate": decision.score_v2_candidate,
+        "score_v2_champion": decision.score_v2_champion,
+        "would_promote_v2": decision.would_promote_v2,
+        "v2_gates_passed": decision.v2_gates_passed,
+        "reason_v2": decision.reason_v2,
         "detail": decision.detail,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -237,6 +265,143 @@ def compute_score(
 
 
 # ---------------------------------------------------------------
+# Scoring v2 — compuertas duras + una métrica primaria (modo sombra)
+# ---------------------------------------------------------------
+#
+# Por qué v2 existe
+# -----------------
+# ``compute_score`` suma métricas en escala CRUDA, así que el peso que decide no es
+# el peso escrito sino ``w_i · std(metric_i)``. Medido sobre el registry:
+#
+#   E1: bt_calmar nominal 0.20 → efectivo 0.443 | ml_directional_accuracy 0.20 → 0.057
+#   E2: ml_directional_accuracy nominal 0.30 → efectivo 0.082 | bt_sharpe 0.30 → 0.458
+#
+# Es decir, bt_sharpe + bt_calmar deciden el 85% (E1) / 82% (E2), y ambas derivan de la
+# MISMA curva de equity. Además ``ml_directional_accuracy`` cruda premia la deriva del
+# activo, no la habilidad (ver src/metrics/skill.py).
+#
+# v2 elimina los pesos: compuertas binarias + UNA métrica primaria neutral a la deriva.
+
+
+def get_v2_config(cfg: dict[str, Any] | None) -> dict[str, Any]:
+    """Resuelve el sub-config ``v2`` sobre los defaults."""
+    base = dict(_DEFAULT_PROMOTION_CONFIG["v2"])
+    override = (cfg or {}).get("v2") or {}
+    merged = {**base, **override}
+    merged["gates"] = {**base["gates"], **(override.get("gates") or {})}
+    return merged
+
+
+def evaluate_gates(
+    metrics: dict[str, Any],
+    gates: dict[str, float],
+) -> tuple[bool, list[str]]:
+    """Compuertas duras: cada métrica debe superar ESTRICTAMENTE su umbral.
+
+    Returns ``(passed, failures)`` donde *failures* describe cada compuerta fallada.
+    Una métrica ausente o no finita cuenta como fallo: no se promueve a ciegas.
+    """
+    failures: list[str] = []
+    for key, threshold in gates.items():
+        raw = metrics.get(key)
+        if raw is None or not isinstance(raw, (int, float)):
+            failures.append(f"{key}=ausente")
+            continue
+        val = float(raw)
+        if math.isnan(val) or math.isinf(val):
+            failures.append(f"{key}={raw}")
+            continue
+        if val <= float(threshold):
+            failures.append(f"{key}={val:.4f}<={threshold}")
+    return (not failures), failures
+
+
+def compute_score_v2(
+    metrics: dict[str, Any],
+    cfg: dict[str, Any] | None = None,
+) -> tuple[float, bool, list[str]]:
+    """Score v2: el valor de la métrica primaria, más el resultado de las compuertas.
+
+    Returns ``(score, gates_passed, gate_failures)``. El score es ``nan`` si la métrica
+    primaria falta — que es lo que pasa con los modelos entrenados antes de este cambio.
+    """
+    v2 = get_v2_config(cfg)
+    raw = metrics.get(v2["primary_metric"])
+    if raw is None or not isinstance(raw, (int, float)):
+        score = float("nan")
+    else:
+        score = float(raw)
+        if math.isnan(score) or math.isinf(score):
+            score = float("nan")
+
+    passed, failures = evaluate_gates(metrics, v2["gates"])
+    return score, passed, failures
+
+
+def compare_v2(
+    candidate_metrics: dict[str, Any],
+    champion_metrics: dict[str, Any],
+    cfg: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Decisión v2 (sombra): compuertas + mejora ABSOLUTA en la métrica primaria.
+
+    A diferencia de la v1, la mejora es absoluta y no relativa: ``(cand-champ)/champ``
+    sobre una escala arbitraria no tiene interpretación, y se dispara cuando el
+    denominador es chico.
+    """
+    v2 = get_v2_config(cfg)
+    cand_score, cand_ok, cand_fail = compute_score_v2(candidate_metrics, cfg)
+    champ_score, _champ_ok, _ = compute_score_v2(champion_metrics, cfg)
+
+    min_abs = float(v2.get("min_improvement_abs", 0.0))
+    metric = v2["primary_metric"]
+
+    if math.isnan(cand_score):
+        return {
+            "candidate_score": None, "champion_score": None,
+            "gates_passed": cand_ok, "gate_failures": cand_fail,
+            "improvement_abs": None, "would_promote": False,
+            "reason": f"v2 no evaluable: falta {metric} en el candidato",
+        }
+
+    if not cand_ok:
+        return {
+            "candidate_score": round(cand_score, 6),
+            "champion_score": None if math.isnan(champ_score) else round(champ_score, 6),
+            "gates_passed": False, "gate_failures": cand_fail,
+            "improvement_abs": None, "would_promote": False,
+            "reason": f"v2 compuertas falladas: {', '.join(cand_fail)}",
+        }
+
+    # Sin champion evaluable en v2 (modelo viejo, sin la métrica) no hay contra qué comparar.
+    if math.isnan(champ_score):
+        return {
+            "candidate_score": round(cand_score, 6), "champion_score": None,
+            "gates_passed": True, "gate_failures": [],
+            "improvement_abs": None, "would_promote": False,
+            "reason": f"v2 sin comparación: falta {metric} en el champion (entrenado pre-v2)",
+        }
+
+    delta = cand_score - champ_score
+    # Estrictamente mayor: un empate (Δ=0) NUNCA promueve. Con `min_improvement_abs: 0.0`
+    # un `>=` promovería en cada empate y generaría churn — pasó con EDN.BA en el backfill,
+    # donde candidato y champion tenían ambos sharpe_excess exactamente 0.
+    would = delta > 0 and delta >= min_abs
+    return {
+        "candidate_score": round(cand_score, 6),
+        "champion_score": round(champ_score, 6),
+        "gates_passed": True, "gate_failures": [],
+        "improvement_abs": round(delta, 6),
+        "would_promote": bool(would),
+        "reason": (
+            f"v2 {metric}: candidato {cand_score:+.4f} vs champion {champ_score:+.4f} "
+            f"(Δ={delta:+.4f}, umbral {min_abs:+.4f}) → "
+            f"{'PROMOVER' if would else 'MANTENER'}"
+        ),
+    }
+
+
+# ---------------------------------------------------------------
 # Comparison
 # ---------------------------------------------------------------
 def compare_candidate_vs_champion(
@@ -259,19 +424,35 @@ def compare_candidate_vs_champion(
     min_improvement: float = float(cfg.get("min_improvement", 0.05))
     require_positive_sharpe: bool = bool(cfg.get("require_positive_sharpe", True))
 
+    # --- Sombra v2: se calcula siempre, no altera ninguna decisión ---
+    v2_shadow: dict[str, Any] = {}
+    if get_v2_config(cfg).get("enabled", True):
+        try:
+            v2_shadow = compare_v2(candidate_metrics, champion_metrics, cfg)
+        except Exception as exc:  # la sombra nunca puede romper la promoción real
+            v2_shadow = {"reason": f"v2 falló: {exc}"}
+
+    def _with_v2(decision: PromotionDecision) -> PromotionDecision:
+        decision.score_v2_candidate = v2_shadow.get("candidate_score")
+        decision.score_v2_champion = v2_shadow.get("champion_score")
+        decision.would_promote_v2 = v2_shadow.get("would_promote")
+        decision.v2_gates_passed = v2_shadow.get("gates_passed")
+        decision.reason_v2 = v2_shadow.get("reason", "")
+        return decision
+
     # --- Safety net ---
     cand_sharpe = candidate_metrics.get("bt_sharpe")
     if require_positive_sharpe and (
         cand_sharpe is None or float(cand_sharpe) <= 0
     ):
-        return PromotionDecision(
+        return _with_v2(PromotionDecision(
             ticker="",
             should_promote=False,
             candidate_score=0.0,
             champion_score=0.0,
             improvement_pct=0.0,
             reason=f"candidate bt_sharpe={cand_sharpe} <= 0 (safety net)",
-        )
+        ))
 
     cand_score, cand_detail = compute_score(candidate_metrics, weights)
     champ_score, champ_detail = compute_score(champion_metrics, weights)
@@ -296,7 +477,7 @@ def compare_candidate_vs_champion(
             f"improvement {improvement:.1%} < {min_improvement:.0%} threshold"
         )
 
-    return PromotionDecision(
+    return _with_v2(PromotionDecision(
         ticker="",
         should_promote=should,
         candidate_score=round(cand_score, 6),
@@ -307,7 +488,7 @@ def compare_candidate_vs_champion(
             **{f"candidate_{k}": v for k, v in cand_detail.items()},
             **{f"champion_{k}": v for k, v in champ_detail.items()},
         },
-    )
+    ))
 
 
 # ---------------------------------------------------------------

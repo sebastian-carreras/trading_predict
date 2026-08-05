@@ -342,12 +342,42 @@ lifecycle:
     # esto se MANTIENE al champion (evidencia fresca insuficiente).
     min_eval_samples: 30
 
-    # Scoring weights globales (fallback si la estrategia no tiene overrides)
+    # Scoring weights globales (fallback si la estrategia no tiene overrides).
+    #
+    # ⚠️ ATENCIÓN: estos pesos NO son los que deciden. compute_score suma las métricas en
+    # escala CRUDA, así que el peso efectivo es w_i · std(metric_i). Medido sobre el registry:
+    #   E1: bt_calmar 0.20 → efectivo 0.443 | ml_directional_accuracy 0.20 → efectivo 0.057
+    #   E2: bt_sharpe 0.30 → efectivo 0.458 | ml_directional_accuracy 0.30 → efectivo 0.082
+    # bt_sharpe + bt_calmar deciden el 85% (E1) / 82% (E2) y ambas salen de la MISMA curva
+    # de equity. Ver el bloque `v2` abajo, que reemplaza esta suma ponderada.
     scoring_weights:
       bt_sharpe: 0.35
       ml_ic: 0.25
       ml_directional_accuracy: 0.20
       bt_calmar: 0.20
+
+    # Regla v2: compuertas duras + UNA métrica primaria neutral a la deriva.
+    # Elimina los pesos (nada que calibrar, peso nominal == peso efectivo por construcción).
+    # Ver src/lifecycle/promotion.py::compute_score_v2 y src/metrics/skill.py.
+    #
+    # MODO SOMBRA: enabled=true la calcula y la registra en promotion_log.jsonl;
+    # active=false hace que la decisión ejecutada siga siendo la v1. Activar (active=true)
+    # recién tras medir el piso de ruido y revisar el backfill (pasos 3 y 4 del plan).
+    v2:
+      enabled: true
+      active: false
+      # "¿le gana a comprar y no hacer nada?" — Sharpe de la estrategia menos el de buy & hold
+      # sobre la MISMA ventana. Una estrategia siempre-comprada sin costos da exactamente 0.
+      primary_metric: "bt_sharpe_excess"
+      # Compuertas binarias: el candidato debe superar ESTRICTAMENTE cada umbral.
+      gates:
+        bt_sharpe: 0.0            # no pierde plata
+        ml_ic: 0.0                # ordena mejor que el azar
+        ml_dir_acc_edge: 0.0      # supera al naive "siempre comprado"
+      # Mejora ABSOLUTA mínima en la métrica primaria (no relativa: (c-ch)/ch sobre una
+      # escala arbitraria no tiene interpretación y explota con denominador chico).
+      # 0.0 hasta que scripts/evaluation/noise_floor.py mida la dispersión entre semillas.
+      min_improvement_abs: 0.0
 
     # Overrides por estrategia.
     # Cada entrada puede redefinir cualquier campo de promotion (scoring_weights,
