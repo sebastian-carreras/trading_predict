@@ -55,7 +55,11 @@ dag = DAG(
     catchup=False,
     tags=['trading', 'e1', 'conservative', 'gru'],
     params={
-        'tickers': 'YPFD.BA, GGAL.BA, PAMP.BA, BYMA.BA, CEPU.BA, AAPL, MSFT, JNJ, PG, V',  # Comma-separated tickers: "AAPL,MSFT,GOOGL,META,NVDA", vacío = todos del config
+        # Vacío = universe.tickers_by_strategy.e1_conservative de base.yaml (fuente
+        # única de verdad). Antes había una lista fija acá que duplicaba el config
+        # y se desincronizaba en silencio. Para acotar una corrida manual, pasar
+        # tickers por "Trigger DAG w/ config": "AAPL,MSFT,GOOGL".
+        'tickers': '',
         'use_tuned_params': 'True',  # True = aplicar overrides por ticker desde YAML (Optuna)
         'tuned_params_path': 'reports/hyperparameter_optimization/e1_tuned_params_by_ticker.yaml',
         'train_with_new_data': 'True',  # True = refresca datos canónicos y re-entrena con ellos (retrain diario con data fresca)
@@ -89,8 +93,15 @@ def download_daily_data(**context):
     if tickers_param:
         tickers = [t.strip() for t in tickers_param.split(',') if t.strip()]
     else:
-        # Usar todos los tickers del config
-        tickers = list(config.get("universe", {}).get("tickers", []))
+        # Usar todos los tickers E1 del config. Antes leía universe.tickers, clave
+        # que ya no existe en base.yaml (quedó de una versión previa del universo),
+        # así que este fallback resolvía a [] y el DAG no descargaba nada. Fuente
+        # correcta, igual que la tarea de entrenamiento más abajo y que E2.
+        tickers = list(
+            config.get("universe", {})
+            .get("tickers_by_strategy", {})
+            .get("e1_conservative", [])
+        )
 
     # train_with_new_data controla si los datos recién descargados se USAN para
     # entrenar. Por defecto (False) se descargan a un directorio de staging y los

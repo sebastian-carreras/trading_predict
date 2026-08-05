@@ -46,7 +46,12 @@ dag = DAG(
     catchup=False,
     tags=['trading', 'e2', 'moderate', 'lstm'],
     params={
-        'tickers': 'BBAR.BA, BMA.BA, EDN.BA, TGSU2.BA, LOMA.BA, NVDA, GOOGL, AMZN, META, NFLX',
+        # Vacío = universe.tickers_by_strategy.e2_moderate de base.yaml (30 tickers).
+        # La lista fija que había acá se escribió cuando el universo tenía 10 y nunca
+        # se actualizó: a los otros 20 champions no se les entrenaba candidato, así
+        # que quedaban congelados sin poder mejorar ni refrescar recent_metrics.
+        # Para acotar una corrida manual, pasar tickers por "Trigger DAG w/ config".
+        'tickers': '',
         'use_tuned_params': 'True',
         'tuned_params_path': 'reports/hyperparameter_optimization/e2_tuned_params_by_ticker.yaml',
         'train_with_new_data': 'True',  # True = refresca datos canónicos y re-entrena con ellos (retrain diario con data fresca)
