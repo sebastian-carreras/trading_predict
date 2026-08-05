@@ -166,6 +166,11 @@ strategies:
 
     model:
       type: "GRU"
+      # class: nombre registrado en src/models/registry.py que el pipeline instancia
+      # (dispatch por config). Si se omite, default = "GRURegressor" → comportamiento
+      # idéntico al actual. Para usar otro modelo, registrarlo con @register_model,
+      # agregarlo a _LAZY_TARGETS y poner acá su nombre. `type` es solo metadata.
+      class: "GRURegressor"
       gru_units: [64, 32]  # REDUCIDO de [128, 64] → menos parámetros = menos overfitting
       dropout: 0.3  # AUMENTADO de 0.2 → más regularización
       recurrent_dropout: 0.2  # AUMENTADO de 0.1 → más regularización en GRU
@@ -226,6 +231,8 @@ strategies:
 
     model:
       type: "LSTM"
+      # class: ver nota en e1_conservative.model.class. Default = "LSTMRegressor".
+      class: "LSTMRegressor"
       lstm_units: [128, 64]  # 2 capas LSTM
       dropout: 0.2
       dense_units: 32

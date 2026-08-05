@@ -14,9 +14,12 @@ Arquitectura según especificación:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
+
+from ..models.base import TorchRegressorMixin
+from ..models.registry import register_model
 
 
 def _require_torch():
@@ -35,8 +38,31 @@ class TrainResult:
     epochs_ran: int
 
 
-class GRURegressor:
-    """GRU para regresión de retornos (E1)."""
+@register_model("GRURegressor")
+class GRURegressor(TorchRegressorMixin):
+    """GRU para regresión de retornos (E1).
+
+    Serialización torch (state_dict) vía :class:`TorchRegressorMixin`, así los
+    ``.pth`` guardados antes de este refactor se reconstruyen sin cambios.
+    """
+
+    @classmethod
+    def kwargs_from_config(
+        cls, model_cfg: dict[str, Any], *, input_size: int, seed: int
+    ) -> dict[str, Any]:
+        """Construye los kwargs del constructor desde un bloque ``model:``.
+
+        Contrato para modelos config-driven. El pipeline E1 NO lo usa: arma los
+        kwargs desde valores ya resueltos (incluidos overrides de Optuna por
+        ticker), y re-leer el config crudo acá los perdería.
+        """
+        return {
+            "input_size": int(input_size),
+            "hidden_sizes": list(model_cfg.get("gru_units", [128, 64])),
+            "dropout": float(model_cfg.get("dropout", 0.2)),
+            "dense_units": int(model_cfg.get("dense_units", 32)),
+            "seed": int(seed),
+        }
 
     def __init__(
         self,
