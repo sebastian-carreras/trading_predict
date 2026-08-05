@@ -109,16 +109,17 @@ data:
   # carga el exog por ticker y (3) agrega strategies.<e>.features.exog_core al set activo.
   # No requiere API keys en la Fase 1 (FRED se baja por su CSV público).
   exog:
-    # PAUSADO: la ablación/selección previa quedó INVALIDADA por un bug de datos — la serie
-    # ICE BofA HY OAS (BAMLH0A0HYM2) tiene la historia pública restringida en FRED, dejaba
-    # hy_oas_z NaN antes de 2023 y RECORTABA el train set de los modelos exógenos (entrenaban
-    # ~2023-2026 vs base 2016-2026 → comparación injusta). Corregido: hy_oas_z ahora es un
-    # proxy HYG/LQD (yfinance, historia completa). Re-ablación con datos corregidos en curso
-    # antes de re-activar con una selección válida. Ver reports/ablation/ablation_report.md.
+    # Fase 1 CERRADA sin activar (2026-08-02). In-sample las exógenas SÍ mejoran E2 con
+    # hiperparámetros re-tuneados para el set exógeno (ablación justa v3: +0.036 score), pero
+    # out-of-sample el beneficio NO generaliza per-ticker (held-out multi-seed: winners Δ
+    # mediana -0.134, 3/12 sobreviven, inestables entre semillas) → no hay allowlist
+    # defendible. Antes de esto hubo un bug de datos: hy_oas_z venía de FRED BAMLH0A0HYM2,
+    # con historia pública restringida, y recortaba en silencio el train set de los modelos
+    # exógenos; hoy es un proxy HYG/LQD con historia completa. Ver docs/ABLATION_EXOG.md.
     enabled: false
     history_start: "2014-01-01"  # bootstrap con warmup para rolling de 252d antes de 2016
-    # Allowlist per-ticker (se repuebla tras la re-ablación con datos corregidos + held-out).
-    # Lista vacía/ausente = exógenas para todos (modo ablación con --exog).
+    # Allowlist per-ticker. Vacía: la Fase 1 no encontró un subconjunto que sobreviva la
+    # validación temporal. Lista vacía/ausente = exógenas para todos (modo ablación --exog).
     tickers: []
 
 costs:

@@ -38,7 +38,7 @@ from src.lifecycle.promotion import compute_score
 from src.utils import ensure_dir, get_nested, load_yaml, project_root
 
 # Ganadores robustos de la ablación JUSTA v3 (params exog-tuneados, 30 tickers) + perdedores
-# robustos como control negativo (no deberían mejorar out-of-sample). Ver ablation_report.md.
+# robustos como control negativo (no deberían mejorar out-of-sample). Ver docs/ABLATION_EXOG.md.
 _WINNERS = ["COST", "GE", "NFLX", "NVDA", "GOOGL", "LOMA.BA", "AVGO", "CRM", "ORCL", "AMZN", "MA", "ISRG"]
 _CONTROLS = ["GS", "WMT", "VRTX"]
 _METRIC_KEYS = ("bt_sharpe", "ml_ic", "ml_directional_accuracy", "bt_calmar")

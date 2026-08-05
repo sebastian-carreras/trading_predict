@@ -9,7 +9,7 @@ inicialización de la red.
 
 Precedente: la ablación de exógenas midió un std entre semillas de ~0.09 para el score viejo,
 **mayor que el efecto que intentaba medir** (~0.03-0.05), lo que invalidó sus conclusiones
-per-ticker. Ver ``reports/ablation/ablation_report.md``.
+per-ticker. Ver ``docs/ABLATION_EXOG.md``.
 
 Qué hace
 --------

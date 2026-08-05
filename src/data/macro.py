@@ -418,7 +418,8 @@ def exog_active_for_ticker(config: dict[str, Any], ticker: str) -> bool:
     ausente → aplica a todos los tickers (modo ablación con --exog).
 
     Esto materializa el resultado de la ablación: activar solo el subconjunto que mejora
-    de forma robusta (ver reports/ablation/ablation_report.md).
+    de forma robusta (ver docs/ABLATION_EXOG.md). En la Fase 1 ese subconjunto resultó
+    vacío — ningún ticker sobrevivió la validación temporal de forma estable.
     """
     if not exog_enabled(config):
         return False

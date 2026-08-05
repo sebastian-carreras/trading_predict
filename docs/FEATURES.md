@@ -105,7 +105,7 @@ Contexto que antes **no existía** en el modelo: ni VIX, ni tasas, ni crédito, 
 > mediana −0.134, sobrevivientes inestables entre seeds). → sin allowlist defendible, se deja
 > desactivado. Los `.BA` nunca se beneficiaron → Fase 3. La **infraestructura queda** (fetch macro
 > + PIT + guardrail cobertura + Optuna exog-aware + arnés ablación/held-out multi-seed) para Fase
-> 2/3. Detalle: [reports/ablation/ablation_report.md](../reports/ablation/ablation_report.md).
+> 2/3. Detalle y evidencia: [docs/ABLATION_EXOG.md](ABLATION_EXOG.md).
 
 - **Infra nueva**: `src/data/macro.py` (FRED vía `fredapi`/`pandas_datareader` + yfinance para índices/ETFs/futuros), cache en `data/macro/`, wiring en `src/data/ingest.py`, tabla ticker→sector/ADR en `src/config/sectors.yaml`.
 - **Integración**: `compute_e2_features(df, exog=None)` (compatible hacia atrás) hace left-join del `exog` alineado por PIT; se pasa desde `src/e2/train_pipeline.py`.
