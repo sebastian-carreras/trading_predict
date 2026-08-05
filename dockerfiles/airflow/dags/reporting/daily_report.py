@@ -1,20 +1,22 @@
 """
-DAG de reporting DIARIO — NO re-entrena modelos.
+DAG de reporting DIARIO — salud del CICLO DE VIDA. NO re-entrena modelos.
 
-Bajo la cadencia "split" (E1/E2 se re-entrenan semanalmente), este DAG corre
-todas las mañanas para responder dos preguntas sin tocar los modelos:
+Responde: **¿los champions están mejorando o empeorando con los días?** Es la
+contraparte del DAG `daily_signals`, que responde "¿qué invierto hoy?".
 
-  1. ¿Cuáles son los mejores tickers para invertir hoy?  → leaderboard
-  2. ¿Los champions están mejorando o empeorando con los días?
-        → leaderboard (Δ score vs. ayer) + stability_analysis (tendencia larga)
+    daily_report   → calidad de los modelos     (data-aware: tras el retrain)
+    daily_signals  → decisión de inversión      (por cron: corre igual si falla)
+
+El leaderboard vivía acá y se movió a `daily_signals`: es una salida del track de
+señales, necesita datos frescos y debe producirse aunque el retrain se caiga.
+Dejarlo en los dos DAGs generaba dos snapshots por día en leaderboard_history.jsonl.
 
 Flujo:
     refresh_dashboard  (checker: summary + ticker views → CSVs)
-        → leaderboard  (ranking de champions por score compuesto + Δ vs. ayer)
-        → stability    (evolución del champion: Sharpe/IC + timeline de promociones)
+        → refresh_history_reports  (regenera los history_report_*.csv desde MLflow)
+        → stability                (evolución del champion: Sharpe/IC + promociones)
 
-Todas las tareas reutilizan módulos ya existentes del repo; la única pieza
-nueva es scripts.evaluation.leaderboard. No descarga datos ni entrena.
+Todas las tareas reutilizan módulos ya existentes. No descarga datos ni entrena.
 """
 
 from datetime import datetime, timedelta
@@ -44,10 +46,10 @@ default_args = {
 dag = DAG(
     "daily_report",
     default_args=default_args,
-    description="Reporte diario: leaderboard de tickers + estabilidad de champions (sin re-entrenar)",
+    description="Reporte diario: estabilidad y salud de los champions (sin re-entrenar)",
     schedule=[DATASET_E1, DATASET_E2],  # Corre cuando E1 y E2 terminaron su retrain (no por reloj)
     catchup=False,
-    tags=["trading", "reporting", "leaderboard", "daily"],
+    tags=["trading", "reporting", "lifecycle", "daily"],
 )
 
 # 1) Refrescar los CSV del dashboard (summary global + per-ticker de E1 y E2).
@@ -63,18 +65,7 @@ refresh_dashboard = BashOperator(
     dag=dag,
 )
 
-# 2) Leaderboard: "mejores tickers para invertir hoy" + Δ score/rank vs. ayer.
-#    Escribe reports/dashboard/leaderboard_<fecha>.csv, _latest.csv y history.jsonl.
-leaderboard = BashOperator(
-    task_id="leaderboard",
-    bash_command=(
-        f"cd {PROJECT_DIR} && "
-        "python -m scripts.evaluation.leaderboard --strategies e1,e2"
-    ),
-    dag=dag,
-)
-
-# 3) Regenerar los history_report_*.csv de TODOS los tickers desde la MLflow DB.
+# 2) Regenerar los history_report_*.csv de TODOS los tickers desde la MLflow DB.
 #    stability_analysis solo grafica los CSV que existan; sin este paso plotearía
 #    un subconjunto viejo/parcial.
 refresh_history = BashOperator(
@@ -86,7 +77,7 @@ refresh_history = BashOperator(
     dag=dag,
 )
 
-# 4) Estabilidad: evolución del champion (Sharpe/IC en el tiempo) + timeline de
+# 3) Estabilidad: evolución del champion (Sharpe/IC en el tiempo) + timeline de
 #    promociones. Responde "¿los champions mejoran con los días?" a largo plazo.
 stability = BashOperator(
     task_id="stability_analysis",
@@ -97,4 +88,4 @@ stability = BashOperator(
     dag=dag,
 )
 
-refresh_dashboard >> leaderboard >> refresh_history >> stability
+refresh_dashboard >> refresh_history >> stability

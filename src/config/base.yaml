@@ -359,6 +359,11 @@ reporting:
     ml: ["mae", "rmse", "ic", "directional_accuracy"]
     trading: ["cagr", "sharpe", "sortino", "max_drawdown", "calmar", "profit_factor", "turnover", "win_rate"]
   output_dir: "reports"
+  # Track de señales (src/lifecycle/signals.py): edad máxima, en días corridos, de
+  # los datos que sostienen una predicción para que se emita señal de compra. Por
+  # encima de esto la predicción se muestra igual pero marcada, sin recomendación.
+  # 5 días cubre un fin de semana largo sin dejar pasar datos realmente viejos.
+  max_signal_age_days: 5
 
 lifecycle:
   enabled: true

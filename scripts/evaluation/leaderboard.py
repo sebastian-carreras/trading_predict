@@ -1,5 +1,11 @@
 """Leaderboard diario: "mejores tickers para invertir" según el champion actual.
 
+La predicción de cada fila es **inferencia en vivo**: se corre el champion
+congelado sobre los datos más recientes (``src.lifecycle.signals``), sin
+re-entrenar y sin leer el CSV walk-forward del run — ese CSV es una predicción
+de la fecha en que se entrenó el champion, no una señal de hoy. La columna
+``AS_OF`` dice sobre qué día de datos se calculó cada predicción.
+
 Rankea los champions del registry por el MISMO score compuesto que usa la
 promoción (``src.lifecycle.promotion.compute_score`` con los pesos por estrategia),
 de modo que el ranking es coherente con las decisiones de lifecycle.
@@ -36,7 +42,7 @@ import pandas as pd
 
 from src.lifecycle.registry import ModelRegistry
 from src.lifecycle.promotion import compute_score, get_strategy_promotion_config
-from src.lifecycle import reevaluation
+from src.lifecycle import signals
 from src.utils import load_yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -48,9 +54,9 @@ HISTORY_PATH = DASHBOARD_DIR / "leaderboard_history.jsonl"
 DEFAULT_STRATEGIES = ["e1", "e2"]
 
 # Un champion se marca "viejo" (⚠) si su último día de entrenamiento supera esto.
+# Ojo: es distinto de la frescura de los DATOS de la predicción, que la controla
+# ``reporting.max_signal_age_days`` y se muestra en DAGE.
 STALE_DAYS = 10
-# Días de trading por año, para anualizar el retorno predicho del horizonte.
-TRADING_DAYS = 252
 
 # Columnas de métricas que se muestran junto al score (higher-is-better salvo DD).
 DISPLAY_METRICS = [
@@ -98,29 +104,23 @@ def champion_data_cutoff(champ: dict[str, Any]) -> str | None:
 
 def _forecast_and_freshness(
     strategy: str,
-    variant: str,
     ticker: str,
+    registry: ModelRegistry,
     champ: dict[str, Any],
     config: dict[str, Any],
     weights: dict[str, float],
 ) -> dict[str, Any]:
-    """Última predicción guardada del walk-forward del champion + frescura.
+    """Señal de hoy del champion (inferencia en vivo) + frescura del modelo.
 
-    Solo lectura: no reinfiere en vivo (igual que ``/predict`` de la FastAPI).
-    Lee ``<run_dir>/<ticker>_walkforward_predictions.csv`` y toma la última fila.
+    La predicción sale de ``signals.champion_signal``: el champion congelado
+    corrido sobre los datos más recientes. Las columnas de frescura son dos y
+    miden cosas distintas — ``days_ago``/``stale`` es qué tan viejo es el
+    ENTRENAMIENTO del champion; ``data_age_days``/``stale_data`` es qué tan
+    viejos son los DATOS sobre los que predijo.
     """
-    strat_cfg = config.get("strategies", {}).get(variant, {})
-    horizon = int(strat_cfg.get("horizon_days", 90))
-    tau_buy = float(strat_cfg.get("thresholds", {}).get("tau_buy", 0.02))
-
-    pred_return = pred_as_of = None
-    wf = reevaluation.load_walkforward_predictions(champ.get("run_dir", ""), ticker, root=ROOT)
-    if wf is not None and not wf.empty:
-        pred_return = float(wf["y_pred"].iloc[-1])
-        pred_as_of = str(pd.Timestamp(wf.index[-1]).date())
-
-    pred_ann = round(pred_return * (TRADING_DAYS / horizon), 6) if pred_return is not None else None
-    signal = ("LONG" if pred_return > tau_buy else "FLAT") if pred_return is not None else None
+    signal_row = signals.champion_signal(
+        strategy, ticker, registry, config, root=ROOT
+    ) or signals.unavailable_signal()
 
     trained_at = champion_data_cutoff(champ)
     days_ago = None
@@ -139,10 +139,7 @@ def _forecast_and_freshness(
         recent_score = round(float(rs), 6)
 
     return {
-        "pred_return": round(pred_return, 6) if pred_return is not None else None,
-        "pred_annualized": pred_ann,
-        "signal": signal,
-        "pred_as_of": pred_as_of,
+        **signal_row,
         "trained_at": str(trained_at)[:10] if trained_at else None,
         "days_ago": days_ago,
         "stale": stale,
@@ -192,7 +189,7 @@ def build_leaderboard(
                 val = metrics.get(m)
                 row[m] = round(float(val), 6) if isinstance(val, (int, float)) else None
             row.update(
-                _forecast_and_freshness(strategy, variant, ticker, champ, config, weights)
+                _forecast_and_freshness(strategy, ticker, registry, champ, config, weights)
             )
             rows.append(row)
 
@@ -290,6 +287,9 @@ def _append_history(df: pd.DataFrame) -> None:
                 "pred_annualized": (float(r["pred_annualized"]) if pd.notna(r.get("pred_annualized")) else None),
                 "signal": r.get("signal"),
                 "trained_at": r.get("trained_at"),
+                "as_of": r.get("as_of"),
+                "data_age_days": (int(r["data_age_days"]) if pd.notna(r.get("data_age_days")) else None),
+                "pred_mode": r.get("pred_mode"),
             }
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
@@ -311,31 +311,22 @@ def _pct(x: Any) -> str:
     return f"{float(x) * 100:+.1f}%" if pd.notna(x) else "   —"
 
 
-def _signal_age_days(pred_as_of: Any) -> int | None:
-    """Días desde ``pred_as_of`` (fecha de la última señal del walk-forward) a hoy."""
-    if pred_as_of is None or pd.isna(pred_as_of):
-        return None
-    try:
-        d = datetime.fromisoformat(str(pred_as_of)[:10]).date()
-    except ValueError:
-        return None
-    return (datetime.now(timezone.utc).date() - d).days
-
-
 def print_leaderboard(df: pd.DataFrame, top: int | None, rank_by: str = "score") -> None:
     if df.empty:
         print("Leaderboard vacío: no hay champions en el registry para las estrategias pedidas.")
         return
     view = df.head(top) if top else df
-    W = 104
+    W = 112
     print("=" * W)
     print(f"  LEADERBOARD — qué invertir hoy  ({datetime.now():%Y-%m-%d %H:%M})   ordenado por: {rank_by}")
-    print(f"  PRED% = retorno predicho al horizonte, de la última predicción del WALK-FORWARD (no una")
-    print(f"  inferencia de hoy) · SIGAGE = antigüedad de esa señal · ANN% = anualizado · ⚠ champion viejo")
-    print(f"  SHARPE/IC = bt_sharpe y ml_ic del champion en su ENTRENAMIENTO original (fijos) · RECENT =")
-    print(f"  score recalculado en la última reevaluación fair-window (— = nunca reevaluado contra un candidate)")
+    print(f"  DE HOY: PRED% = retorno al horizonte que el champion congelado predice sobre los datos más")
+    print(f"  recientes (inferencia en vivo, sin re-entrenar) · ANN% = anualizado · AS_OF = día de datos")
+    print(f"  usado · DAGE = su antigüedad (⚠ = pasó el umbral, no se emite señal)")
+    print(f"  HISTÓRICO: SCORE/SHARPE/IC = calidad del champion en su ENTRENAMIENTO original, fijos, NO")
+    print(f"  de hoy · TRAINED = antigüedad de ese entrenamiento (⚠ >{STALE_DAYS}d) · RECENT = score de la")
+    print(f"  última reevaluación fair-window (— = nunca reevaluado contra un candidate)")
     print("=" * W)
-    print(f"{'#':>2}  {'STRAT':<5} {'TICKER':<9} {'PRED%':>7} {'ANN%':>7} {'SIG':<4} {'SIGAGE':>7} "
+    print(f"{'#':>2}  {'STRAT':<5} {'TICKER':<9} {'PRED%':>7} {'ANN%':>7} {'SIG':<4} {'AS_OF':>10} {'DAGE':>6} "
           f"{'SCORE':>7} {'RECENT':>7} {'TRAINED':>9} {'SHARPE':>7} {'IC':>6}")
     print("-" * W)
     for _, r in view.iterrows():
@@ -346,24 +337,32 @@ def print_leaderboard(df: pd.DataFrame, top: int | None, rank_by: str = "score")
         days = r.get("days_ago")
         stale_mark = "⚠" if r.get("stale") else " "
         trained = f"{int(days)}d{stale_mark}" if pd.notna(days) else f"—{stale_mark}"
-        sig_age = _signal_age_days(r.get("pred_as_of"))
-        sig_age_s = f"{sig_age}d" if sig_age is not None else "  —"
+        as_of = str(r.get("as_of") or "—")
+        dage = r.get("data_age_days")
+        dage_s = f"{int(dage)}d{'⚠' if r.get('stale_data') else ' '}" if pd.notna(dage) else "  — "
         sharpe = r.get("bt_sharpe")
         ic = r.get("ml_ic")
         print(
             f"{int(r['rank']):>2}  {r['strategy']:<5} {str(r['ticker']):<9} "
-            f"{_pct(r.get('pred_return')):>7} {_pct(r.get('pred_annualized')):>7} {sig:<4} {sig_age_s:>7} "
+            f"{_pct(r.get('pred_return')):>7} {_pct(r.get('pred_annualized')):>7} {sig:<4} {as_of:>10} {dage_s:>6} "
             f"{r['score']:>7.4f} {recent_s:>7} {trained:>9} "
             f"{(sharpe if pd.notna(sharpe) else float('nan')):>7.3f} "
             f"{(ic if pd.notna(ic) else float('nan')):>6.3f}{arrow}"
         )
     print("-" * W)
     n_stale = int(df["stale"].sum())
+    n_stale_data = int(df["stale_data"].sum())
+    n_unavailable = int((df["pred_mode"] == "unavailable").sum())
     n_long = int((df["signal"] == "LONG").sum())
     ups = int((df["trend"] == "up").sum())
     downs = int((df["trend"] == "down").sum())
-    print(f"Señales LONG {n_long}/{len(df)}   ·   "
-          f"champions viejos ⚠ {n_stale}   ·   Δscore ▲{ups} ▼{downs} (vs snapshot previo)")
+    print(f"Señales LONG {n_long}/{len(df)}   ·   datos rancios ⚠ {n_stale_data}   ·   "
+          f"sin inferencia {n_unavailable}   ·   champions viejos ⚠ {n_stale}   ·   "
+          f"Δscore ▲{ups} ▼{downs} (vs snapshot previo)")
+    if n_stale_data:
+        print(f"  ⚠ {n_stale_data} ticker(s) con datos por encima de "
+              f"reporting.max_signal_age_days: se muestra PRED% pero NO se emite señal. "
+              f"Corré scripts/data/refresh_champion_data.py")
 
 
 def main() -> int:
